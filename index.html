@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bilingual Phrase Trainer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,500&family=Inter:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap');
+
+:root{
+  --ink:#17262A;
+  --ink-soft:#3E5257;
+  --paper:#ECE8DE;
+  --panel:#F6F3EB;
+  --line:#D8D2C2;
+  --brass:#A9803E;
+  --brass-deep:#7C5B26;
+  --teal:#1F4A47;
+  --teal-soft:#DCE8E4;
+  --err:#9C3B2E;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Inter',sans-serif;
+  min-height:100vh;
+}
+.app{
+  max-width:920px;
+  margin:0 auto;
+  padding:28px 20px 60px;
+}
+header.top{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:16px;
+  margin-bottom:22px;
+  gap:12px;
+  flex-wrap:wrap;
+}
+header.top h1{
+  font-family:'Newsreader',serif;
+  font-weight:600;
+  font-size:30px;
+  margin:0;
+  letter-spacing:0.2px;
+}
+header.top .sub{
+  font-size:13px;
+  color:var(--ink-soft);
+  margin-top:4px;
+}
+.gear-btn{
+  background:none;
+  border:1px solid var(--ink);
+  color:var(--ink);
+  border-radius:0;
+  padding:8px 14px;
+  font-family:'Inter',sans-serif;
+  font-size:13px;
+  cursor:pointer;
+}
+.gear-btn:hover{ background:var(--ink); color:var(--paper); }
+
+nav.tabs{
+  display:flex;
+  gap:2px;
+  margin-bottom:22px;
+}
+nav.tabs button{
+  flex:1;
+  padding:10px 12px;
+  background:var(--panel);
+  border:none;
+  border-bottom:3px solid transparent;
+  font-family:'Inter',sans-serif;
+  font-size:14px;
+  font-weight:600;
+  color:var(--ink-soft);
+  cursor:pointer;
+}
+nav.tabs button.active{
+  color:var(--ink);
+  border-bottom:3px solid var(--brass);
+  background:var(--panel);
+}
+
+section.view{ display:none; }
+section.view.active{ display:block; }
+
+.panel{
+  background:var(--panel);
+  border-top:3px solid var(--teal);
+  padding:20px;
+  margin-bottom:18px;
+}
+.panel h2{
+  font-family:'Newsreader',serif;
+  font-size:19px;
+  font-weight:600;
+  margin:0 0 14px;
+}
+.field-row{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:10px;
+}
+.field{
+  flex:1;
+  min-width:160px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.field label{ font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft); }
+input[type=text], input[type=date], select, textarea{
+  font-family:'Inter',sans-serif;
+  font-size:14px;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--ink);
+}
+input[dir=rtl]{ font-family:'Amiri',serif; font-size:17px; }
+button.primary{
+  background:var(--teal);
+  color:#fff;
+  border:none;
+  padding:10px 18px;
+  font-family:'Inter',sans-serif;
+  font-weight:600;
+  font-size:13px;
+  cursor:pointer;
+}
+button.primary:hover{ background:var(--brass-deep); }
+button.ghost{
+  background:none;
+  border:1px solid var(--ink-soft);
+  color:var(--ink-soft);
+  padding:9px 14px;
+  font-size:13px;
+  cursor:pointer;
+  font-family:'Inter',sans-serif;
+}
+button.ghost:hover{ border-color:var(--ink); color:var(--ink); }
+button.icon{
+  background:var(--teal-soft);
+  border:1px solid var(--teal);
+  color:var(--teal);
+  width:34px; height:34px;
+  cursor:pointer;
+  font-size:15px;
+  line-height:1;
+}
+button.icon:hover{ background:var(--teal); color:#fff; }
+
+.phrase-card{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 0;
+  border-bottom:1px solid var(--line);
+}
+.phrase-card:last-child{ border-bottom:none; }
+.phrase-texts{ flex:1; min-width:0; }
+.phrase-en{ font-size:15px; }
+.phrase-ar{
+  font-family:'Amiri',serif;
+  font-size:19px;
+  direction:rtl;
+  margin-top:2px;
+  color:var(--teal);
+}
+.tag{
+  display:inline-block;
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  color:var(--brass-deep);
+  border:1px solid var(--brass);
+  padding:2px 6px;
+  margin-top:4px;
+}
+.card-actions{ display:flex; gap:6px; flex-shrink:0; }
+.empty{ color:var(--ink-soft); font-size:13px; font-style:italic; padding:8px 0; }
+
+.log-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:9px 0;
+  border-bottom:1px solid var(--line);
+  font-size:13px;
+}
+.log-row:last-child{ border-bottom:none; }
+.badge{
+  font-size:10px;
+  padding:2px 7px;
+  border-radius:2px;
+  text-transform:uppercase;
+  letter-spacing:0.04em;
+}
+.badge.synced{ background:var(--teal-soft); color:var(--teal); }
+.badge.pending{ background:#F2E6C9; color:var(--brass-deep); }
+
+.stats-row{ display:flex; gap:18px; flex-wrap:wrap; margin-bottom:6px; }
+.stat{ min-width:110px; }
+.stat .num{ font-family:'Newsreader',serif; font-size:28px; font-weight:600; }
+.stat .lbl{ font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.05em; }
+
+.status-msg{ font-size:12px; margin-top:8px; color:var(--ink-soft); min-height:16px; }
+.status-msg.err{ color:var(--err); }
+
+.toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+.toolbar .field{ flex:1; min-width:150px; }
+.count-note{ font-size:12px; color:var(--ink-soft); margin:2px 0 10px; }
+textarea{ min-height:90px; resize:vertical; font-family:'Inter',sans-serif; }
+details.quick-add{ margin-top:2px; }
+details.quick-add summary{ cursor:pointer; font-size:12.5px; color:var(--teal); font-weight:600; margin-bottom:10px; }
+.load-more-row{ text-align:center; margin-top:10px; }
+.practice-set-row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px; }
+
+.due-card{ padding:14px 0; border-bottom:1px solid var(--line); }
+.due-card:last-child{ border-bottom:none; }
+.due-meta{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+.rating-row{ display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+.rate-btn{
+  border:none; color:#fff; font-family:'Inter',sans-serif; font-weight:600;
+  font-size:12px; padding:7px 12px; cursor:pointer;
+}
+.rate-5{ background:#2F6E4E; }
+.rate-4{ background:#4F8F63; }
+.rate-3{ background:var(--brass); }
+.rate-2{ background:#C07A2E; }
+.rate-1{ background:var(--err); }
+.hot-badge{ display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:#B8611A; border:1px solid #E0A867; padding:2px 6px; margin-left:6px; }
+.station-pill{ display:inline-block; font-size:10px; color:var(--teal); border:1px solid var(--teal); padding:2px 6px; border-radius:10px; margin-left:6px; }
+details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); font-weight:600; }
+.legend-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 20px; margin-top:12px; font-size:12.5px; }
+.legend-grid .st-row{ display:flex; gap:8px; align-items:baseline; }
+.legend-grid .st-num{ font-weight:700; color:var(--teal); }
+
+/* Grammar Hub */
+.grammar-card{ padding:16px 0; border-bottom:1px solid var(--line); }
+.grammar-card:last-child{ border-bottom:none; }
+.grammar-title{ font-family:'Newsreader',serif; font-size:17px; font-weight:600; }
+.grammar-title[dir=rtl]{ font-family:'Amiri',serif; font-size:20px; }
+.pill-row{ display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 8px; }
+.pill{ font-size:10px; text-transform:uppercase; letter-spacing:0.05em; padding:2px 7px; border:1px solid var(--line); color:var(--ink-soft); }
+.pill.lang{ border-color:var(--teal); color:var(--teal); }
+.rule-summary{ font-size:13.5px; line-height:1.5; margin-bottom:10px; }
+.example-row{ background:#fff; border:1px solid var(--line); padding:10px 12px; margin-bottom:8px; }
+.example-target{ font-size:15px; }
+.example-target[dir=rtl]{ font-family:'Amiri',serif; font-size:19px; direction:rtl; color:var(--teal); }
+.example-translation{ font-size:12.5px; color:var(--ink-soft); margin-top:3px; }
+.example-actions{ display:flex; gap:6px; margin-top:8px; }
+.analysis-box{ margin-top:10px; background:var(--teal-soft); padding:10px; font-size:12.5px; }
+.analysis-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
+.analysis-table th, .analysis-table td{ text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); }
+.analysis-table td:first-child[dir=rtl], .analysis-table th:first-child{ font-family:'Amiri',serif; }
+.notes-line{ font-size:12px; color:var(--ink-soft); font-style:italic; margin-top:6px; }
+.grammar-actions{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.diacritics-toggle{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-soft); }
+
+/* Chat modal */
+.chat-modal .modal{ max-width:560px; display:flex; flex-direction:column; max-height:80vh; }
+.chat-thread{ overflow-y:auto; flex:1; margin:10px 0; padding-right:4px; max-height:50vh; }
+.chat-bubble{ padding:10px 12px; margin-bottom:10px; font-size:13.5px; line-height:1.5; }
+.chat-bubble.user{ background:var(--teal-soft); }
+.chat-bubble.assistant{ background:#fff; border:1px solid var(--line); }
+.chat-sources{ margin-top:8px; font-size:11.5px; color:var(--ink-soft); }
+.chat-sources a{ color:var(--brass-deep); }
+.chat-input-row{ display:flex; gap:8px; }
+.chat-input-row input{ flex:1; }
+
+/* Flashcards */
+.flash-card{ background:#fff; border:1px solid var(--line); padding:12px; margin-bottom:12px; }
+.flash-sentence{ font-size:15px; margin-bottom:8px; }
+.flash-sentence[dir=rtl]{ font-family:'Amiri',serif; font-size:18px; }
+.word-chip{ display:inline-block; border:1px solid var(--teal); color:var(--teal); background:var(--teal-soft); padding:5px 10px; margin:3px; cursor:pointer; font-size:13px; }
+.word-chip.used{ opacity:0.35; cursor:default; }
+.built-row{ min-height:34px; border:1px dashed var(--line); padding:6px; margin:8px 0; }
+
+.modal-backdrop{
+  position:fixed; inset:0; background:rgba(23,38,42,0.55);
+  display:none; align-items:center; justify-content:center; padding:20px; z-index:10;
+}
+.modal-backdrop.open{ display:flex; }
+.modal{
+  background:var(--panel);
+  border-top:3px solid var(--brass);
+  padding:22px;
+  max-width:440px;
+  width:100%;
+}
+.modal h2{ font-family:'Newsreader',serif; margin:0 0 6px; font-size:19px; }
+.modal p{ font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin-top:0; }
+.modal .field{ margin-bottom:14px; }
+.modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+
+@media (max-width:520px){
+  .stats-row{ gap:10px; }
+  .stat{ min-width:80px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Bilingual Phrase Trainer</h1>
+      <div class="sub">Daily English &amp; Arabic speaking practice, logged to your Google Sheet</div>
+    </div>
+    <button class="gear-btn" id="aiBtn">Ask AI</button>
+    <button class="gear-btn" id="settingsBtn">Sheet &amp; AI settings</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-view="bank">Phrase Bank</button>
+    <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
+    <button class="tab-btn" data-view="review">Review</button>
+    <button class="tab-btn" data-view="grammar">Grammar Hub</button>
+    <button class="tab-btn" data-view="history">History</button>
+  </nav>
+
+  <!-- PHRASE BANK -->
+  <section class="view active" id="view-bank">
+    <div class="panel">
+      <h2>Add a phrase pair</h2>
+      <div class="field-row">
+        <div class="field">
+          <label>English</label>
+          <input type="text" id="bankEn" placeholder="e.g. Let's walk through the quarterly figures">
+        </div>
+        <div class="field">
+          <label>Arabic</label>
+          <input type="text" id="bankAr" dir="rtl" placeholder="مثال: لنستعرض الأرقام الفصلية">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Category</label>
+          <input type="text" id="bankCat" placeholder="e.g. Meetings, Economic terms, Small talk">
+        </div>
+      </div>
+      <button class="primary" id="addBankBtn">Add to bank</button>
+
+      <details class="quick-add">
+        <summary>Add several at once instead</summary>
+        <div class="field">
+          <label>One phrase per line — English | Arabic | Category (Arabic and category are optional)</label>
+          <textarea id="quickAddArea" placeholder="Let's review the quarterly figures | دعنا نستعرض الأرقام الفصلية | Economic terminology&#10;Could you clarify that? | | Meetings"></textarea>
+        </div>
+        <button class="primary" id="quickAddBankBtn">Add all lines</button>
+        <div class="status-msg" id="quickAddStatus"></div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <h2>Your phrases</h2>
+      <div class="toolbar">
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="bankSearch" placeholder="Search English, Arabic, or category">
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label>Category</label>
+          <select id="bankCategoryFilter"><option value="">All categories</option></select>
+        </div>
+      </div>
+      <div class="count-note" id="bankCountNote"></div>
+      <div id="bankList"></div>
+      <div class="load-more-row" id="bankLoadMoreRow" style="display:none;">
+        <button class="ghost" id="bankLoadMoreBtn">Show more</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Backup &amp; restore bank</h2>
+      <div class="count-note">Your phrase bank lives in this app. Back it up to a second sheet tab so it isn't only on this device, or restore it after reinstalling.</div>
+      <button class="ghost" id="backupBankBtn">Backup bank to Sheet</button>
+      <button class="ghost" id="restoreBankBtn">Restore bank from Sheet</button>
+      <div class="status-msg" id="bankSyncStatus"></div>
+    </div>
+  </section>
+
+  <!-- PRACTICE & LOG -->
+  <section class="view" id="view-practice">
+    <div class="panel">
+      <h2>Quick practice (not saved to bank)</h2>
+      <div class="field-row">
+        <div class="field">
+          <label>Type any phrase</label>
+          <input type="text" id="quickText" placeholder="Type an English or Arabic phrase">
+        </div>
+        <div class="field" style="max-width:140px;">
+          <label>Language</label>
+          <select id="quickLang">
+            <option value="en">English</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </div>
+      </div>
+      <button class="primary" id="quickSpeakBtn">Speak</button>
+      <button class="ghost" id="quickLogBtn">Log as practiced</button>
+    </div>
+
+    <div class="panel">
+      <h2>Practice set</h2>
+      <div class="practice-set-row">
+        <div class="field" style="max-width:220px;">
+          <label>Category</label>
+          <select id="practiceCategoryFilter"><option value="">All categories</option></select>
+        </div>
+        <div class="field" style="max-width:120px;">
+          <label>How many</label>
+          <select id="practiceCount">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+        <button class="primary" id="genPracticeBtn">Get phrases to practice</button>
+      </div>
+      <div class="field" style="margin-bottom:12px;">
+        <label>Or search for a specific phrase</label>
+        <input type="text" id="practiceSearch" placeholder="Search English, Arabic, or category">
+      </div>
+      <div id="practiceList"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Today's session log</h2>
+      <div id="sessionList"><div class="empty">No entries logged yet today.</div></div>
+      <button class="primary" id="syncBtn" style="margin-top:12px;">Sync to Google Sheet</button>
+      <div class="status-msg" id="syncStatus"></div>
+    </div>
+  </section>
+
+  <!-- REVIEW (spaced repetition) -->
+  <section class="view" id="view-review">
+    <div class="panel">
+      <h2>Due for review</h2>
+      <div class="count-note" id="reviewSummary"></div>
+      <div id="reviewList"></div>
+    </div>
+    <div class="panel">
+      <details class="legend">
+        <summary>How the 7 stations work</summary>
+        <div class="legend-grid">
+          <div class="st-row"><span class="st-num">1</span> Day 0 — target 5, min 2 to advance</div>
+          <div class="st-row"><span class="st-num">2</span> +1 day — target 5, min 2</div>
+          <div class="st-row"><span class="st-num">3</span> +4 days — target 3</div>
+          <div class="st-row"><span class="st-num">4</span> +7 days — target 3</div>
+          <div class="st-row"><span class="st-num">5</span> +14 days — target 2</div>
+          <div class="st-row"><span class="st-num">6</span> +30 days — target 2</div>
+          <div class="st-row"><span class="st-num">7</span> +35 days — maintenance, monthly</div>
+        </div>
+        <div class="count-note" style="margin-top:12px;">
+          Rating: 5 Perfect / 4 Good → advance a station · 3 Okay → stay, retry later · 2 Struggled → drop 1 station · 1 Major forgetting → drop 2 stations.
+          In the first 20 days after adding a phrase, extra light "Hot" reinforcement reviews appear on days 3, 8, and 13 — these don't affect the station.
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- GRAMMAR HUB -->
+  <section class="view" id="view-grammar">
+    <div class="panel">
+      <h2>Add a grammar entry</h2>
+      <div class="field-row">
+        <div class="field">
+          <label>Title</label>
+          <input type="text" id="gTitle" placeholder="e.g. The Broken Plural, Present Perfect">
+        </div>
+        <div class="field" style="max-width:160px;">
+          <label>Language</label>
+          <select id="gLang"><option value="Arabic">Arabic</option><option value="English">English</option></select>
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label>Category</label>
+          <input type="text" id="gCategory" placeholder="Syntax / Nahw, Morphology / Sarf, Tenses...">
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Rule summary</label>
+        <textarea id="gRuleSummary" placeholder="Explain the rule in your own words"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Examples — one per line: target sentence | translation</label>
+        <textarea id="gExamples" placeholder="ذَهَبَ الوَلَدُ إلى المدرسةِ | The boy went to school"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Tags (comma separated)</label>
+          <input type="text" id="gTags" placeholder="verbs, past tense, economics">
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Notes</label>
+        <textarea id="gNotes" placeholder="Anything else worth remembering"></textarea>
+      </div>
+      <button class="primary" id="addGrammarBtn">Add entry</button>
+    </div>
+
+    <div class="panel">
+      <h2>Your grammar notebook</h2>
+      <div class="toolbar">
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="gSearch" placeholder="Search titles, notes, examples, tags">
+        </div>
+        <div class="field" style="max-width:160px;">
+          <label>Language</label>
+          <select id="gLangFilter"><option value="">Both</option><option value="Arabic">Arabic</option><option value="English">English</option></select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Category</label>
+          <select id="gCategoryFilter"><option value="">All categories</option></select>
+        </div>
+      </div>
+      <div class="diacritics-toggle" style="margin-bottom:10px;">
+        <input type="checkbox" id="tashkeelToggle" checked>
+        <label for="tashkeelToggle">Show diacritics (tashkeel) on Arabic examples</label>
+      </div>
+      <div class="count-note" id="grammarCountNote"></div>
+      <div id="grammarList"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Arabic sentence analyzer</h2>
+      <div class="count-note">AI-generated breakdown for study purposes — a helpful second opinion, not an authoritative grammatical parse.</div>
+      <div class="field" style="margin:10px 0;">
+        <input type="text" id="analyzerInput" dir="rtl" placeholder="ذَهَبَ الوَلَدُ إلى المدرسةِ">
+      </div>
+      <button class="primary" id="analyzerBtn">Analyze sentence</button>
+      <div id="analyzerOutput"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="view" id="view-history">
+    <div class="panel">
+      <h2>Pull from Google Sheet</h2>
+      <button class="primary" id="pullBtn">Pull latest data</button>
+      <div class="status-msg" id="pullStatus"></div>
+    </div>
+    <div class="panel">
+      <h2>Overview</h2>
+      <div class="stats-row" id="statsRow"></div>
+    </div>
+    <div class="panel">
+      <h2>Entries</h2>
+      <div id="historyList"><div class="empty">Nothing pulled yet.</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" id="settingsModal">
+  <div class="modal">
+    <h2>Sheet &amp; AI connection</h2>
+    <p>Paste the Web App URL from your Apps Script deployment, and a free Gemini API key for the Ask AI / sentence analysis features. Both are saved on this device for next time.</p>
+    <div class="field">
+      <label>Apps Script Web App URL</label>
+      <input type="text" id="webAppUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+    </div>
+    <div class="field">
+      <label>Gemini API key</label>
+      <input type="text" id="geminiApiKeyInput" placeholder="AIza...">
+    </div>
+    <p style="margin-top:-8px;">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>. Nothing is sent anywhere except Google's Gemini API, directly from your browser.</p>
+    <div class="modal-actions">
+      <button class="ghost" id="closeSettings">Cancel</button>
+      <button class="primary" id="saveSettings">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop chat-modal" id="aiModal">
+  <div class="modal">
+    <h2 id="aiModalTitle">Ask AI</h2>
+    <p id="aiModalSub">Powered by Gemini with Google Search grounding — answers include sources where relevant.</p>
+    <div class="chat-thread" id="chatThread"></div>
+    <div class="chat-input-row">
+      <input type="text" id="chatInput" placeholder="Ask about a rule, usage, or MSA vs. dialect...">
+      <button class="primary" id="chatSendBtn">Send</button>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeAi">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="flashcardModal">
+  <div class="modal" style="max-width:600px; max-height:80vh; overflow-y:auto;">
+    <h2>Practice cards</h2>
+    <div id="flashcardContainer"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeFlashcards">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '' } };
+
+// ---------- Local storage (this app runs standalone, so we use the browser's
+// own localStorage rather than any host-provided storage API) ----------
+const LS_PREFIX = 'phraseTrainer.';
+function lsGet(key, fallback){
+  try{
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    return raw ? JSON.parse(raw) : fallback;
+  }catch(e){ return fallback; }
+}
+function lsSet(key, value){
+  try{ localStorage.setItem(LS_PREFIX + key, JSON.stringify(value)); }catch(e){}
+}
+
+async function loadState(){
+  state.bank = lsGet('bank', []);
+  state.log = lsGet('log', []);
+  state.grammar = lsGet('grammar', []);
+  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'' });
+  if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
+}
+async function saveBank(){ lsSet('bank', state.bank); }
+async function saveLog(){ lsSet('log', state.log); }
+async function saveSettings(){ lsSet('settings', state.settings); }
+
+// ---------- Speech ----------
+let voicesReady = false;
+if('speechSynthesis' in window){
+  window.speechSynthesis.onvoiceschanged = () => { voicesReady = true; };
+}
+function speak(text, lang){
+  if(!text) return;
+  if(!('speechSynthesis' in window)){
+    alert('This browser does not support speech synthesis.');
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
+  const voices = window.speechSynthesis.getVoices();
+  const match = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang));
+  if(match) utter.voice = match;
+  utter.rate = 0.92;
+  window.speechSynthesis.speak(utter);
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-'+btn.dataset.view).classList.add('active');
+    if(btn.dataset.view === 'review') renderReview();
+    if(btn.dataset.view === 'grammar') renderGrammarList();
+  });
+});
+
+// ---------- Settings modal ----------
+const modal = document.getElementById('settingsModal');
+document.getElementById('settingsBtn').addEventListener('click', ()=>{
+  document.getElementById('webAppUrlInput').value = state.settings.webAppUrl || '';
+  document.getElementById('geminiApiKeyInput').value = state.settings.geminiApiKey || '';
+  modal.classList.add('open');
+});
+document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
+document.getElementById('saveSettings').addEventListener('click', async ()=>{
+  state.settings.webAppUrl = document.getElementById('webAppUrlInput').value.trim();
+  state.settings.geminiApiKey = document.getElementById('geminiApiKeyInput').value.trim();
+  await saveSettings();
+  modal.classList.remove('open');
+});
+
+// ---------- Phrase bank ----------
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+// ---------- Spaced repetition (7-station model) ----------
+const STATION_GAP_DAYS = { 1:0, 2:1, 3:4, 4:7, 5:14, 6:30, 7:35 };
+const MIN_TO_ADVANCE   = { 1:2, 2:2, 3:3, 4:3, 5:2, 6:2, 7:1 };
+const MAINTENANCE_GAP_DAYS = 30;
+const HOT_LAYER_OFFSETS = [3, 8, 13];
+
+function addDays(dateStr, n){
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0,10);
+}
+function daysBetween(a, b){
+  return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+}
+function ensureSrs(p){
+  if(!p.srs){
+    const today = todayStr();
+    p.srs = { station: 1, reps: 0, nextReview: today, dateAdded: p.dateAdded || today, hotLayerDone: [] };
+  }
+  if(!p.dateAdded) p.dateAdded = p.srs.dateAdded;
+  return p;
+}
+function rateReview(p, rating){
+  ensureSrs(p);
+  const today = todayStr();
+  let station = p.srs.station;
+  if(rating >= 4){
+    p.srs.reps += 1;
+    if(station < 7 && p.srs.reps >= MIN_TO_ADVANCE[station]){
+      station = station + 1;
+      p.srs.station = station;
+      p.srs.reps = 0;
+      p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+    } else if(station === 7){
+      p.srs.nextReview = addDays(today, MAINTENANCE_GAP_DAYS);
+    } else {
+      p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+    }
+  } else if(rating === 3){
+    p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station] || 1);
+  } else {
+    const drop = rating === 2 ? 1 : 2;
+    station = Math.max(1, station - drop);
+    p.srs.station = station;
+    p.srs.reps = 0;
+    p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+  }
+}
+function getDueReviews(){
+  const today = todayStr();
+  return state.bank.filter(p=>{ ensureSrs(p); return p.srs.nextReview <= today; });
+}
+function getDueHotLayer(){
+  const today = todayStr();
+  const items = [];
+  state.bank.forEach(p=>{
+    ensureSrs(p);
+    HOT_LAYER_OFFSETS.forEach(offset=>{
+      if((p.hotLayerDone||[]).includes(offset)) return;
+      if(!p.dateAdded) return;
+      if(addDays(p.dateAdded, offset) === today) items.push({ phrase: p, offset });
+    });
+  });
+  return items;
+}
+function renderReview(){
+  const due = getDueReviews();
+  const hot = getDueHotLayer();
+  const summary = document.getElementById('reviewSummary');
+  const list = document.getElementById('reviewList');
+  summary.textContent = due.length + ' due for station review · ' + hot.length + ' hot-layer reinforcement' + (hot.length===1?'':'s');
+  if(due.length === 0 && hot.length === 0){
+    list.innerHTML = '<div class="empty">Nothing due right now — check back tomorrow.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  hot.forEach(({phrase:p, offset})=>{
+    const card = document.createElement('div');
+    card.className = 'due-card';
+    card.innerHTML = `
+      <div class="phrase-texts">
+        <div class="phrase-en">${escapeHtml(p.en)} <span class="hot-badge">Hot · day ${offset}</span></div>
+        ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+      </div>
+      <div class="card-actions" style="margin-top:8px;">
+        ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
+        ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}">AR</button>` : ''}
+        <button class="ghost" data-hotdone="${p.id}" data-offset="${offset}">Mark reinforced</button>
+      </div>`;
+    list.appendChild(card);
+  });
+  due.forEach(p=>{
+    const card = document.createElement('div');
+    card.className = 'due-card';
+    card.innerHTML = `
+      <div class="phrase-texts">
+        <div class="phrase-en">${escapeHtml(p.en)} <span class="station-pill">Station ${p.srs.station}</span></div>
+        ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+        <div class="due-meta">${p.srs.reps}/${MIN_TO_ADVANCE[p.srs.station]} reps at this station${p.category ? ' · '+escapeHtml(p.category) : ''}</div>
+      </div>
+      <div>
+        <div class="card-actions">
+          ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
+          ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}">AR</button>` : ''}
+        </div>
+        <div class="rating-row">
+          <button class="rate-btn rate-1" data-rate="1" data-id="${p.id}">1 Major forgetting</button>
+          <button class="rate-btn rate-2" data-rate="2" data-id="${p.id}">2 Struggled</button>
+          <button class="rate-btn rate-3" data-rate="3" data-id="${p.id}">3 Okay</button>
+          <button class="rate-btn rate-4" data-rate="4" data-id="${p.id}">4 Good</button>
+          <button class="rate-btn rate-5" data-rate="5" data-id="${p.id}">5 Perfect</button>
+        </div>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+document.addEventListener('click', async (e)=>{
+  const rateVal = e.target.dataset.rate;
+  if(rateVal){
+    const p = state.bank.find(x=>x.id === e.target.dataset.id);
+    if(p){
+      rateReview(p, parseInt(rateVal,10));
+      await saveBank();
+      renderReview();
+    }
+    return;
+  }
+  const hotId = e.target.dataset.hotdone;
+  if(hotId){
+    const p = state.bank.find(x=>x.id === hotId);
+    if(p){
+      p.hotLayerDone = p.hotLayerDone || [];
+      p.hotLayerDone.push(parseInt(e.target.dataset.offset,10));
+      await saveBank();
+      renderReview();
+    }
+    return;
+  }
+});
+
+let bankFilter = { query: '', category: '' };
+let bankVisibleCount = 100;
+const BANK_PAGE_SIZE = 100;
+let practiceSet = []; // current list shown in the Practice tab
+
+function escapeHtml(s){
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function matchesFilter(p, query, category){
+  if(category && p.category !== category) return false;
+  if(!query) return true;
+  const q = query.toLowerCase();
+  return (p.en||'').toLowerCase().includes(q) || (p.ar||'').includes(query) || (p.category||'').toLowerCase().includes(q);
+}
+
+function getCategories(){
+  return [...new Set(state.bank.map(p=>p.category).filter(Boolean))].sort();
+}
+
+function updateCategoryDropdowns(){
+  const cats = getCategories();
+  ['bankCategoryFilter','practiceCategoryFilter'].forEach(id=>{
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    if(cats.includes(current)) sel.value = current;
+  });
+}
+
+function phraseCardHtml(p, opts){
+  const showDelete = opts && opts.showDelete;
+  const showLog = opts && opts.showLog;
+  return `
+    <div class="phrase-texts">
+      <div class="phrase-en">${escapeHtml(p.en)}</div>
+      ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+      ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
+    </div>
+    <div class="card-actions">
+      ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}" title="Speak English">EN</button>` : ''}
+      ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}" title="Speak Arabic">AR</button>` : ''}
+      ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
+      ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
+      ${showDelete ? `<button class="icon" data-del="${p.id}" title="Delete">✕</button>` : ''}
+    </div>`;
+}
+
+function renderBank(){
+  updateCategoryDropdowns();
+  const list = document.getElementById('bankList');
+  const countNote = document.getElementById('bankCountNote');
+  const loadMoreRow = document.getElementById('bankLoadMoreRow');
+
+  if(state.bank.length === 0){
+    list.innerHTML = '<div class="empty">No phrases yet. Add your first pair above.</div>';
+    countNote.textContent = '';
+    loadMoreRow.style.display = 'none';
+    return;
+  }
+  const matches = state.bank.filter(p => matchesFilter(p, bankFilter.query, bankFilter.category));
+  if(matches.length === 0){
+    list.innerHTML = '<div class="empty">No phrases match that search.</div>';
+    countNote.textContent = '0 of ' + state.bank.length + ' phrases';
+    loadMoreRow.style.display = 'none';
+    return;
+  }
+  const visible = matches.slice(0, bankVisibleCount);
+  countNote.textContent = 'Showing ' + visible.length + ' of ' + matches.length + ' matching phrases (' + state.bank.length + ' total in bank)';
+  list.innerHTML = '';
+  visible.forEach(p=>{
+    const card = document.createElement('div');
+    card.className = 'phrase-card';
+    card.innerHTML = phraseCardHtml(p, { showDelete: true });
+    list.appendChild(card);
+  });
+  loadMoreRow.style.display = matches.length > visible.length ? 'block' : 'none';
+}
+
+function renderPracticeList(items){
+  const practiceList = document.getElementById('practiceList');
+  if(!items || items.length === 0){
+    practiceList.innerHTML = '<div class="empty">No phrases to show yet — generate a practice set or search above.</div>';
+    return;
+  }
+  practiceList.innerHTML = '';
+  items.forEach(p=>{
+    const pCard = document.createElement('div');
+    pCard.className = 'phrase-card';
+    pCard.innerHTML = phraseCardHtml(p, { showLog: true });
+    practiceList.appendChild(pCard);
+  });
+}
+
+document.getElementById('bankSearch').addEventListener('input', (e)=>{
+  bankFilter.query = e.target.value.trim();
+  bankVisibleCount = BANK_PAGE_SIZE;
+  renderBank();
+});
+document.getElementById('bankCategoryFilter').addEventListener('change', (e)=>{
+  bankFilter.category = e.target.value;
+  bankVisibleCount = BANK_PAGE_SIZE;
+  renderBank();
+});
+document.getElementById('bankLoadMoreBtn').addEventListener('click', ()=>{
+  bankVisibleCount += BANK_PAGE_SIZE;
+  renderBank();
+});
+
+document.getElementById('addBankBtn').addEventListener('click', async ()=>{
+  const en = document.getElementById('bankEn').value.trim();
+  const ar = document.getElementById('bankAr').value.trim();
+  const category = document.getElementById('bankCat').value.trim();
+  if(!en && !ar){ return; }
+  state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
+  await saveBank();
+  document.getElementById('bankEn').value = '';
+  document.getElementById('bankAr').value = '';
+  document.getElementById('bankCat').value = '';
+  renderBank();
+});
+
+document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
+  const raw = document.getElementById('quickAddArea').value;
+  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+  const statusEl = document.getElementById('quickAddStatus');
+  if(lines.length === 0){ statusEl.textContent = 'Nothing to add.'; return; }
+  let added = 0;
+  lines.forEach(line=>{
+    const parts = line.split('|').map(s=>s.trim());
+    const en = parts[0] || '';
+    const ar = parts[1] || '';
+    const category = parts[2] || '';
+    if(!en && !ar) return;
+    state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
+    added++;
+  });
+  await saveBank();
+  document.getElementById('quickAddArea').value = '';
+  statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank.';
+  renderBank();
+});
+
+document.addEventListener('click', async (e)=>{
+  const speakId = e.target.dataset.speak;
+  if(speakId){
+    const p = state.bank.find(x=>x.id === e.target.dataset.id);
+    if(p) speak(speakId === 'ar' ? p.ar : p.en, speakId);
+    return;
+  }
+  const delId = e.target.dataset.del;
+  if(delId){
+    state.bank = state.bank.filter(x=>x.id !== delId);
+    await saveBank();
+    renderBank();
+    return;
+  }
+  const logLang = e.target.dataset.log;
+  if(logLang){
+    const p = state.bank.find(x=>x.id === e.target.dataset.id);
+    if(p){
+      addLogEntry(logLang === 'ar' ? p.ar : p.en, logLang, p.category || '');
+      p.practiceCount = (p.practiceCount || 0) + 1;
+      p.lastPracticed = todayStr();
+      await saveBank();
+    }
+    return;
+  }
+});
+
+// ---------- Practice set generation ----------
+document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
+  const category = document.getElementById('practiceCategoryFilter').value;
+  const count = parseInt(document.getElementById('practiceCount').value, 10);
+  document.getElementById('practiceSearch').value = '';
+  let pool = state.bank.filter(p => !category || p.category === category);
+  // favor phrases practiced least so far, so a 5000-phrase bank still cycles through
+  pool = pool.slice().sort((a,b)=> (a.practiceCount||0) - (b.practiceCount||0) || Math.random() - 0.5);
+  practiceSet = pool.slice(0, count);
+  renderPracticeList(practiceSet);
+});
+document.getElementById('practiceSearch').addEventListener('input', (e)=>{
+  const q = e.target.value.trim();
+  if(!q){ renderPracticeList(practiceSet); return; }
+  const matches = state.bank.filter(p => matchesFilter(p, q, '')).slice(0, 100);
+  renderPracticeList(matches);
+});
+
+// ---------- Quick practice ----------
+document.getElementById('quickSpeakBtn').addEventListener('click', ()=>{
+  const text = document.getElementById('quickText').value.trim();
+  const lang = document.getElementById('quickLang').value;
+  speak(text, lang);
+});
+document.getElementById('quickLogBtn').addEventListener('click', ()=>{
+  const text = document.getElementById('quickText').value.trim();
+  const lang = document.getElementById('quickLang').value;
+  if(!text) return;
+  addLogEntry(text, lang, 'Quick practice');
+});
+
+// ---------- Session log ----------
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function timeStr(){ return new Date().toTimeString().slice(0,5); }
+
+async function addLogEntry(text, lang, category){
+  state.log.unshift({ id: uid(), date: todayStr(), time: timeStr(), lang, category, phrase: text, synced: false });
+  await saveLog();
+  renderSession();
+}
+
+function renderSession(){
+  const today = todayStr();
+  const todays = state.log.filter(l=>l.date === today);
+  const container = document.getElementById('sessionList');
+  if(todays.length === 0){
+    container.innerHTML = '<div class="empty">No entries logged yet today.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  todays.forEach(l=>{
+    const row = document.createElement('div');
+    row.className = 'log-row';
+    row.innerHTML = `
+      <span>${l.time} · ${l.lang.toUpperCase()} · ${escapeHtml(l.phrase)}${l.category ? ' <span class="tag">'+escapeHtml(l.category)+'</span>' : ''}</span>
+      <span class="badge ${l.synced ? 'synced' : 'pending'}">${l.synced ? 'Synced' : 'Pending'}</span>`;
+    container.appendChild(row);
+  });
+}
+
+// ---------- Google Sheet sync ----------
+document.getElementById('syncBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('syncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){
+    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  const pending = state.log.filter(l=>!l.synced);
+  if(pending.length === 0){
+    statusEl.textContent = 'Nothing to sync — everything is already up to date.';
+    statusEl.className = 'status-msg';
+    return;
+  }
+  statusEl.textContent = 'Syncing ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + '...';
+  statusEl.className = 'status-msg';
+  let failed = 0;
+  for(const entry of pending){
+    try{
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ date: entry.date, time: entry.time, lang: entry.lang, category: entry.category, phrase: entry.phrase })
+      });
+      entry.synced = true;
+    }catch(err){
+      failed++;
+    }
+  }
+  await saveLog();
+  renderSession();
+  if(failed === 0){
+    statusEl.textContent = 'All entries synced to your Google Sheet.';
+    statusEl.className = 'status-msg';
+  } else {
+    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync. Check the Web App URL and deployment access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+document.getElementById('pullBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('pullStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){
+    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  statusEl.textContent = 'Pulling data...';
+  statusEl.className = 'status-msg';
+  try{
+    const res = await fetch(url, { method: 'GET' });
+    const data = await res.json();
+    renderHistory(data);
+    statusEl.textContent = 'Pulled ' + data.length + ' entries from the sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = 'Could not reach the sheet. Check the Web App URL and that it is deployed with "Anyone" access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+// ---------- Bank backup / restore ----------
+document.getElementById('backupBankBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('bankSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  statusEl.textContent = 'Backing up ' + state.bank.length + ' phrases...';
+  statusEl.className = 'status-msg';
+  try{
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ type: 'bank_sync', phrases: state.bank.map(p=>({ en:p.en, ar:p.ar, category:p.category })) })
+    });
+    statusEl.textContent = 'Backed up ' + state.bank.length + ' phrases to the Bank sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = 'Backup failed. Check the Web App URL and deployment access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('bankSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  if(state.bank.length > 0 && !confirm('This replaces your current bank (' + state.bank.length + ' phrases) with what is in the sheet. Continue?')) return;
+  statusEl.textContent = 'Restoring from sheet...';
+  statusEl.className = 'status-msg';
+  try{
+    const res = await fetch(url + '?type=bank', { method: 'GET' });
+    const data = await res.json();
+    state.bank = data.map(p => ({ id: uid(), en: p.en || '', ar: p.ar || '', category: p.category || '', practiceCount: 0, lastPracticed: null }));
+    await saveBank();
+    renderBank();
+    statusEl.textContent = 'Restored ' + state.bank.length + ' phrases from the sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = 'Restore failed. Check the Web App URL and deployment access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+function renderHistory(entries){
+  const list = document.getElementById('historyList');
+  const statsRow = document.getElementById('statsRow');
+  if(!entries || entries.length === 0){
+    list.innerHTML = '<div class="empty">No entries found in the sheet yet.</div>';
+    statsRow.innerHTML = '';
+    return;
+  }
+  const enCount = entries.filter(e=>e.lang === 'en').length;
+  const arCount = entries.filter(e=>e.lang === 'ar').length;
+  const days = new Set(entries.map(e=>e.date)).size;
+  statsRow.innerHTML = `
+    <div class="stat"><div class="num">${entries.length}</div><div class="lbl">Total logged</div></div>
+    <div class="stat"><div class="num">${enCount}</div><div class="lbl">English</div></div>
+    <div class="stat"><div class="num">${arCount}</div><div class="lbl">Arabic</div></div>
+    <div class="stat"><div class="num">${days}</div><div class="lbl">Days practiced</div></div>`;
+  list.innerHTML = '';
+  entries.slice().reverse().forEach(e=>{
+    const row = document.createElement('div');
+    row.className = 'log-row';
+    row.innerHTML = `<span>${escapeHtml(e.date)} ${escapeHtml(e.time||'')} · ${(e.lang||'').toUpperCase()} · ${escapeHtml(e.phrase)}${e.category ? ' <span class="tag">'+escapeHtml(e.category)+'</span>' : ''}</span>`;
+    list.appendChild(row);
+  });
+}
+
+// ---------- Gemini API helper (used for Ask AI + sentence analysis) ----------
+// Uses your own free Gemini API key (aistudio.google.com/app/apikey) directly
+// from the browser, so this app carries no ongoing AI cost to you.
+const GEMINI_MODEL = 'gemini-2.5-flash';
+async function callGemini(userText, opts){
+  opts = opts || {};
+  const apiKey = (state.settings.geminiApiKey || '').trim();
+  if(!apiKey){
+    const err = new Error('missing-api-key');
+    err.code = 'missing-api-key';
+    throw err;
+  }
+  const contents = (opts.history || []).map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }]
+  }));
+  contents.push({ role: 'user', parts: [{ text: userText }] });
+  const body = { contents };
+  if(opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
+  if(opts.useSearch !== false) body.tools = [{ google_search: {} }];
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if(data.error){
+    const err = new Error(data.error.message || 'Gemini API error');
+    err.code = 'api-error';
+    throw err;
+  }
+  const candidate = (data.candidates || [])[0];
+  const text = ((candidate && candidate.content && candidate.content.parts) || [])
+    .map(p => p.text || '').join('');
+
+  // Pull grounding sources (the pages Google Search actually used) if present.
+  let sources = [];
+  const grounding = candidate && candidate.groundingMetadata;
+  if(grounding && Array.isArray(grounding.groundingChunks)){
+    grounding.groundingChunks.forEach(c=>{
+      if(c.web && c.web.uri) sources.push({ url: c.web.uri, title: c.web.title || c.web.uri });
+    });
+  }
+  const seen = new Set();
+  sources = sources.filter(s=>{ if(seen.has(s.url)) return false; seen.add(s.url); return true; });
+  return { text: text.trim() || '(no response)', sources };
+}
+
+// ---------- Grammar Hub ----------
+let grammarFilter = { query: '', language: '', category: '' };
+let currentAiEntry = null; // grammar entry the Ask-AI modal is scoped to, if any
+let chatHistory = [];
+
+async function saveGrammar(){ lsSet('grammar', state.grammar); }
+
+function stripTashkeel(s){
+  return (s || '').replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D4-\u08E1\u08E3-\u08FF]/g, '');
+}
+
+function getGrammarCategories(){
+  return [...new Set(state.grammar.map(g=>g.category).filter(Boolean))].sort();
+}
+function updateGrammarCategoryDropdown(){
+  const sel = document.getElementById('gCategoryFilter');
+  const current = sel.value;
+  const cats = getGrammarCategories();
+  sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  if(cats.includes(current)) sel.value = current;
+}
+function matchesGrammarFilter(g, f){
+  if(f.language && g.language !== f.language) return false;
+  if(f.category && g.category !== f.category) return false;
+  if(!f.query) return true;
+  const q = f.query.toLowerCase();
+  const hay = [g.title, g.rule_summary, g.user_notes, (g.tags||[]).join(' '), (g.examples||[]).map(e=>e.target+' '+e.translation).join(' ')].join(' ');
+  return hay.toLowerCase().includes(q) || hay.includes(f.query);
+}
+
+function renderGrammarList(){
+  updateGrammarCategoryDropdown();
+  const list = document.getElementById('grammarList');
+  const countNote = document.getElementById('grammarCountNote');
+  const showTashkeel = document.getElementById('tashkeelToggle').checked;
+  if(state.grammar.length === 0){
+    list.innerHTML = '<div class="empty">No grammar entries yet. Add your first rule above.</div>';
+    countNote.textContent = '';
+    return;
+  }
+  const matches = state.grammar.filter(g => matchesGrammarFilter(g, grammarFilter));
+  countNote.textContent = matches.length + ' of ' + state.grammar.length + ' entries';
+  if(matches.length === 0){
+    list.innerHTML = '<div class="empty">No entries match that search.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  matches.forEach(g=>{
+    const isAr = g.language === 'Arabic';
+    const card = document.createElement('div');
+    card.className = 'grammar-card';
+    const examplesHtml = (g.examples||[]).map((ex, i)=>{
+      const targetText = isAr && !showTashkeel ? stripTashkeel(ex.target) : ex.target;
+      return `
+        <div class="example-row">
+          <div class="example-target" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(targetText)}</div>
+          <div class="example-translation">${escapeHtml(ex.translation || '')}</div>
+          <div class="example-actions">
+            <button class="icon" data-speak-raw="${escapeHtml(ex.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
+            ${isAr ? `<button class="ghost" data-analyze-id="${g.id}" data-analyze-ex="${i}">Analyze</button>` : ''}
+          </div>
+          <div class="analysis-box" id="analysis-${g.id}-${i}" style="display:none;"></div>
+        </div>`;
+    }).join('');
+    card.innerHTML = `
+      <div class="grammar-title" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(g.title)}</div>
+      <div class="pill-row">
+        <span class="pill lang">${escapeHtml(g.language)}</span>
+        ${g.category ? `<span class="pill">${escapeHtml(g.category)}</span>` : ''}
+        ${(g.tags||[]).map(t=>`<span class="pill">${escapeHtml(t)}</span>`).join('')}
+      </div>
+      <div class="rule-summary">${escapeHtml(g.rule_summary || '')}</div>
+      ${examplesHtml}
+      ${g.user_notes ? `<div class="notes-line">${escapeHtml(g.user_notes)}</div>` : ''}
+      <div class="grammar-actions">
+        <button class="ghost" data-ask-entry="${g.id}">Ask AI about this rule</button>
+        <button class="ghost" data-flash-entry="${g.id}">Make flashcards</button>
+        <button class="icon" data-del-grammar="${g.id}" title="Delete">✕</button>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('gSearch').addEventListener('input', e=>{ grammarFilter.query = e.target.value.trim(); renderGrammarList(); });
+document.getElementById('gLangFilter').addEventListener('change', e=>{ grammarFilter.language = e.target.value; renderGrammarList(); });
+document.getElementById('gCategoryFilter').addEventListener('change', e=>{ grammarFilter.category = e.target.value; renderGrammarList(); });
+document.getElementById('tashkeelToggle').addEventListener('change', renderGrammarList);
+
+document.getElementById('addGrammarBtn').addEventListener('click', async ()=>{
+  const title = document.getElementById('gTitle').value.trim();
+  const language = document.getElementById('gLang').value;
+  const category = document.getElementById('gCategory').value.trim();
+  const rule_summary = document.getElementById('gRuleSummary').value.trim();
+  const rawExamples = document.getElementById('gExamples').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  const examples = rawExamples.map(line=>{
+    const parts = line.split('|').map(s=>s.trim());
+    return { target: parts[0] || '', translation: parts[1] || '' };
+  });
+  const tags = document.getElementById('gTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const user_notes = document.getElementById('gNotes').value.trim();
+  if(!title) return;
+  state.grammar.unshift({ id: uid(), title, language, category, rule_summary, examples, user_notes, tags, date_created: todayStr() });
+  await saveGrammar();
+  ['gTitle','gCategory','gRuleSummary','gExamples','gTags','gNotes'].forEach(id=> document.getElementById(id).value = '');
+  renderGrammarList();
+});
+
+document.addEventListener('click', async (e)=>{
+  const rawTarget = e.target.dataset.speakRaw;
+  if(rawTarget !== undefined){
+    speak(rawTarget, e.target.dataset.speakLang);
+    return;
+  }
+  const delGid = e.target.dataset.delGrammar;
+  if(delGid){
+    state.grammar = state.grammar.filter(g=>g.id !== delGid);
+    await saveGrammar();
+    renderGrammarList();
+    return;
+  }
+  const analyzeId = e.target.dataset.analyzeId;
+  if(analyzeId !== undefined){
+    const g = state.grammar.find(x=>x.id === analyzeId);
+    const exIdx = parseInt(e.target.dataset.analyzeEx, 10);
+    if(g && g.examples[exIdx]) runAnalysis(g.examples[exIdx].target, 'analysis-'+analyzeId+'-'+exIdx, e.target);
+    return;
+  }
+  const askEntryId = e.target.dataset.askEntry;
+  if(askEntryId){
+    const g = state.grammar.find(x=>x.id === askEntryId);
+    openAiModal(g || null);
+    return;
+  }
+  const flashEntryId = e.target.dataset.flashEntry;
+  if(flashEntryId){
+    const g = state.grammar.find(x=>x.id === flashEntryId);
+    if(g) openFlashcardModal(g);
+    return;
+  }
+});
+
+// ---------- Sentence analyzer ----------
+async function runAnalysis(sentence, targetElId, triggerBtn){
+  const box = targetElId ? document.getElementById(targetElId) : document.getElementById('analyzerOutput');
+  if(!sentence) return;
+  if(triggerBtn){ triggerBtn.disabled = true; triggerBtn.textContent = 'Analyzing...'; }
+  box.style.display = 'block';
+  box.innerHTML = 'Analyzing...';
+  const system = 'You are an Arabic grammar assistant. Respond ONLY with strict JSON, no prose, no code fences, in this exact shape: {"words":[{"word":"...","root":"...","pos":"...","note":"..."}]}. "pos" should be a short part-of-speech / role label (e.g. verb, subject-noun, preposition, object). "note" should mention gender/number agreement or case ending (i\'rab) briefly. Keep it concise.';
+  try{
+    const { text } = await callGemini('Break down this Arabic sentence word by word: ' + sentence, { system, useSearch: false });
+    const cleaned = text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(cleaned);
+    const rows = (parsed.words||[]).map(w=>`<tr><td dir="rtl">${escapeHtml(w.word||'')}</td><td dir="rtl">${escapeHtml(w.root||'')}</td><td>${escapeHtml(w.pos||'')}</td><td>${escapeHtml(w.note||'')}</td></tr>`).join('');
+    box.innerHTML = `<table class="analysis-table"><tr><th>Word</th><th>Root</th><th>Role</th><th>Notes (agreement / i'rab)</th></tr>${rows}</table>`;
+  }catch(err){
+    box.innerHTML = err && err.code === 'missing-api-key'
+      ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
+      : '<div class="status-msg err">Could not analyze that sentence right now. Try again.</div>';
+  }
+  if(triggerBtn){ triggerBtn.disabled = false; triggerBtn.textContent = 'Analyze'; }
+}
+document.getElementById('analyzerBtn').addEventListener('click', ()=>{
+  const sentence = document.getElementById('analyzerInput').value.trim();
+  runAnalysis(sentence, 'analyzerOutput', document.getElementById('analyzerBtn'));
+});
+
+// ---------- Ask AI chat modal ----------
+function openAiModal(entry){
+  currentAiEntry = entry;
+  chatHistory = [];
+  document.getElementById('aiModalTitle').textContent = entry ? 'Ask AI — ' + entry.title : 'Ask AI';
+  document.getElementById('aiModalSub').textContent = entry
+    ? 'Powered by Gemini with Google Search grounding. Ask about usage, nuance, or MSA vs. dialect for this rule.'
+    : 'Powered by Gemini with Google Search grounding — answers include sources where relevant.';
+  document.getElementById('chatThread').innerHTML = '';
+  document.getElementById('chatInput').value = '';
+  document.getElementById('aiModal').classList.add('open');
+}
+document.getElementById('aiBtn').addEventListener('click', ()=> openAiModal(null));
+document.getElementById('closeAi').addEventListener('click', ()=> document.getElementById('aiModal').classList.remove('open'));
+
+function appendChatBubble(role, text, sources){
+  const thread = document.getElementById('chatThread');
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble ' + role;
+  let html = escapeHtml(text).replace(/\n/g,'<br>');
+  if(sources && sources.length){
+    html += '<div class="chat-sources">Sources: ' + sources.map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>`).join(' · ') + '</div>';
+  }
+  bubble.innerHTML = html;
+  thread.appendChild(bubble);
+  thread.scrollTop = thread.scrollHeight;
+}
+async function sendChat(){
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = '';
+  appendChatBubble('user', text);
+  chatHistory.push({ role: 'user', content: text });
+  const sendBtn = document.getElementById('chatSendBtn');
+  sendBtn.disabled = true;
+  const loadingBubble = document.createElement('div');
+  loadingBubble.className = 'chat-bubble assistant';
+  loadingBubble.textContent = 'Thinking...';
+  document.getElementById('chatThread').appendChild(loadingBubble);
+  const contextPrefix = currentAiEntry
+    ? `Context — grammar entry "${currentAiEntry.title}" (${currentAiEntry.language}, ${currentAiEntry.category || 'uncategorized'}): ${currentAiEntry.rule_summary || ''}\n\nUser question: `
+    : '';
+  try{
+    const { text: reply, sources } = await callGemini(contextPrefix + text, { history: chatHistory.slice(0,-1), useSearch: true });
+    loadingBubble.remove();
+    appendChatBubble('assistant', reply, sources);
+    chatHistory.push({ role: 'assistant', content: reply });
+  }catch(err){
+    loadingBubble.remove();
+    const msg = err && err.code === 'missing-api-key'
+      ? 'Add a free Gemini API key in Sheet settings first (gear icon, top right).'
+      : 'Something went wrong reaching the AI assistant. Please try again.';
+    appendChatBubble('assistant', msg);
+    chatHistory.pop(); // don't keep the failed turn's user message in context
+  }
+  sendBtn.disabled = false;
+}
+document.getElementById('chatSendBtn').addEventListener('click', sendChat);
+document.getElementById('chatInput').addEventListener('keydown', e=>{ if(e.key === 'Enter') sendChat(); });
+
+// ---------- Flashcards ----------
+function makeFillBlank(sentence){
+  const words = sentence.trim().split(/\s+/);
+  if(words.length < 2) return null;
+  let idx = 0;
+  words.forEach((w,i)=>{ if(w.length > words[idx].length) idx = i; });
+  const answer = words[idx];
+  const blanked = words.slice(); blanked[idx] = '____';
+  return { display: blanked.join(' '), answer };
+}
+function makeReorder(sentence){
+  const words = sentence.trim().split(/\s+/);
+  if(words.length < 2) return null;
+  let shuffled = words.slice();
+  let tries = 0;
+  do { shuffled = shuffled.slice().sort(()=>Math.random()-0.5); tries++; } while(shuffled.join(' ') === words.join(' ') && tries < 8);
+  return { original: words, shuffled };
+}
+function openFlashcardModal(entry){
+  const isAr = entry.language === 'Arabic';
+  const container = document.getElementById('flashcardContainer');
+  container.innerHTML = '';
+  (entry.examples||[]).forEach((ex, i)=>{
+    if(!ex.target) return;
+    const fb = makeFillBlank(ex.target);
+    const ro = makeReorder(ex.target);
+    const wrap = document.createElement('div');
+    wrap.className = 'flash-card';
+    let html = `<div class="notes-line" style="margin-bottom:6px;">${escapeHtml(ex.translation||'')}</div>`;
+    if(fb){
+      html += `
+        <div class="flash-sentence" ${isAr?'dir="rtl"':''}>${escapeHtml(fb.display)}</div>
+        <div class="field-row">
+          <input type="text" ${isAr?'dir="rtl"':''} class="fb-input" placeholder="Type the missing word" data-answer="${escapeHtml(fb.answer)}">
+          <button class="ghost fb-check">Check</button>
+        </div>
+        <div class="status-msg fb-result"></div>`;
+    }
+    if(ro){
+      const chipsHtml = ro.shuffled.map((w,wi)=>`<span class="word-chip" data-word="${escapeHtml(w)}" data-widx="${wi}">${escapeHtml(w)}</span>`).join('');
+      html += `
+        <div class="notes-line" style="margin-top:12px;">Reorder into the correct sentence:</div>
+        <div class="chips-pool" ${isAr?'dir="rtl"':''}>${chipsHtml}</div>
+        <div class="built-row" ${isAr?'dir="rtl"':''}></div>
+        <button class="ghost ro-reset">Reset</button>
+        <div class="status-msg ro-result"></div>`;
+    }
+    wrap.innerHTML = html;
+    wrap.dataset.original = ro ? ro.original.join(' ') : '';
+    container.appendChild(wrap);
+  });
+  if(!container.innerHTML) container.innerHTML = '<div class="empty">This entry has no examples to turn into cards yet.</div>';
+  document.getElementById('flashcardModal').classList.add('open');
+}
+document.getElementById('closeFlashcards').addEventListener('click', ()=> document.getElementById('flashcardModal').classList.remove('open'));
+
+document.addEventListener('click', (e)=>{
+  if(e.target.classList.contains('fb-check')){
+    const row = e.target.closest('.flash-card');
+    const input = row.querySelector('.fb-input');
+    const result = row.querySelector('.fb-result');
+    const ok = input.value.trim() === input.dataset.answer.trim();
+    result.textContent = ok ? 'Correct!' : 'Not quite — answer: ' + input.dataset.answer;
+    result.className = 'status-msg fb-result' + (ok ? '' : ' err');
+    return;
+  }
+  if(e.target.classList.contains('word-chip') && !e.target.classList.contains('used')){
+    const row = e.target.closest('.flash-card');
+    const built = row.querySelector('.built-row');
+    const chip = document.createElement('span');
+    chip.className = 'word-chip used';
+    chip.textContent = e.target.dataset.word;
+    built.appendChild(chip);
+    e.target.classList.add('used');
+    const builtWords = [...built.children].map(c=>c.textContent).join(' ');
+    if([...row.querySelectorAll('.word-chip')].every(c=>c.classList.contains('used'))){
+      const result = row.querySelector('.ro-result');
+      const ok = builtWords === row.dataset.original;
+      result.textContent = ok ? 'Correct order!' : 'Not quite — correct order: ' + row.dataset.original;
+      result.className = 'status-msg ro-result' + (ok ? '' : ' err');
+    }
+    return;
+  }
+  if(e.target.classList.contains('ro-reset')){
+    const row = e.target.closest('.flash-card');
+    row.querySelectorAll('.word-chip.used').forEach(c=>c.remove());
+    row.querySelectorAll('.chips-pool .word-chip').forEach(c=>c.classList.remove('used'));
+    row.querySelector('.ro-result').textContent = '';
+    return;
+  }
+});
+
+// ---------- Init ----------
+(async function init(){
+  await loadState();
+  renderBank();
+  renderSession();
+  renderReview();
+  renderGrammarList();
+
+  if(!state.bank.length){
+    state.bank = [
+      { id: uid(), en: "It's a pleasure to work with you.", ar: 'يسعدني العمل معك.', category: 'Professional greetings', practiceCount: 0, lastPracticed: null },
+      { id: uid(), en: "Let's review the quarterly figures.", ar: 'دعنا نستعرض الأرقام الفصلية.', category: 'Economic terminology', practiceCount: 0, lastPracticed: null },
+      { id: uid(), en: 'Could you clarify your point on inflation?', ar: 'هل يمكنك توضيح وجهة نظرك حول التضخم؟', category: 'Meetings', practiceCount: 0, lastPracticed: null }
+    ];
+    await saveBank();
+    renderBank();
+  }
+})();
+</script>
+</body>
+</html>
