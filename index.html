@@ -587,6 +587,15 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
     <p id="geminiModelNote" style="margin-top:-8px; font-size:11.5px;"></p>
     <p style="margin-top:-8px;">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>. Nothing is sent anywhere except Google's Gemini API, directly from your browser.</p>
+    <div class="field">
+      <label>Google Search API key (optional — see note below)</label>
+      <input type="text" id="googleSearchApiKeyInput" placeholder="only if you already have a Custom Search key">
+    </div>
+    <div class="field">
+      <label>Search engine ID / cx (optional)</label>
+      <input type="text" id="googleSearchCxInput" placeholder="e.g. a1b2c3d4e5f6g7h8i">
+    </div>
+    <p style="margin-top:-8px;">Google closed the Custom Search JSON API to new signups, so these two fields only matter if you already had a key from before — leave them blank otherwise. Without them, Ask AI still gives you a one-tap Google search link whenever Gemini's quota runs out.</p>
     <div class="modal-actions">
       <button class="ghost" id="closeSettings">Cancel</button>
       <button class="primary" id="saveSettings">Save</button>
@@ -620,7 +629,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '' } };
+let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '' } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -639,10 +648,12 @@ async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
   state.grammar = lsGet('grammar', []);
-  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'' });
+  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
   if(state.settings.geminiModel === undefined) state.settings.geminiModel = '';
   if(state.settings.geminiModelOverride === undefined) state.settings.geminiModelOverride = '';
+  if(state.settings.googleSearchApiKey === undefined) state.settings.googleSearchApiKey = '';
+  if(state.settings.googleSearchCx === undefined) state.settings.googleSearchCx = '';
 }
 async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); }
@@ -723,6 +734,8 @@ document.getElementById('settingsBtn').addEventListener('click', ()=>{
   document.getElementById('geminiModelNote').textContent = state.settings.geminiModel
     ? 'Currently using: ' + state.settings.geminiModel + ' (auto-detected)'
     : '';
+  document.getElementById('googleSearchApiKeyInput').value = state.settings.googleSearchApiKey || '';
+  document.getElementById('googleSearchCxInput').value = state.settings.googleSearchCx || '';
   modal.classList.add('open');
 });
 document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
@@ -735,6 +748,8 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
     state.settings.geminiModel = '';
   }
   state.settings.geminiModelOverride = modelOverride;
+  state.settings.googleSearchApiKey = document.getElementById('googleSearchApiKeyInput').value.trim();
+  state.settings.googleSearchCx = document.getElementById('googleSearchCxInput').value.trim();
   await saveSettings();
   modal.classList.remove('open');
 });
@@ -1334,6 +1349,23 @@ async function callGemini(userText, opts, _modelIndex){
   return { text: text.trim() || '(no response)', sources };
 }
 
+// ---------- Plain Google Search fallback (used when Gemini's quota runs out) ----------
+// Optional: if you set up a free Programmable Search Engine (100 free
+// queries/day at programmablesearchengine.google.com), this returns real
+// search snippets. If it's not configured, callers just fall back to a
+// plain "search Google" link instead — either way this never touches your
+// Gemini quota.
+async function googleSearchFallback(query){
+  const key = (state.settings.googleSearchApiKey || '').trim();
+  const cx = (state.settings.googleSearchCx || '').trim();
+  if(!key || !cx) return null;
+  const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&num=5`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data.error) throw new Error(data.error.message || 'Custom Search API error');
+  return (data.items || []).map(it => ({ title: it.title || it.link, url: it.link, snippet: it.snippet || '' }));
+}
+
 // ---------- Grammar Hub ----------
 let grammarFilter = { query: '', language: '', category: '' };
 let currentAiEntry = null; // grammar entry the Ask-AI modal is scoped to, if any
@@ -1566,11 +1598,31 @@ async function sendChat(){
   }catch(err){
     console.error('Gemini chat error:', err);
     loadingBubble.remove();
-    const msg = err && err.code === 'missing-api-key'
-      ? 'Add a free Gemini API key in Sheet settings first (gear icon, top right).'
-      : `Something went wrong reaching Gemini: ${(err && err.message) || 'unknown error'}`;
-    appendChatBubble('assistant', msg);
-    chatHistory.pop(); // don't keep the failed turn's user message in context
+    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    if(isQuota){
+      let handled = false;
+      try{
+        const results = await googleSearchFallback(text);
+        if(results && results.length){
+          const summary = "Gemini's free daily quota is used up for today, so here are plain Google search results instead:\n\n" +
+            results.map(r => r.snippet ? `${r.title} — ${r.snippet}` : r.title).join('\n\n');
+          appendChatBubble('assistant', summary, results.map(r => ({ url: r.url, title: r.title })));
+          handled = true;
+        }
+      }catch(searchErr){ console.error('Google Search fallback error:', searchErr); }
+      if(!handled){
+        appendChatBubble('assistant', "Gemini's free daily quota is used up for today (it resets on its own, usually within a day). Here's a plain Google search link instead:", [
+          { url: `https://www.google.com/search?q=${encodeURIComponent(text)}`, title: `Search Google for "${text}"` }
+        ]);
+      }
+      chatHistory.pop(); // this turn wasn't answered by Gemini, so don't feed it back as context
+    } else {
+      const msg = err && err.code === 'missing-api-key'
+        ? 'Add a free Gemini API key in Sheet settings first (gear icon, top right).'
+        : `Something went wrong reaching Gemini: ${(err && err.message) || 'unknown error'}`;
+      appendChatBubble('assistant', msg);
+      chatHistory.pop(); // don't keep the failed turn's user message in context
+    }
   }
   sendBtn.disabled = false;
 }
