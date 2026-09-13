@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bilingual Phrase Trainer</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1F4A47">
+<link rel="icon" href="icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Phrase Trainer">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,500&family=Inter:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap');
 
@@ -654,6 +662,39 @@ function speak(text, lang){
   window.speechSynthesis.speak(utter);
 }
 
+// ---------- Arabic pronunciation helper ----------
+// Browser TTS engines guess vowelling from bare (undiacritized) Arabic script,
+// which is why "correct" text can still come out mispronounced — the same
+// letters can carry different short vowels depending on grammatical role
+// (i'rab) that plain script doesn't show. If a Gemini key is set, we ask it
+// to add full tashkeel once per phrase and cache the result, then speak that
+// instead. Without a key (or if the request fails) we just speak the
+// original text, same as before.
+async function vowelizeArabic(text){
+  const system = 'You add full Arabic diacritics (tashkeel/harakat, including i\'rab case endings) to Modern Standard Arabic text so a text-to-speech engine pronounces it correctly. Respond with ONLY the fully diacritized Arabic text - no explanation, no quotation marks, no transliteration, nothing else.';
+  const { text: result } = await callGemini(text, { system, useSearch: false });
+  return (result || '').trim();
+}
+async function speakArabicSmart(phraseObj, btn, onCached){
+  const apiKey = (state.settings.geminiApiKey || '').trim();
+  let text = phraseObj.ar;
+  if(apiKey && phraseObj.ar){
+    if(!phraseObj.arVoweled){
+      if(btn){ btn.disabled = true; }
+      try{
+        const voweled = await vowelizeArabic(phraseObj.ar);
+        if(voweled){
+          phraseObj.arVoweled = voweled;
+          if(onCached) await onCached();
+        }
+      }catch(e){ /* fall back to unvoweled text below */ }
+      if(btn){ btn.disabled = false; }
+    }
+    text = phraseObj.arVoweled || phraseObj.ar;
+  }
+  speak(text, 'ar');
+}
+
 // ---------- Tabs ----------
 document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -971,7 +1012,10 @@ document.addEventListener('click', async (e)=>{
   const speakId = e.target.dataset.speak;
   if(speakId){
     const p = state.bank.find(x=>x.id === e.target.dataset.id);
-    if(p) speak(speakId === 'ar' ? p.ar : p.en, speakId);
+    if(p){
+      if(speakId === 'ar') await speakArabicSmart(p, e.target, saveBank);
+      else speak(p.en, 'en');
+    }
     return;
   }
   const delId = e.target.dataset.del;
@@ -1211,9 +1255,15 @@ async function callGemini(userText, opts){
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-  const data = await res.json();
+  const raw = await res.text();
+  let data;
+  try{ data = JSON.parse(raw); }catch(e){
+    const err = new Error(`HTTP ${res.status} ${res.statusText || ''} (non-JSON response)`.trim());
+    err.code = 'api-error';
+    throw err;
+  }
   if(data.error){
-    const err = new Error(data.error.message || 'Gemini API error');
+    const err = new Error(`${data.error.status || res.status}: ${data.error.message || 'Gemini API error'}`);
     err.code = 'api-error';
     throw err;
   }
@@ -1243,6 +1293,9 @@ async function saveGrammar(){ lsSet('grammar', state.grammar); }
 
 function stripTashkeel(s){
   return (s || '').replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D4-\u08E1\u08E3-\u08FF]/g, '');
+}
+function hasTashkeel(s){
+  return /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D4-\u08E1\u08E3-\u08FF]/.test(s || '');
 }
 
 function getGrammarCategories(){
@@ -1344,7 +1397,17 @@ document.getElementById('addGrammarBtn').addEventListener('click', async ()=>{
 document.addEventListener('click', async (e)=>{
   const rawTarget = e.target.dataset.speakRaw;
   if(rawTarget !== undefined){
-    speak(rawTarget, e.target.dataset.speakLang);
+    const lang = e.target.dataset.speakLang;
+    const apiKey = (state.settings.geminiApiKey || '').trim();
+    if(lang === 'ar' && apiKey && !hasTashkeel(rawTarget)){
+      e.target.disabled = true;
+      let toSpeak = rawTarget;
+      try{ const v = await vowelizeArabic(rawTarget); if(v) toSpeak = v; }catch(err){ /* fall back below */ }
+      e.target.disabled = false;
+      speak(toSpeak, lang);
+    } else {
+      speak(rawTarget, lang);
+    }
     return;
   }
   const delGid = e.target.dataset.delGrammar;
@@ -1390,9 +1453,10 @@ async function runAnalysis(sentence, targetElId, triggerBtn){
     const rows = (parsed.words||[]).map(w=>`<tr><td dir="rtl">${escapeHtml(w.word||'')}</td><td dir="rtl">${escapeHtml(w.root||'')}</td><td>${escapeHtml(w.pos||'')}</td><td>${escapeHtml(w.note||'')}</td></tr>`).join('');
     box.innerHTML = `<table class="analysis-table"><tr><th>Word</th><th>Root</th><th>Role</th><th>Notes (agreement / i'rab)</th></tr>${rows}</table>`;
   }catch(err){
+    console.error('Gemini analyze error:', err);
     box.innerHTML = err && err.code === 'missing-api-key'
       ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
-      : '<div class="status-msg err">Could not analyze that sentence right now. Try again.</div>';
+      : `<div class="status-msg err">Could not analyze that sentence: ${escapeHtml((err && err.message) || 'unknown error')}</div>`;
   }
   if(triggerBtn){ triggerBtn.disabled = false; triggerBtn.textContent = 'Analyze'; }
 }
@@ -1450,10 +1514,11 @@ async function sendChat(){
     appendChatBubble('assistant', reply, sources);
     chatHistory.push({ role: 'assistant', content: reply });
   }catch(err){
+    console.error('Gemini chat error:', err);
     loadingBubble.remove();
     const msg = err && err.code === 'missing-api-key'
       ? 'Add a free Gemini API key in Sheet settings first (gear icon, top right).'
-      : 'Something went wrong reaching the AI assistant. Please try again.';
+      : `Something went wrong reaching Gemini: ${(err && err.message) || 'unknown error'}`;
     appendChatBubble('assistant', msg);
     chatHistory.pop(); // don't keep the failed turn's user message in context
   }
@@ -1553,6 +1618,13 @@ document.addEventListener('click', (e)=>{
     return;
   }
 });
+
+// ---------- PWA install support ----------
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(err=>console.warn('Service worker registration failed:', err));
+  });
+}
 
 // ---------- Init ----------
 (async function init(){
