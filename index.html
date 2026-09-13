@@ -581,6 +581,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <label>Gemini API key</label>
       <input type="text" id="geminiApiKeyInput" placeholder="AIza...">
     </div>
+    <div class="field">
+      <label>Gemini model (optional override)</label>
+      <input type="text" id="geminiModelInput" placeholder="leave blank to auto-detect">
+    </div>
+    <p id="geminiModelNote" style="margin-top:-8px; font-size:11.5px;"></p>
     <p style="margin-top:-8px;">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>. Nothing is sent anywhere except Google's Gemini API, directly from your browser.</p>
     <div class="modal-actions">
       <button class="ghost" id="closeSettings">Cancel</button>
@@ -615,7 +620,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '' } };
+let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '' } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -634,8 +639,10 @@ async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
   state.grammar = lsGet('grammar', []);
-  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'' });
+  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'' });
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
+  if(state.settings.geminiModel === undefined) state.settings.geminiModel = '';
+  if(state.settings.geminiModelOverride === undefined) state.settings.geminiModelOverride = '';
 }
 async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); }
@@ -712,12 +719,22 @@ const modal = document.getElementById('settingsModal');
 document.getElementById('settingsBtn').addEventListener('click', ()=>{
   document.getElementById('webAppUrlInput').value = state.settings.webAppUrl || '';
   document.getElementById('geminiApiKeyInput').value = state.settings.geminiApiKey || '';
+  document.getElementById('geminiModelInput').value = state.settings.geminiModelOverride || '';
+  document.getElementById('geminiModelNote').textContent = state.settings.geminiModel
+    ? 'Currently using: ' + state.settings.geminiModel + ' (auto-detected)'
+    : '';
   modal.classList.add('open');
 });
 document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
 document.getElementById('saveSettings').addEventListener('click', async ()=>{
   state.settings.webAppUrl = document.getElementById('webAppUrlInput').value.trim();
   state.settings.geminiApiKey = document.getElementById('geminiApiKeyInput').value.trim();
+  const modelOverride = document.getElementById('geminiModelInput').value.trim();
+  if(modelOverride !== state.settings.geminiModelOverride){
+    // Override changed — drop the auto-detected cache so the new value gets tried fresh.
+    state.settings.geminiModel = '';
+  }
+  state.settings.geminiModelOverride = modelOverride;
   await saveSettings();
   modal.classList.remove('open');
 });
@@ -1231,8 +1248,16 @@ function renderHistory(entries){
 // ---------- Gemini API helper (used for Ask AI + sentence analysis) ----------
 // Uses your own free Gemini API key (aistudio.google.com/app/apikey) directly
 // from the browser, so this app carries no ongoing AI cost to you.
-const GEMINI_MODEL = 'gemini-2.5-flash';
-async function callGemini(userText, opts){
+//
+// Google periodically retires model names (this already happened once
+// between when this app was built and when it was first tested — see the
+// "no longer available" error). So instead of hard-coding one model, we try
+// a list newest-to-oldest, and once one responds successfully we remember it
+// in settings so every later call goes straight there. If Google retires
+// that one too, this same fallback kicks in again automatically.
+const GEMINI_MODEL_FALLBACKS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+
+async function callGemini(userText, opts, _modelIndex){
   opts = opts || {};
   const apiKey = (state.settings.geminiApiKey || '').trim();
   if(!apiKey){
@@ -1240,6 +1265,20 @@ async function callGemini(userText, opts){
     err.code = 'missing-api-key';
     throw err;
   }
+  const override = (state.settings.geminiModelOverride || '').trim();
+  const cached = (state.settings.geminiModel || '').trim();
+  const preferred = override || cached;
+  const modelsToTry = preferred
+    ? [preferred, ...GEMINI_MODEL_FALLBACKS.filter(m => m !== preferred)]
+    : GEMINI_MODEL_FALLBACKS;
+  const idx = _modelIndex || 0;
+  const model = modelsToTry[idx];
+  if(!model){
+    const err = new Error('No working Gemini model found. Set one manually in Sheet & AI settings.');
+    err.code = 'api-error';
+    throw err;
+  }
+
   const contents = (opts.history || []).map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }]
@@ -1249,7 +1288,7 @@ async function callGemini(userText, opts){
   if(opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
   if(opts.useSearch !== false) body.tools = [{ google_search: {} }];
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1263,10 +1302,21 @@ async function callGemini(userText, opts){
     throw err;
   }
   if(data.error){
+    const retirable = data.error.status === 'NOT_FOUND' || /no longer available|not found/i.test(data.error.message || '');
+    if(retirable && idx + 1 < modelsToTry.length){
+      return callGemini(userText, opts, idx + 1); // try the next model down the list
+    }
     const err = new Error(`${data.error.status || res.status}: ${data.error.message || 'Gemini API error'}`);
     err.code = 'api-error';
     throw err;
   }
+
+  // This model worked — remember it so we skip straight to it next time.
+  if(model !== state.settings.geminiModel){
+    state.settings.geminiModel = model;
+    await saveSettings();
+  }
+
   const candidate = (data.candidates || [])[0];
   const text = ((candidate && candidate.content && candidate.content.parts) || [])
     .map(p => p.text || '').join('');
