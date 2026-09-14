@@ -450,12 +450,23 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
     <div class="panel">
       <h2>Practice set</h2>
+      <div class="count-note" style="margin-bottom:10px;">Practice now shares the same spaced-repetition data as Review: items due for review are prioritized, brand-new phrases trickle in at a daily cap instead of flooding a session, weak spots get extra reps, and everything else fills in from what you've drilled least — so a bank of thousands still cycles through instead of repeating the same handful.</div>
       <div class="practice-set-row">
         <div class="field" style="max-width:220px;">
           <label>Category</label>
           <select id="practiceCategoryFilter"><option value="">All categories</option></select>
         </div>
-        <div class="field" style="max-width:120px;">
+        <div class="field" style="max-width:200px;">
+          <label>Focus</label>
+          <select id="practiceMode">
+            <option value="balanced">Balanced mix (recommended)</option>
+            <option value="due">Due for review</option>
+            <option value="new">New phrases</option>
+            <option value="weak">Weak spots</option>
+            <option value="oldest">Least recently practiced</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:110px;">
           <label>How many</label>
           <select id="practiceCount">
             <option value="10">10</option>
@@ -463,9 +474,14 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="50">50</option>
           </select>
         </div>
+        <div class="field" style="max-width:130px;">
+          <label>New/day cap</label>
+          <input type="number" id="newPerDayCapInput" min="0" step="1">
+        </div>
         <button class="primary" id="genPracticeBtn">Get phrases to practice</button>
       </div>
-      <div class="field" style="margin-bottom:12px;">
+      <div class="status-msg" id="practiceModeNote"></div>
+      <div class="field" style="margin-bottom:12px; margin-top:8px;">
         <label>Or search for a specific phrase</label>
         <input type="text" id="practiceSearch" placeholder="Search English, Arabic, or category">
       </div>
@@ -679,7 +695,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '' } };
+let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -705,6 +721,7 @@ async function loadState(){
   if(state.settings.geminiModelOverride === undefined) state.settings.geminiModelOverride = '';
   if(state.settings.googleSearchApiKey === undefined) state.settings.googleSearchApiKey = '';
   if(state.settings.googleSearchCx === undefined) state.settings.googleSearchCx = '';
+  if(state.settings.newPerDayCap === undefined) state.settings.newPerDayCap = 15;
 }
 async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); }
@@ -963,6 +980,36 @@ let bankFilter = { query: '', category: '' };
 let bankVisibleCount = 100;
 const BANK_PAGE_SIZE = 100;
 let practiceSet = []; // current list shown in the Practice tab
+let lastPracticeSetIds = new Set(); // so regenerating doesn't immediately repeat the same items
+
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ---------- New-phrase daily introduction counter (local only, resets at midnight) ----------
+// Caps how many never-before-seen phrases get introduced per day. This mirrors
+// the "new card limit" used by mainstream SRS tools (Anki, SuperMemo): dumping
+// hundreds of brand-new items into a single session overloads working memory
+// and produces poor long-term retention compared to a steady, gradual intake.
+function bumpNewIntroCount(n){
+  if(!n) return getNewIntroTodayCount();
+  const today = todayStr();
+  let usage = lsGet('newIntro', { date: today, count: 0 });
+  if(usage.date !== today) usage = { date: today, count: 0 };
+  usage.count += n;
+  lsSet('newIntro', usage);
+  return usage.count;
+}
+function getNewIntroTodayCount(){
+  const today = todayStr();
+  const usage = lsGet('newIntro', { date: today, count: 0 });
+  return usage.date === today ? usage.count : 0;
+}
 
 async function copyText(text, btn){
   if(!text) return;
@@ -1021,11 +1068,19 @@ function phraseCardHtml(p, opts){
   const showDelete = opts && opts.showDelete;
   const showLog = opts && opts.showLog;
   const showStar = !opts || opts.showStar !== false;
+  const showMeta = opts && opts.showMeta;
+  let metaLine = '';
+  if(showMeta){
+    ensureSrs(p);
+    const dueNow = p.srs.nextReview <= todayStr();
+    metaLine = `<div class="due-meta">Seen ${p.practiceCount || 0}× in practice · Review station ${p.srs.station}/7 · ${dueNow ? 'due for review now' : 'next review ' + p.srs.nextReview}</div>`;
+  }
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${escapeHtml(p.en)}</div>
       ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
+      ${metaLine}
     </div>
     <div class="card-actions">
       ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}" title="Speak English">EN</button>` : ''}
@@ -1099,7 +1154,7 @@ function renderPracticeList(items){
   items.forEach(p=>{
     const pCard = document.createElement('div');
     pCard.className = 'phrase-card';
-    pCard.innerHTML = phraseCardHtml(p, { showLog: true });
+    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true });
     practiceList.appendChild(pCard);
   });
 }
@@ -1215,21 +1270,102 @@ document.addEventListener('click', async (e)=>{
       p.practiceCount = (p.practiceCount || 0) + 1;
       p.lastPracticed = todayStr();
       await saveBank();
+      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeList(practiceSet);
     }
     return;
   }
 });
 
 // ---------- Practice set generation ----------
+// Scientific basis for this selection logic:
+//  - Spacing effect: items whose Review nextReview date has arrived are
+//    prioritized, since that's when recall is weakest but not yet forgotten
+//    — the point spaced-repetition research shows produces the strongest
+//    long-term retention gains.
+//  - New-item pacing: brand-new phrases are capped per day (see
+//    newPerDayCap) rather than dumped in all at once, to avoid overloading
+//    working memory — the same principle behind Anki/SuperMemo's daily
+//    new-card limits.
+//  - Desirable difficulty: phrases still stuck at a low Review station after
+//    being attempted ("weak spots") get extra exposure, since struggling
+//    items benefit disproportionately from more retrieval attempts.
+//  - Interleaving: the final set is shuffled together rather than shown in
+//    blocks (all due, then all new, etc.), since mixing item types during a
+//    session improves discrimination and retention versus blocked practice.
+//  - Repetition avoidance: items already used in the immediately previous
+//    set are deprioritized when filling remaining slots, so regenerating a
+//    set doesn't just hand you the same few phrases again.
 document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
   const category = document.getElementById('practiceCategoryFilter').value;
+  const mode = document.getElementById('practiceMode').value;
   const count = parseInt(document.getElementById('practiceCount').value, 10);
   document.getElementById('practiceSearch').value = '';
-  let pool = state.bank.filter(p => !category || p.category === category);
-  // favor phrases practiced least so far, so a 5000-phrase bank still cycles through
-  pool = pool.slice().sort((a,b)=> (a.practiceCount||0) - (b.practiceCount||0) || Math.random() - 0.5);
-  practiceSet = pool.slice(0, count);
+
+  state.bank.forEach(ensureSrs);
+  const today = todayStr();
+  const pool = state.bank.filter(p => !category || p.category === category);
+
+  const isNew  = p => (p.practiceCount || 0) === 0 && p.srs.reps === 0 && p.srs.station === 1;
+  const isDue  = p => p.srs.nextReview <= today;
+  const isWeak = p => p.srs.station <= 2 && (p.practiceCount || 0) > 0 && !isNew(p);
+
+  const newBudgetLeft = Math.max(0, (state.settings.newPerDayCap || 0) - getNewIntroTodayCount());
+
+  let selected = [];
+  if(mode === 'due'){
+    selected = shuffle(pool.filter(isDue)).slice(0, count);
+  } else if(mode === 'new'){
+    selected = shuffle(pool.filter(isNew)).slice(0, Math.min(count, newBudgetLeft));
+  } else if(mode === 'weak'){
+    selected = shuffle(pool.filter(isWeak)).slice(0, count);
+  } else if(mode === 'oldest'){
+    selected = pool.slice().sort((a,b)=> (a.practiceCount||0) - (b.practiceCount||0) || Math.random() - 0.5).slice(0, count);
+  } else {
+    // Balanced mix (default): ~45% due, ~20% new (capped), ~15% weak spots,
+    // remainder filled by least-recently-practiced items — preferring ones
+    // NOT in the last set shown, so regenerating gives you fresh material.
+    const due   = shuffle(pool.filter(isDue));
+    const weak  = shuffle(pool.filter(p => isWeak(p) && !due.includes(p)));
+    const fresh = shuffle(pool.filter(isNew)).slice(0, newBudgetLeft);
+
+    let picked = due.slice(0, Math.round(count * 0.45));
+    picked = picked.concat(fresh.slice(0, Math.round(count * 0.2)));
+    let pickedIds = new Set(picked.map(p=>p.id));
+    picked = picked.concat(weak.filter(p=>!pickedIds.has(p.id)).slice(0, Math.round(count * 0.15)));
+
+    const usedIds = new Set(picked.map(p=>p.id));
+    const remaining = pool.filter(p=>!usedIds.has(p.id));
+    const remainingFresh = remaining.filter(p=>!lastPracticeSetIds.has(p.id));
+    const fillerPool = remainingFresh.length >= (count - picked.length) ? remainingFresh : remaining;
+    const filler = fillerPool.slice().sort((a,b)=> (a.practiceCount||0) - (b.practiceCount||0) || Math.random() - 0.5);
+    picked = picked.concat(filler.slice(0, Math.max(0, count - picked.length)));
+
+    selected = picked;
+  }
+
+  selected = shuffle(selected).slice(0, count); // interleave item types rather than showing them in blocks
+
+  const newIntroduced = selected.filter(isNew).length;
+  if(newIntroduced > 0) bumpNewIntroCount(newIntroduced);
+
+  lastPracticeSetIds = new Set(selected.map(p=>p.id));
+  practiceSet = selected;
   renderPracticeList(practiceSet);
+
+  const noteEl = document.getElementById('practiceModeNote');
+  if(selected.length === 0){
+    noteEl.textContent = 'Nothing matched this focus — try a different one, widen the category, or raise the new/day cap.';
+  } else {
+    const dueCount = pool.filter(isDue).length;
+    const weakCount = pool.filter(isWeak).length;
+    noteEl.textContent = `${selected.length} phrase${selected.length===1?'':'s'} in this set · ${dueCount} due overall · ${weakCount} weak spot${weakCount===1?'':'s'} in bank · ${getNewIntroTodayCount()}/${state.settings.newPerDayCap||0} new phrases introduced today.`;
+  }
+});
+document.getElementById('newPerDayCapInput').addEventListener('change', async (e)=>{
+  const v = parseInt(e.target.value, 10);
+  state.settings.newPerDayCap = (isNaN(v) || v < 0) ? 15 : v;
+  e.target.value = state.settings.newPerDayCap;
+  await saveSettings();
 });
 document.getElementById('practiceSearch').addEventListener('input', (e)=>{
   const q = e.target.value.trim();
@@ -2073,6 +2209,7 @@ if('serviceWorker' in navigator){
 // ---------- Init ----------
 (async function init(){
   await loadState();
+  document.getElementById('newPerDayCapInput').value = state.settings.newPerDayCap;
   renderBank();
   renderStarred();
   renderSession();
