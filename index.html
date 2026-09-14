@@ -320,6 +320,10 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 @media (max-width:520px){
   .stats-row{ gap:10px; }
   .stat{ min-width:80px; }
+
+  .phrase-card{ flex-wrap:wrap; }
+  .phrase-texts{ flex:1 1 100%; order:1; }
+  .card-actions{ order:2; width:100%; flex-wrap:wrap; margin-top:6px; }
 }
 </style>
 </head>
@@ -889,7 +893,7 @@ function renderReview(){
     card.innerHTML = `
       <div class="phrase-texts">
         <div class="phrase-en">${escapeHtml(p.en)} <span class="hot-badge">Hot · day ${offset}</span></div>
-        ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
       </div>
       <div class="card-actions" style="margin-top:8px;">
         ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
@@ -907,7 +911,7 @@ function renderReview(){
     card.innerHTML = `
       <div class="phrase-texts">
         <div class="phrase-en">${escapeHtml(p.en)} <span class="station-pill">Station ${p.srs.station}</span></div>
-        ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
         <div class="due-meta">${p.srs.reps}/${MIN_TO_ADVANCE[p.srs.station]} reps at this station${p.category ? ' · '+escapeHtml(p.category) : ''}</div>
       </div>
       <div>
@@ -1020,7 +1024,7 @@ function phraseCardHtml(p, opts){
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${escapeHtml(p.en)}</div>
-      ${p.ar ? `<div class="phrase-ar">${escapeHtml(p.ar)}</div>` : ''}
+      ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
     </div>
     <div class="card-actions">
