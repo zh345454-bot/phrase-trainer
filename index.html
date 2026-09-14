@@ -166,6 +166,8 @@ button.icon{
   line-height:1;
 }
 button.icon:hover{ background:var(--teal); color:#fff; }
+button.icon.wide{ width:auto; padding:0 9px; }
+button.icon.starred{ background:var(--brass); border-color:var(--brass); color:#fff; }
 
 .phrase-card{
   display:flex;
@@ -236,6 +238,10 @@ details.quick-add summary{ cursor:pointer; font-size:12.5px; color:var(--teal); 
 .due-card{ padding:14px 0; border-bottom:1px solid var(--line); }
 .due-card:last-child{ border-bottom:none; }
 .due-meta{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+.grammar-notes{ list-style:none; margin:10px 0 0; padding:0; }
+.grammar-notes li{ padding:8px 0; border-top:1px solid var(--line); font-size:13.5px; }
+.grammar-notes li:first-child{ border-top:none; }
+.grammar-notes s{ opacity:0.6; }
 .rating-row{ display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
 .rate-btn{
   border:none; color:#fff; font-family:'Inter',sans-serif; font-weight:600;
@@ -330,6 +336,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
   <nav class="tabs">
     <button class="tab-btn active" data-view="bank">Phrase Bank</button>
+    <button class="tab-btn" data-view="starred">★ Starred</button>
     <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
@@ -394,6 +401,25 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <button class="ghost" id="backupBankBtn">Backup bank to Sheet</button>
       <button class="ghost" id="restoreBankBtn">Restore bank from Sheet</button>
       <div class="status-msg" id="bankSyncStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Local backup file</h2>
+      <div class="count-note">A second safety net that doesn't depend on your Sheet or internet connection — everything (bank, log, grammar notebook) in one file you keep yourself.</div>
+      <button class="ghost" id="downloadBackupBtn">Download backup file</button>
+      <button class="ghost" id="restoreFileBtn">Restore from file...</button>
+      <input type="file" id="restoreFileInput" accept="application/json" style="display:none;">
+      <div class="status-msg" id="fileBackupStatus"></div>
+    </div>
+  </section>
+
+  <!-- STARRED -->
+  <section class="view" id="view-starred">
+    <div class="panel">
+      <h2>★ Starred phrases</h2>
+      <div class="count-note">Tap ☆ on any phrase (Phrase Bank, Practice, or Review) to pin it here — handy for a shortlist you want to focus on.</div>
+      <div class="count-note" id="starredCountNote"></div>
+      <div id="starredList"></div>
     </div>
   </section>
 
@@ -479,6 +505,21 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
   <!-- GRAMMAR HUB -->
   <section class="view" id="view-grammar">
+    <div class="panel">
+      <h2>Grammar check</h2>
+      <p class="count-note" style="margin-bottom:10px;">Write a sentence or short paragraph and get it corrected, with an explanation for each fix — powered by the same Gemini key as Ask AI (uses your daily quota).</p>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Language</label>
+        <select id="gcLang"><option value="Arabic">Arabic</option><option value="English">English</option></select>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Your writing</label>
+        <textarea id="gcInput" placeholder="اكتب جملة أو فقرة هنا للتصحيح..." style="min-height:90px;"></textarea>
+      </div>
+      <button class="primary" id="gcCheckBtn">Check my grammar</button>
+      <div id="gcResult" style="margin-top:14px;"></div>
+    </div>
+
     <div class="panel">
       <h2>Add a grammar entry</h2>
       <div class="field-row">
@@ -578,6 +619,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <input type="text" id="webAppUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
     </div>
     <div class="field">
+      <label>Shared secret (optional, recommended)</label>
+      <input type="text" id="sharedSecretInput" placeholder="any random string, matching what you set in the script">
+    </div>
+    <p style="margin-top:-8px; font-size:11.5px;">Stops anyone who discovers your Web App URL from reading or writing your sheet. Must match SHARED_SECRET in phrase-trainer-sheet-sync.gs exactly, or be blank on both sides.</p>
+    <div class="field">
       <label>Gemini API key</label>
       <input type="text" id="geminiApiKeyInput" placeholder="AIza...">
     </div>
@@ -629,7 +675,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '' } };
+let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '' } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -648,7 +694,8 @@ async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
   state.grammar = lsGet('grammar', []);
-  state.settings = lsGet('settings', { webAppUrl:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
+  state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
+  if(state.settings.sharedSecret === undefined) state.settings.sharedSecret = '';
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
   if(state.settings.geminiModel === undefined) state.settings.geminiModel = '';
   if(state.settings.geminiModelOverride === undefined) state.settings.geminiModelOverride = '';
@@ -722,6 +769,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.getElementById('view-'+btn.dataset.view).classList.add('active');
     if(btn.dataset.view === 'review') renderReview();
     if(btn.dataset.view === 'grammar') renderGrammarList();
+    if(btn.dataset.view === 'starred') renderStarred();
   });
 });
 
@@ -729,11 +777,12 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 const modal = document.getElementById('settingsModal');
 document.getElementById('settingsBtn').addEventListener('click', ()=>{
   document.getElementById('webAppUrlInput').value = state.settings.webAppUrl || '';
+  document.getElementById('sharedSecretInput').value = state.settings.sharedSecret || '';
   document.getElementById('geminiApiKeyInput').value = state.settings.geminiApiKey || '';
   document.getElementById('geminiModelInput').value = state.settings.geminiModelOverride || '';
-  document.getElementById('geminiModelNote').textContent = state.settings.geminiModel
-    ? 'Currently using: ' + state.settings.geminiModel + ' (auto-detected)'
-    : '';
+  document.getElementById('geminiModelNote').textContent = (state.settings.geminiModel
+    ? 'Currently using: ' + state.settings.geminiModel + ' (auto-detected). '
+    : '') + 'Gemini calls used today: ' + getGeminiUsageToday() + '.';
   document.getElementById('googleSearchApiKeyInput').value = state.settings.googleSearchApiKey || '';
   document.getElementById('googleSearchCxInput').value = state.settings.googleSearchCx || '';
   modal.classList.add('open');
@@ -741,6 +790,7 @@ document.getElementById('settingsBtn').addEventListener('click', ()=>{
 document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
 document.getElementById('saveSettings').addEventListener('click', async ()=>{
   state.settings.webAppUrl = document.getElementById('webAppUrlInput').value.trim();
+  state.settings.sharedSecret = document.getElementById('sharedSecretInput').value.trim();
   state.settings.geminiApiKey = document.getElementById('geminiApiKeyInput').value.trim();
   const modelOverride = document.getElementById('geminiModelInput').value.trim();
   if(modelOverride !== state.settings.geminiModelOverride){
@@ -844,6 +894,9 @@ function renderReview(){
       <div class="card-actions" style="margin-top:8px;">
         ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
         ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}">AR</button>` : ''}
+        ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
+        ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
+        <button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>
         <button class="ghost" data-hotdone="${p.id}" data-offset="${offset}">Mark reinforced</button>
       </div>`;
     list.appendChild(card);
@@ -861,6 +914,9 @@ function renderReview(){
         <div class="card-actions">
           ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
           ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}">AR</button>` : ''}
+          ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
+          ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
+          <button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>
         </div>
         <div class="rating-row">
           <button class="rate-btn rate-1" data-rate="1" data-id="${p.id}">1 Major forgetting</button>
@@ -880,6 +936,7 @@ document.addEventListener('click', async (e)=>{
     if(p){
       rateReview(p, parseInt(rateVal,10));
       await saveBank();
+      await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Review · rated ' + rateVal + '/5' + (p.category ? ' · ' + p.category : ''));
       renderReview();
     }
     return;
@@ -891,6 +948,7 @@ document.addEventListener('click', async (e)=>{
       p.hotLayerDone = p.hotLayerDone || [];
       p.hotLayerDone.push(parseInt(e.target.dataset.offset,10));
       await saveBank();
+      await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Review · hot-layer reinforcement' + (p.category ? ' · ' + p.category : ''));
       renderReview();
     }
     return;
@@ -901,6 +959,34 @@ let bankFilter = { query: '', category: '' };
 let bankVisibleCount = 100;
 const BANK_PAGE_SIZE = 100;
 let practiceSet = []; // current list shown in the Practice tab
+
+async function copyText(text, btn){
+  if(!text) return;
+  const flash = ()=>{
+    if(!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(()=>{ btn.textContent = orig; }, 900);
+  };
+  try{
+    await navigator.clipboard.writeText(text);
+    flash();
+  }catch(e){
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      flash();
+    }catch(e2){
+      alert('Could not copy automatically — long-press the text to copy it manually.');
+    }
+  }
+}
 
 function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -930,6 +1016,7 @@ function updateCategoryDropdowns(){
 function phraseCardHtml(p, opts){
   const showDelete = opts && opts.showDelete;
   const showLog = opts && opts.showLog;
+  const showStar = !opts || opts.showStar !== false;
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${escapeHtml(p.en)}</div>
@@ -939,10 +1026,32 @@ function phraseCardHtml(p, opts){
     <div class="card-actions">
       ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}" title="Speak English">EN</button>` : ''}
       ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}" title="Speak Arabic">AR</button>` : ''}
+      ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
+      ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
+      ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
       ${showDelete ? `<button class="icon" data-del="${p.id}" title="Delete">✕</button>` : ''}
     </div>`;
+}
+
+function renderStarred(){
+  const list = document.getElementById('starredList');
+  const countNote = document.getElementById('starredCountNote');
+  if(!list) return; // view not in DOM yet on first call ordering
+  const starred = state.bank.filter(p=>p.starred);
+  countNote.textContent = starred.length + ' starred phrase' + (starred.length===1?'':'s');
+  if(starred.length === 0){
+    list.innerHTML = '<div class="empty">No starred phrases yet — tap ☆ on a phrase to add it here.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  starred.forEach(p=>{
+    const card = document.createElement('div');
+    card.className = 'phrase-card';
+    card.innerHTML = phraseCardHtml(p, { showDelete: true, showLog: true });
+    list.appendChild(card);
+  });
 }
 
 function renderBank(){
@@ -1006,11 +1115,19 @@ document.getElementById('bankLoadMoreBtn').addEventListener('click', ()=>{
   renderBank();
 });
 
+function normPhrase(s){ return (s||'').trim().toLowerCase(); }
+function isDuplicatePhrase(en, ar){
+  const nEn = normPhrase(en);
+  const nAr = (ar||'').trim();
+  return state.bank.some(p => (nEn && normPhrase(p.en) === nEn) || (nAr && (p.ar||'').trim() === nAr));
+}
+
 document.getElementById('addBankBtn').addEventListener('click', async ()=>{
   const en = document.getElementById('bankEn').value.trim();
   const ar = document.getElementById('bankAr').value.trim();
   const category = document.getElementById('bankCat').value.trim();
   if(!en && !ar){ return; }
+  if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
   await saveBank();
   document.getElementById('bankEn').value = '';
@@ -1025,18 +1142,21 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('quickAddStatus');
   if(lines.length === 0){ statusEl.textContent = 'Nothing to add.'; return; }
   let added = 0;
+  let skipped = 0;
   lines.forEach(line=>{
     const parts = line.split('|').map(s=>s.trim());
     const en = parts[0] || '';
     const ar = parts[1] || '';
     const category = parts[2] || '';
     if(!en && !ar) return;
+    if(isDuplicatePhrase(en, ar)){ skipped++; return; }
     state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
     added++;
   });
   await saveBank();
   document.getElementById('quickAddArea').value = '';
-  statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank.';
+  statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
+    + (skipped ? ', skipped ' + skipped + ' already in your bank.' : '.');
   renderBank();
 });
 
@@ -1050,11 +1170,37 @@ document.addEventListener('click', async (e)=>{
     }
     return;
   }
+  const copyId = e.target.dataset.copy;
+  if(copyId){
+    const p = state.bank.find(x=>x.id === e.target.dataset.id);
+    if(p) copyText(copyId === 'ar' ? (p.ar||'') : (p.en||''), e.target);
+    return;
+  }
+  const starId = e.target.dataset.star;
+  if(starId){
+    const p = state.bank.find(x=>x.id === starId);
+    if(p){
+      p.starred = !p.starred;
+      await saveBank();
+      renderBank();
+      renderStarred();
+      if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
+      if(document.getElementById('view-review').classList.contains('active')) renderReview();
+    }
+    return;
+  }
   const delId = e.target.dataset.del;
   if(delId){
+    const p = state.bank.find(x=>x.id === delId);
+    const label = p ? (p.en || p.ar || 'this phrase') : 'this phrase';
+    const progressNote = p && p.srs && (p.srs.station > 1 || p.srs.reps > 0)
+      ? ` It's at station ${p.srs.station} in Review — deleting it loses that progress too.`
+      : '';
+    if(!confirm(`Delete "${label}"?${progressNote}`)) return;
     state.bank = state.bank.filter(x=>x.id !== delId);
     await saveBank();
     renderBank();
+    renderStarred();
     return;
   }
   const logLang = e.target.dataset.log;
@@ -1105,6 +1251,21 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function timeStr(){ return new Date().toTimeString().slice(0,5); }
 
+// ---------- Gemini usage counter (local only, resets at midnight) ----------
+function bumpGeminiUsage(){
+  const today = todayStr();
+  let usage = lsGet('geminiUsage', { date: today, count: 0 });
+  if(usage.date !== today) usage = { date: today, count: 0 };
+  usage.count += 1;
+  lsSet('geminiUsage', usage);
+  return usage.count;
+}
+function getGeminiUsageToday(){
+  const today = todayStr();
+  const usage = lsGet('geminiUsage', { date: today, count: 0 });
+  return usage.date === today ? usage.count : 0;
+}
+
 async function addLogEntry(text, lang, category){
   state.log.unshift({ id: uid(), date: todayStr(), time: timeStr(), lang, category, phrase: text, synced: false });
   await saveLog();
@@ -1131,6 +1292,22 @@ function renderSession(){
 }
 
 // ---------- Google Sheet sync ----------
+// ---------- Sheet request helpers (attach the shared secret, if set) ----------
+function sheetPostBody(extra){
+  const body = Object.assign({}, extra);
+  if(state.settings.sharedSecret) body.secret = state.settings.sharedSecret;
+  return JSON.stringify(body);
+}
+function sheetGetUrl(url, params){
+  const usp = new URLSearchParams(params || {});
+  if(state.settings.sharedSecret) usp.set('secret', state.settings.sharedSecret);
+  const qs = usp.toString();
+  return url + (qs ? (url.includes('?') ? '&' : '?') + qs : '');
+}
+function throwIfRejected(data){
+  if(data && data.status === 'error') throw new Error(data.message || 'Rejected by the sheet script.');
+}
+
 document.getElementById('syncBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('syncStatus');
   const url = state.settings.webAppUrl;
@@ -1148,16 +1325,19 @@ document.getElementById('syncBtn').addEventListener('click', async ()=>{
   statusEl.textContent = 'Syncing ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + '...';
   statusEl.className = 'status-msg';
   let failed = 0;
+  let lastErr = '';
   for(const entry of pending){
     try{
-      await fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ date: entry.date, time: entry.time, lang: entry.lang, category: entry.category, phrase: entry.phrase })
+        body: sheetPostBody({ date: entry.date, time: entry.time, lang: entry.lang, category: entry.category, phrase: entry.phrase })
       });
+      throwIfRejected(await res.json());
       entry.synced = true;
     }catch(err){
       failed++;
+      lastErr = err.message || '';
     }
   }
   await saveLog();
@@ -1166,7 +1346,7 @@ document.getElementById('syncBtn').addEventListener('click', async ()=>{
     statusEl.textContent = 'All entries synced to your Google Sheet.';
     statusEl.className = 'status-msg';
   } else {
-    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync. Check the Web App URL and deployment access.';
+    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync' + (lastErr ? ': ' + lastErr : '. Check the Web App URL and deployment access.');
     statusEl.className = 'status-msg err';
   }
 });
@@ -1182,13 +1362,65 @@ document.getElementById('pullBtn').addEventListener('click', async ()=>{
   statusEl.textContent = 'Pulling data...';
   statusEl.className = 'status-msg';
   try{
-    const res = await fetch(url, { method: 'GET' });
+    const res = await fetch(sheetGetUrl(url), { method: 'GET' });
     const data = await res.json();
+    throwIfRejected(data);
     renderHistory(data);
     statusEl.textContent = 'Pulled ' + data.length + ' entries from the sheet.';
     statusEl.className = 'status-msg';
   }catch(err){
-    statusEl.textContent = 'Could not reach the sheet. Check the Web App URL and that it is deployed with "Anyone" access.';
+    statusEl.textContent = err && err.message ? err.message : 'Could not reach the sheet. Check the Web App URL and that it is deployed with "Anyone" access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+// ---------- Local backup file (export/import, independent of the Sheet) ----------
+document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
+  const statusEl = document.getElementById('fileBackupStatus');
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: 'phrase-trainer',
+    version: 1,
+    bank: state.bank,
+    log: state.log,
+    grammar: state.grammar
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'phrase-trainer-backup-' + todayStr() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  statusEl.textContent = 'Downloaded a backup of ' + state.bank.length + ' bank phrases, ' + state.log.length + ' log entries, and ' + state.grammar.length + ' grammar entries.';
+  statusEl.className = 'status-msg';
+});
+
+document.getElementById('restoreFileBtn').addEventListener('click', ()=>{
+  document.getElementById('restoreFileInput').click();
+});
+document.getElementById('restoreFileInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('fileBackupStatus');
+  e.target.value = ''; // allow re-selecting the same file later
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar))){
+      throw new Error('This file doesn\'t look like a Phrase Trainer backup.');
+    }
+    const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}`;
+    if(!confirm(`This replaces everything currently on this device (bank, log, grammar) with the contents of this file (${summary}), from ${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'an unknown date'}. Continue?`)) return;
+    if(Array.isArray(payload.bank)) state.bank = payload.bank;
+    if(Array.isArray(payload.log)) state.log = payload.log;
+    if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
+    await saveBank(); await saveLog(); await saveGrammar();
+    renderBank(); renderSession(); renderReview(); renderGrammarList();
+    statusEl.textContent = 'Restored from file: ' + summary + '.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = 'Could not restore that file: ' + (err.message || 'invalid file.');
     statusEl.className = 'status-msg err';
   }
 });
@@ -1201,15 +1433,29 @@ document.getElementById('backupBankBtn').addEventListener('click', async ()=>{
   statusEl.textContent = 'Backing up ' + state.bank.length + ' phrases...';
   statusEl.className = 'status-msg';
   try{
-    await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ type: 'bank_sync', phrases: state.bank.map(p=>({ en:p.en, ar:p.ar, category:p.category })) })
+      body: sheetPostBody({ type: 'bank_sync', phrases: state.bank.map(p=>{
+        ensureSrs(p);
+        return {
+          id: p.id, en: p.en, ar: p.ar, category: p.category,
+          arVoweled: p.arVoweled || '',
+          practiceCount: p.practiceCount || 0,
+          lastPracticed: p.lastPracticed || '',
+          station: p.srs.station, reps: p.srs.reps,
+          nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
+          hotLayerDone: (p.hotLayerDone || []).join(';')
+        };
+      }) })
     });
-    statusEl.textContent = 'Backed up ' + state.bank.length + ' phrases to the Bank sheet.';
+    throwIfRejected(await res.json());
+    state.settings.lastBackupAt = new Date().toISOString();
+    await saveSettings();
+    statusEl.textContent = 'Backed up ' + state.bank.length + ' phrases (with review progress) to the Bank sheet.';
     statusEl.className = 'status-msg';
   }catch(err){
-    statusEl.textContent = 'Backup failed. Check the Web App URL and deployment access.';
+    statusEl.textContent = err && err.message ? err.message : 'Backup failed. Check the Web App URL and deployment access.';
     statusEl.className = 'status-msg err';
   }
 });
@@ -1218,19 +1464,39 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('bankSyncStatus');
   const url = state.settings.webAppUrl;
   if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
-  if(state.bank.length > 0 && !confirm('This replaces your current bank (' + state.bank.length + ' phrases) with what is in the sheet. Continue?')) return;
+  const lastBackupNote = state.settings.lastBackupAt
+    ? ('Your last backup from this device was ' + new Date(state.settings.lastBackupAt).toLocaleString() + '. ')
+    : "This device hasn't backed up before, so there's no record of when the sheet was last written. ";
+  if(state.bank.length > 0 && !confirm(lastBackupNote + 'Restoring replaces your current local bank (' + state.bank.length + ' phrases) with whatever is in the sheet right now, discarding any local changes since then — including from other devices that may not have backed up yet. Continue?')) return;
   statusEl.textContent = 'Restoring from sheet...';
   statusEl.className = 'status-msg';
   try{
-    const res = await fetch(url + '?type=bank', { method: 'GET' });
+    const res = await fetch(sheetGetUrl(url, { type: 'bank' }), { method: 'GET' });
     const data = await res.json();
-    state.bank = data.map(p => ({ id: uid(), en: p.en || '', ar: p.ar || '', category: p.category || '', practiceCount: 0, lastPracticed: null }));
+    throwIfRejected(data);
+    const today = todayStr();
+    state.bank = data.map(p => ({
+      id: p.id || uid(),
+      en: p.en || '', ar: p.ar || '', category: p.category || '',
+      arVoweled: p.arVoweled || '',
+      practiceCount: parseInt(p.practiceCount, 10) || 0,
+      lastPracticed: p.lastPracticed || null,
+      dateAdded: p.dateAdded || today,
+      hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
+      srs: {
+        station: parseInt(p.station, 10) || 1,
+        reps: parseInt(p.reps, 10) || 0,
+        nextReview: p.nextReview || today,
+        dateAdded: p.dateAdded || today,
+        hotLayerDone: []
+      }
+    }));
     await saveBank();
     renderBank();
-    statusEl.textContent = 'Restored ' + state.bank.length + ' phrases from the sheet.';
+    statusEl.textContent = 'Restored ' + state.bank.length + ' phrases (with review progress) from the sheet.';
     statusEl.className = 'status-msg';
   }catch(err){
-    statusEl.textContent = 'Restore failed. Check the Web App URL and deployment access.';
+    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
     statusEl.className = 'status-msg err';
   }
 });
@@ -1304,6 +1570,7 @@ async function callGemini(userText, opts, _modelIndex){
   if(opts.useSearch !== false) body.tools = [{ google_search: {} }];
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  bumpGeminiUsage();
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1367,6 +1634,71 @@ async function googleSearchFallback(query){
 }
 
 // ---------- Grammar Hub ----------
+async function checkGrammar(text, lang){
+  const system = `You are a patient ${lang} grammar tutor for a language learner. Given a piece of ${lang} text they wrote, correct any grammar, spelling, word-order, or (for Arabic) i'rab / agreement mistakes.
+${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." : ""}
+Respond with ONLY a JSON object, no markdown fences, no extra text, in exactly this shape:
+{"corrected": "the fully corrected text", "notes": [{"original": "the wrong fragment", "fixed": "the corrected fragment", "explanation": "short reason, one sentence"}]}
+If the text has no mistakes, return the same text as "corrected" and an empty notes array.`;
+  const { text: raw } = await callGemini(text, { system, useSearch: false });
+  const cleaned = raw.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
+  const input = document.getElementById('gcInput').value.trim();
+  const lang = document.getElementById('gcLang').value;
+  const resultBox = document.getElementById('gcResult');
+  if(!input) return;
+  const btn = document.getElementById('gcCheckBtn');
+  btn.disabled = true;
+  resultBox.innerHTML = '<div class="status-msg">Checking...</div>';
+  try{
+    const result = await checkGrammar(input, lang);
+    const notesHtml = (result.notes && result.notes.length)
+      ? '<ul class="grammar-notes">' + result.notes.map(n =>
+          `<li><s>${escapeHtml(n.original||'')}</s> → <strong>${escapeHtml(n.fixed||'')}</strong><br><span class="due-meta">${escapeHtml(n.explanation||'')}</span></li>`
+        ).join('') + '</ul>'
+      : '<div class="count-note">No corrections needed — looks good!</div>';
+    resultBox.innerHTML = `
+      <div class="due-card">
+        <div class="phrase-texts">
+          <div class="${lang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${lang==='Arabic'?'rtl':'ltr'}">${escapeHtml(result.corrected||'')}</div>
+        </div>
+        <div class="card-actions" style="margin-top:8px;">
+          <button class="icon" id="gcSpeakBtn">${lang==='Arabic'?'AR':'EN'}</button>
+          <button class="icon wide" id="gcCopyBtn" title="Copy corrected text">⧉ Copy</button>
+          <button class="ghost" id="gcSaveBtn">Save as grammar entry</button>
+        </div>
+      </div>
+      ${notesHtml}`;
+    document.getElementById('gcSpeakBtn').addEventListener('click', ()=>{
+      speak(result.corrected, lang === 'Arabic' ? 'ar' : 'en');
+    });
+    document.getElementById('gcCopyBtn').addEventListener('click', (ev)=>{
+      copyText(result.corrected || '', ev.target);
+    });
+    document.getElementById('gcSaveBtn').addEventListener('click', ()=>{
+      document.getElementById('gTitle').value = input.slice(0, 40) + (input.length > 40 ? '…' : '');
+      document.getElementById('gLang').value = lang;
+      document.getElementById('gRuleSummary').value = (result.notes||[]).map(n => n.explanation).join(' ');
+      document.getElementById('gExamples').value = lang === 'Arabic'
+        ? `${result.corrected} | ${input}`
+        : `${result.corrected} | `;
+      document.getElementById('gTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }catch(err){
+    console.error('Grammar check error:', err);
+    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    resultBox.innerHTML = err && err.code === 'missing-api-key'
+      ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
+      : isQuota
+        ? `<div class="status-msg err">Gemini's free daily quota is used up for today — try again tomorrow, or check <a href="https://www.google.com/search?q=${encodeURIComponent((lang==='Arabic'?'Arabic':'English')+' grammar check: '+input)}" target="_blank" rel="noopener">Google</a> in the meantime.</div>`
+        : `<div class="status-msg err">Could not check that right now: ${escapeHtml(err.message || 'unknown error')}</div>`;
+  }
+  btn.disabled = false;
+});
+
 let grammarFilter = { query: '', language: '', category: '' };
 let currentAiEntry = null; // grammar entry the Ask-AI modal is scoped to, if any
 let chatHistory = [];
@@ -1428,6 +1760,7 @@ function renderGrammarList(){
           <div class="example-translation">${escapeHtml(ex.translation || '')}</div>
           <div class="example-actions">
             <button class="icon" data-speak-raw="${escapeHtml(ex.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
+            <button class="icon wide" data-copy-raw="${escapeHtml(ex.target)}" title="Copy">⧉ Copy</button>
             ${isAr ? `<button class="ghost" data-analyze-id="${g.id}" data-analyze-ex="${i}">Analyze</button>` : ''}
           </div>
           <div class="analysis-box" id="analysis-${g.id}-${i}" style="display:none;"></div>
@@ -1477,6 +1810,11 @@ document.getElementById('addGrammarBtn').addEventListener('click', async ()=>{
 });
 
 document.addEventListener('click', async (e)=>{
+  const copyRaw = e.target.dataset.copyRaw;
+  if(copyRaw !== undefined){
+    copyText(copyRaw, e.target);
+    return;
+  }
   const rawTarget = e.target.dataset.speakRaw;
   if(rawTarget !== undefined){
     const lang = e.target.dataset.speakLang;
@@ -1732,6 +2070,7 @@ if('serviceWorker' in navigator){
 (async function init(){
   await loadState();
   renderBank();
+  renderStarred();
   renderSession();
   renderReview();
   renderGrammarList();
