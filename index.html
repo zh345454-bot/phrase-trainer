@@ -2340,6 +2340,7 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
             <button class="icon wide" data-copy-raw="${escapeHtml(arabic)}" title="Copy verse">⧉ AR</button>
           </div>
           ${tafsirBlockHtml('Tafsir al-Muyassar', result.arabic, '', { translateId: 'fresh' })}
+          ${result.grouped ? `<div class="due-meta" style="margin-top:8px;">This is part of a grouped commentary — Tafsir al-Muyassar covers this together with earlier verses starting at ${escapeHtml(result.matchedVerseKey)}.</div>` : ''}
         </div>
         <div class="card-actions" style="margin-top:8px;">
           <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${quranComUrl}" target="_blank" rel="noopener">View on Quran.com ↗</a>
