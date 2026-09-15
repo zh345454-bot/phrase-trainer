@@ -660,11 +660,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-quran">
     <div class="panel">
       <h2>Qur'an translation</h2>
-      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation into Bahasa Melayu, based on Tafsir al-Muyassar, for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
+      <div class="count-note" style="margin-bottom:10px;">Arabic is Tafsir al-Muyassar's actual commentary text, fetched directly from quran.com — not AI-generated. English is an on-demand AI translation of that Arabic text (via the "→ English" button), for personal study only. Always cross-check meaning against a recognized source before relying on either for matters of religious ruling.</div>
       <div class="practice-set-row">
         <div class="field" style="max-width:240px;">
-          <label>Reference (optional)</label>
-          <input type="text" id="quranRef" placeholder="e.g. Al-Baqarah 2:255">
+          <label>Reference (required — sura:ayah)</label>
+          <input type="text" id="quranRef" placeholder="e.g. Al-Baqarah 2:255 or just 2:255">
         </div>
       </div>
       <div class="field" style="margin:10px 0;">
@@ -2219,14 +2219,58 @@ document.getElementById('analyzerBtn').addEventListener('click', ()=>{
 
 // ---------- Qur'an translation ----------
 // Holds the in-progress (not-yet-saved) translation result so the small
-// on-demand "→ Malay" button below (delegated click handler) can reach it
+// on-demand "→ English" button below (delegated click handler) can reach it
 // and update it in place — mirrors how a saved entry's own object in
 // state.quran gets mutated by that same handler once it's on the list.
 let freshQuranResult = null;
 
-function tafsirBlockHtml(label, arabicText, malayText, opts){
+// Chapter name -> number, so the Reference field takes "Al-Baqarah 2:255",
+// "Baqarah 255", or plain "2:255" interchangeably. Matched case-insensitively
+// after stripping spaces/hyphens and a leading Al-/An-/As- article.
+const SURAH_NAMES = {
+  fatihah:1, baqarah:2, imran:3, nisa:4, maidah:5, anam:6, araf:7, anfal:8,
+  tawbah:9, yunus:10, hud:11, yusuf:12, rad:13, ibrahim:14, hijr:15, nahl:16,
+  isra:17, kahf:18, maryam:19, taha:20, anbiya:21, hajj:22, muminun:23, nur:24,
+  furqan:25, shuara:26, naml:27, qasas:28, ankabut:29, rum:30, luqman:31,
+  sajdah:32, ahzab:33, saba:34, fatir:35, yasin:36, saffat:37, sad:38, zumar:39,
+  ghafir:40, fussilat:41, shura:42, zukhruf:43, dukhan:44, jathiyah:45,
+  ahqaf:46, muhammad:47, fath:48, hujurat:49, qaf:50, dhariyat:51, tur:52,
+  najm:53, qamar:54, rahman:55, waqiah:56, hadid:57, mujadilah:58, hashr:59,
+  mumtahanah:60, saff:61, jumuah:62, munafiqun:63, taghabun:64, talaq:65,
+  tahrim:66, mulk:67, qalam:68, haqqah:69, maarij:70, nuh:71, jinn:72,
+  muzzammil:73, muddaththir:74, qiyamah:75, insan:76, mursalat:77, naba:78,
+  naziat:79, abasa:80, takwir:81, infitar:82, mutaffifin:83, inshiqaq:84,
+  buruj:85, tariq:86, ala:87, ghashiyah:88, fajr:89, balad:90, shams:91,
+  layl:92, duha:93, sharh:94, tin:95, alaq:96, qadr:97, bayyinah:98, zalzalah:99,
+  adiyat:100, qariah:101, takathur:102, asr:103, humazah:104, fil:105,
+  quraysh:106, maun:107, kawthar:108, kafirun:109, nasr:110, masad:111,
+  ikhlas:112, falaq:113, nas:114
+};
+function normalizeSurahKey_(s){
+  return s.toLowerCase().replace(/^(al|an|as|ash|adh|at)[-\s]/, '').replace(/[^a-z]/g, '');
+}
+function resolveSurahNumber_(name){
+  if(/^\d+$/.test(name.trim())) return Number(name.trim());
+  return SURAH_NAMES[normalizeSurahKey_(name)] || null;
+}
+// Parses a Reference field value into {sura, ayah}. Accepts "2:255",
+// "Al-Baqarah 2:255", "Baqarah 255", etc. Returns null if it can't resolve.
+function parseVerseRef(refText){
+  if(!refText) return null;
+  const text = refText.trim();
+  const colonMatch = text.match(/(\d{1,3})\s*[:.]\s*(\d{1,3})/);
+  if(colonMatch) return { sura: Number(colonMatch[1]), ayah: Number(colonMatch[2]) };
+  const wordMatch = text.match(/^([a-zA-Z'-]+)\s+(\d{1,3})$/);
+  if(wordMatch){
+    const sura = resolveSurahNumber_(wordMatch[1]);
+    if(sura) return { sura, ayah: Number(wordMatch[2]) };
+  }
+  return null;
+}
+
+function tafsirBlockHtml(label, arabicText, englishText, opts){
   opts = opts || {};
-  if(!arabicText && !malayText) return '';
+  if(!arabicText && !englishText) return '';
   return `
     <div class="due-meta" style="margin-top:10px; font-weight:600;">${escapeHtml(label)}${opts.badge ? ' <span class="tag">'+escapeHtml(opts.badge)+'</span>' : ''}</div>
     ${arabicText ? `
@@ -2234,36 +2278,35 @@ function tafsirBlockHtml(label, arabicText, malayText, opts){
     <div class="example-actions" style="margin-top:4px;">
       <button class="icon" data-speak-raw="${escapeHtml(arabicText)}" data-speak-lang="ar" title="Speak original Arabic">AR</button>
       <button class="icon wide" data-copy-raw="${escapeHtml(arabicText)}" title="Copy original Arabic">⧉ AR</button>
-      ${(!malayText && opts.malayId) ? `<button class="icon wide" data-quran-malay="${escapeHtml(opts.malayId)}" title="Translate this to Malay">→ Malay</button>` : ''}
+      ${(!englishText && opts.translateId) ? `<button class="icon wide" data-quran-translate="${escapeHtml(opts.translateId)}" title="Translate this to English">→ English</button>` : ''}
     </div>` : ''}
-    ${malayText ? `<div class="phrase-en" style="margin-top:6px;">${escapeHtml(malayText)}</div>` : ''}`;
+    ${englishText ? `<div class="phrase-en" style="margin-top:6px;">${escapeHtml(englishText)}</div>` : ''}`;
 }
 
-async function translateQuran(text){
-  // Scoped to just the Arabic text of Tafsir al-Muyassar — this is the one
-  // call that needs search grounding (to verify the exact original wording
-  // against real sources), and search grounding draws from a separate, far
-  // stingier free-tier quota than plain generation. The Malay translation
-  // is fetched only on demand by translateArabicToMalay() below, which
-  // needs no grounding at all, so it never touches that scarce quota.
-  const system = `You are an assistant retrieving the exact original Arabic wording of Tafsir al-Muyassar's commentary/explanation for a Qur'an passage, for personal study of Qur'anic Arabic.
-Give the ORIGINAL Arabic text of Tafsir al-Muyassar's own commentary/explanation for this passage, exactly as written in the source (not your own paraphrase, not the bare Qur'an verse itself — the tafsir's explanatory Arabic text). If you cannot find or are not confident of the exact original wording, say so plainly in that field instead of inventing text — never fabricate Arabic text and present it as the original source.
-Use search to verify the original Arabic wording against real sources before answering.
-Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape:
-{"muyassarArabic":"original Arabic tafsir text from Tafsir al-Muyassar","note":"one short sentence in Malay flagging anything worth double-checking (e.g. a well-known alternate reading), or an empty string if nothing notable"}
-This is for personal study only — do not present this as a religious ruling or a substitute for consulting a qualified scholar or the original tafsir source directly.`;
-  const { text: raw } = await callGemini(text, { system, useSearch: true });
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(cleaned);
+// Fetches the real Tafsir al-Muyassar Arabic text for a given sura/ayah,
+// proxied through the Apps Script backend (see phrase-trainer-sheet-sync.gs)
+// so this never has to worry about browser CORS against api.quran.com. No
+// AI call, no quota, no risk of fabricated text — this is the actual source.
+async function fetchMuyassarArabic(sura, ayah){
+  const url = state.settings.webAppUrl;
+  if(!url){
+    const err = new Error('Add your Apps Script Web App URL in Sheet settings first.');
+    err.code = 'missing-web-app-url';
+    throw err;
+  }
+  const res = await fetch(sheetGetUrl(url, { type: 'quran_tafsir', sura: String(sura), ayah: String(ayah) }), { method: 'GET' });
+  const data = await res.json();
+  throwIfRejected(data);
+  if(data.status !== 'ok') throw new Error(data.message || 'Could not fetch Tafsir al-Muyassar for that verse.');
+  return data;
 }
 
-// On-demand Malay translation of Arabic tafsir text already on screen. No
-// search grounding (we're translating text we already have, not sourcing
-// new text) and no JSON scaffolding — just plain text in, plain text out —
-// so this is as cheap as a call gets, and stays off the grounding quota
-// that the Translate button above depends on.
-async function translateArabicToMalay(arabicText){
-  const system = `Translate the given Arabic Islamic tafsir text into natural, concise Malay (Malaysian usage, not Indonesian spelling/vocabulary). Respond with ONLY the Malay translation - no explanation, no quotation marks, nothing else.`;
+// On-demand English translation of Arabic tafsir text already on screen. No
+// search grounding needed (we're translating text we already have, not
+// sourcing new text) and no JSON scaffolding — just plain text in, plain
+// text out — so this is as cheap as a Gemini call gets.
+async function translateArabicToEnglish(arabicText){
+  const system = `Translate the given Arabic Islamic tafsir text into natural, clear English. Respond with ONLY the English translation - no explanation, no quotation marks, nothing else.`;
   const { text } = await callGemini(arabicText, { system, useSearch: false });
   return text.trim();
 }
@@ -2273,37 +2316,41 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
   const reference = document.getElementById('quranRef').value.trim();
   const box = document.getElementById('quranOutput');
   if(!arabic) return;
+  const verseRef = parseVerseRef(reference);
+  if(!verseRef){
+    box.innerHTML = '<div class="status-msg err">Enter the Reference as sura:ayah — e.g. "2:255" or "Al-Baqarah 2:255" — so the exact verse can be looked up.</div>';
+    return;
+  }
   const btn = document.getElementById('quranTranslateBtn');
   btn.disabled = true;
-  box.innerHTML = '<div class="status-msg">Translating...</div>';
+  box.innerHTML = '<div class="status-msg">Fetching Tafsir al-Muyassar from quran.com...</div>';
   try{
-    const result = await translateQuran(arabic);
-    result.arabic = arabic; // stashed so the delegated "→ Malay" click handler below can find it
+    const result = await fetchMuyassarArabic(verseRef.sura, verseRef.ayah);
+    result.verseArabic = arabic; // the typed-in verse text, stashed alongside result.arabic (the tafsir text) so the delegated "→ English" click handler below can find both
     freshQuranResult = result;
-    const dorarUrl = 'https://www.google.com/search?q=' + encodeURIComponent('site:dorar.net/tafseer ' + (reference || arabic));
+    const quranComUrl = `https://quran.com/${verseRef.sura}:${verseRef.ayah}/tafsirs/ar-tafsir-muyassar`;
     box.innerHTML = `
       <div class="due-card" style="margin-top:10px;">
         <div class="phrase-texts">
-          ${reference ? `<div class="tag">${escapeHtml(reference)}</div>` : ''}
+          <div class="tag">${escapeHtml(reference)}</div>
           <div class="due-meta" style="font-weight:600;">Verse</div>
           <div class="phrase-ar" dir="rtl">${escapeHtml(arabic)}</div>
           <div class="example-actions" style="margin-top:4px;">
             <button class="icon" data-speak-raw="${escapeHtml(arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
             <button class="icon wide" data-copy-raw="${escapeHtml(arabic)}" title="Copy verse">⧉ AR</button>
           </div>
-          ${tafsirBlockHtml('Tafsir al-Muyassar', result.muyassarArabic, '', { malayId: 'fresh' })}
-          ${result.note ? `<div class="due-meta" style="margin-top:8px;">${escapeHtml(result.note)}</div>` : ''}
+          ${tafsirBlockHtml('Tafsir al-Muyassar', result.arabic, '', { translateId: 'fresh' })}
         </div>
         <div class="card-actions" style="margin-top:8px;">
-          <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${dorarUrl}" target="_blank" rel="noopener">Cross-check on Dorar.net ↗</a>
+          <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${quranComUrl}" target="_blank" rel="noopener">View on Quran.com ↗</a>
           <button class="ghost" id="quranSaveBtn">Save to my Qur'an log</button>
         </div>
       </div>
-      <div class="count-note" style="margin-top:8px;">AI-generated for personal study only — the Arabic tafsir text above is AI-retrieved, not copied directly from a verified source, so always cross-check it against a recognized source (e.g. Dorar.net's Tafsir encyclopedia) before treating any of this as accurate.</div>`;
+      <div class="count-note" style="margin-top:8px;">Arabic above is Tafsir al-Muyassar's real commentary text, fetched directly from quran.com. Any English shown via "→ English" is an AI translation of it, for personal study only — always cross-check meaning against a recognized source before relying on it for anything with religious significance.</div>`;
     document.getElementById('quranSaveBtn').addEventListener('click', async ()=>{
       state.quran.unshift({
-        id: uid(), reference, arabic, translation: result.muyassar || '', tafsirSource: 'Al-Muyassar', tafsirArabic: result.muyassarArabic || '',
-        altTranslation: '', altTafsirSource: '', altTafsirArabic: '', note: result.note || '',
+        id: uid(), reference, arabic, translation: result.english || '', tafsirSource: 'Al-Muyassar', tafsirArabic: result.arabic,
+        altTranslation: '', altTafsirSource: '', altTafsirArabic: '', note: '',
         verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false
       });
       await saveQuran();
@@ -2313,54 +2360,54 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
       saveBtn.disabled = true;
     });
   }catch(err){
-    console.error('Quran translate error:', err);
-    box.innerHTML = err && err.code === 'missing-api-key'
-      ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
-      : `<div class="status-msg err">Could not translate that right now: ${escapeHtml((err && err.message) || 'unknown error')}</div>`;
+    console.error('Quran tafsir fetch error:', err);
+    box.innerHTML = err && err.code === 'missing-web-app-url'
+      ? '<div class="status-msg err">Add your Apps Script Web App URL in Sheet settings first.</div>'
+      : `<div class="status-msg err">Could not fetch that right now: ${escapeHtml((err && err.message) || 'unknown error')}</div>`;
   }
   btn.disabled = false;
 });
 
-// Delegated handler for the small "→ Malay" button — either on the
+// Delegated handler for the small "→ English" button — either on the
 // fresh (not-yet-saved) translation above, or on an already-saved entry in
 // the log below. Ungrounded, on-demand, and cached once fetched (nothing
-// re-fetches a Malay translation it already has).
+// re-fetches an English translation it already has).
 document.addEventListener('click', async (e)=>{
-  const malayId = e.target.dataset.quranMalay;
-  if(!malayId) return;
+  const translateId = e.target.dataset.quranTranslate;
+  if(!translateId) return;
   const btn = e.target;
 
-  if(malayId === 'fresh'){
-    if(!freshQuranResult || !freshQuranResult.muyassarArabic) return;
+  if(translateId === 'fresh'){
+    if(!freshQuranResult || !freshQuranResult.arabic) return;
     btn.disabled = true; btn.textContent = 'Translating…';
     try{
-      const malay = await translateArabicToMalay(freshQuranResult.muyassarArabic);
-      freshQuranResult.muyassar = malay;
+      const english = await translateArabicToEnglish(freshQuranResult.arabic);
+      freshQuranResult.english = english;
       const out = document.createElement('div');
       out.className = 'phrase-en';
       out.style.marginTop = '6px';
-      out.textContent = malay;
+      out.textContent = english;
       btn.closest('.example-actions').insertAdjacentElement('afterend', out);
       btn.remove();
     }catch(err){
-      btn.disabled = false; btn.textContent = '→ Malay';
-      alert('Could not translate to Malay: ' + (err.message || 'unknown error'));
+      btn.disabled = false; btn.textContent = '→ English';
+      alert('Could not translate to English: ' + (err.message || 'unknown error'));
     }
     return;
   }
 
-  const q = state.quran.find(x=>x.id === malayId);
+  const q = state.quran.find(x=>x.id === translateId);
   if(q){
     btn.disabled = true; btn.textContent = 'Translating…';
     try{
-      const malay = await translateArabicToMalay(q.tafsirArabic);
-      q.translation = malay;
+      const english = await translateArabicToEnglish(q.tafsirArabic);
+      q.translation = english;
       if(q.synced) q.synced = false; // content changed since the last sheet sync
       await saveQuran();
       renderQuran();
     }catch(err){
-      btn.disabled = false; btn.textContent = '→ Malay';
-      alert('Could not translate to Malay: ' + (err.message || 'unknown error'));
+      btn.disabled = false; btn.textContent = '→ English';
+      alert('Could not translate to English: ' + (err.message || 'unknown error'));
     }
   }
 });
@@ -2403,7 +2450,7 @@ function renderQuran(){
           <button class="icon" data-speak-raw="${escapeHtml(q.arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
           <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic)}" title="Copy verse">⧉ AR</button>
         </div>
-        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation, { malayId: q.id })}
+        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation, { translateId: q.id })}
         ${q.altTranslation ? tafsirBlockHtml(q.altTafsirSource || '', q.altTafsirArabic, q.altTranslation) : ''}
         ${q.note ? `<div class="due-meta" style="margin-top:6px;">${escapeHtml(q.note)}</div>` : ''}
       </div>
