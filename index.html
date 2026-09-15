@@ -2218,35 +2218,54 @@ document.getElementById('analyzerBtn').addEventListener('click', ()=>{
 });
 
 // ---------- Qur'an translation ----------
-function tafsirBlockHtml(label, arabicText, malayText, badge){
+// Holds the in-progress (not-yet-saved) translation result so the small
+// on-demand "→ Malay" button below (delegated click handler) can reach it
+// and update it in place — mirrors how a saved entry's own object in
+// state.quran gets mutated by that same handler once it's on the list.
+let freshQuranResult = null;
+
+function tafsirBlockHtml(label, arabicText, malayText, opts){
+  opts = opts || {};
   if(!arabicText && !malayText) return '';
   return `
-    <div class="due-meta" style="margin-top:10px; font-weight:600;">${escapeHtml(label)}${badge ? ' <span class="tag">'+escapeHtml(badge)+'</span>' : ''}</div>
+    <div class="due-meta" style="margin-top:10px; font-weight:600;">${escapeHtml(label)}${opts.badge ? ' <span class="tag">'+escapeHtml(opts.badge)+'</span>' : ''}</div>
     ${arabicText ? `
     <div class="phrase-ar" dir="rtl">${escapeHtml(arabicText)}</div>
     <div class="example-actions" style="margin-top:4px;">
       <button class="icon" data-speak-raw="${escapeHtml(arabicText)}" data-speak-lang="ar" title="Speak original Arabic">AR</button>
       <button class="icon wide" data-copy-raw="${escapeHtml(arabicText)}" title="Copy original Arabic">⧉ AR</button>
+      ${(!malayText && opts.malayId) ? `<button class="icon wide" data-quran-malay="${escapeHtml(opts.malayId)}" title="Translate this to Malay">→ Malay</button>` : ''}
     </div>` : ''}
-    <div class="phrase-en" style="margin-top:6px;">${escapeHtml(malayText || '')}</div>`;
+    ${malayText ? `<div class="phrase-en" style="margin-top:6px;">${escapeHtml(malayText)}</div>` : ''}`;
 }
 
 async function translateQuran(text){
-  // Scoped to Tafsir al-Muyassar only (previously also requested Tafsir
-  // al-Jalalayn side-by-side, which roughly doubled the tokens used per
-  // call — both the generated content and the search-grounding calls —
-  // and was pushing some free-tier Gemini requests over their limit).
-  const system = `You are an Arabic-to-Malay (Bahasa Melayu) translation assistant for personal study of Qur'anic Arabic, focused specifically on Tafsir al-Muyassar.
-For this passage, do the following:
-- Give the ORIGINAL Arabic text of Tafsir al-Muyassar's own commentary/explanation for this passage, exactly as written in the source (not your own paraphrase, not the bare Qur'an verse itself — the tafsir's explanatory Arabic text). If you cannot find or are not confident of the exact original wording, say so plainly in that field instead of inventing text — never fabricate Arabic text and present it as the original source.
-- Then give a natural, concise Malay translation (Malaysian usage, not Indonesian spelling/vocabulary) of that tafsir's interpretation.
+  // Scoped to just the Arabic text of Tafsir al-Muyassar — this is the one
+  // call that needs search grounding (to verify the exact original wording
+  // against real sources), and search grounding draws from a separate, far
+  // stingier free-tier quota than plain generation. The Malay translation
+  // is fetched only on demand by translateArabicToMalay() below, which
+  // needs no grounding at all, so it never touches that scarce quota.
+  const system = `You are an assistant retrieving the exact original Arabic wording of Tafsir al-Muyassar's commentary/explanation for a Qur'an passage, for personal study of Qur'anic Arabic.
+Give the ORIGINAL Arabic text of Tafsir al-Muyassar's own commentary/explanation for this passage, exactly as written in the source (not your own paraphrase, not the bare Qur'an verse itself — the tafsir's explanatory Arabic text). If you cannot find or are not confident of the exact original wording, say so plainly in that field instead of inventing text — never fabricate Arabic text and present it as the original source.
 Use search to verify the original Arabic wording against real sources before answering.
 Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape:
-{"muyassarArabic":"original Arabic tafsir text from Tafsir al-Muyassar","muyassar":"Malay translation of that","note":"one short sentence in Malay flagging anything worth double-checking (e.g. a well-known alternate reading), or an empty string if nothing notable"}
+{"muyassarArabic":"original Arabic tafsir text from Tafsir al-Muyassar","note":"one short sentence in Malay flagging anything worth double-checking (e.g. a well-known alternate reading), or an empty string if nothing notable"}
 This is for personal study only — do not present this as a religious ruling or a substitute for consulting a qualified scholar or the original tafsir source directly.`;
   const { text: raw } = await callGemini(text, { system, useSearch: true });
   const cleaned = raw.replace(/```json|```/g, '').trim();
   return JSON.parse(cleaned);
+}
+
+// On-demand Malay translation of Arabic tafsir text already on screen. No
+// search grounding (we're translating text we already have, not sourcing
+// new text) and no JSON scaffolding — just plain text in, plain text out —
+// so this is as cheap as a call gets, and stays off the grounding quota
+// that the Translate button above depends on.
+async function translateArabicToMalay(arabicText){
+  const system = `Translate the given Arabic Islamic tafsir text into natural, concise Malay (Malaysian usage, not Indonesian spelling/vocabulary). Respond with ONLY the Malay translation - no explanation, no quotation marks, nothing else.`;
+  const { text } = await callGemini(arabicText, { system, useSearch: false });
+  return text.trim();
 }
 
 document.getElementById('quranTranslateBtn').addEventListener('click', async ()=>{
@@ -2259,6 +2278,8 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
   box.innerHTML = '<div class="status-msg">Translating...</div>';
   try{
     const result = await translateQuran(arabic);
+    result.arabic = arabic; // stashed so the delegated "→ Malay" click handler below can find it
+    freshQuranResult = result;
     const dorarUrl = 'https://www.google.com/search?q=' + encodeURIComponent('site:dorar.net/tafseer ' + (reference || arabic));
     box.innerHTML = `
       <div class="due-card" style="margin-top:10px;">
@@ -2270,7 +2291,7 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
             <button class="icon" data-speak-raw="${escapeHtml(arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
             <button class="icon wide" data-copy-raw="${escapeHtml(arabic)}" title="Copy verse">⧉ AR</button>
           </div>
-          ${tafsirBlockHtml('Tafsir al-Muyassar', result.muyassarArabic, result.muyassar)}
+          ${tafsirBlockHtml('Tafsir al-Muyassar', result.muyassarArabic, '', { malayId: 'fresh' })}
           ${result.note ? `<div class="due-meta" style="margin-top:8px;">${escapeHtml(result.note)}</div>` : ''}
         </div>
         <div class="card-actions" style="margin-top:8px;">
@@ -2298,6 +2319,50 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
       : `<div class="status-msg err">Could not translate that right now: ${escapeHtml((err && err.message) || 'unknown error')}</div>`;
   }
   btn.disabled = false;
+});
+
+// Delegated handler for the small "→ Malay" button — either on the
+// fresh (not-yet-saved) translation above, or on an already-saved entry in
+// the log below. Ungrounded, on-demand, and cached once fetched (nothing
+// re-fetches a Malay translation it already has).
+document.addEventListener('click', async (e)=>{
+  const malayId = e.target.dataset.quranMalay;
+  if(!malayId) return;
+  const btn = e.target;
+
+  if(malayId === 'fresh'){
+    if(!freshQuranResult || !freshQuranResult.muyassarArabic) return;
+    btn.disabled = true; btn.textContent = 'Translating…';
+    try{
+      const malay = await translateArabicToMalay(freshQuranResult.muyassarArabic);
+      freshQuranResult.muyassar = malay;
+      const out = document.createElement('div');
+      out.className = 'phrase-en';
+      out.style.marginTop = '6px';
+      out.textContent = malay;
+      btn.closest('.example-actions').insertAdjacentElement('afterend', out);
+      btn.remove();
+    }catch(err){
+      btn.disabled = false; btn.textContent = '→ Malay';
+      alert('Could not translate to Malay: ' + (err.message || 'unknown error'));
+    }
+    return;
+  }
+
+  const q = state.quran.find(x=>x.id === malayId);
+  if(q){
+    btn.disabled = true; btn.textContent = 'Translating…';
+    try{
+      const malay = await translateArabicToMalay(q.tafsirArabic);
+      q.translation = malay;
+      if(q.synced) q.synced = false; // content changed since the last sheet sync
+      await saveQuran();
+      renderQuran();
+    }catch(err){
+      btn.disabled = false; btn.textContent = '→ Malay';
+      alert('Could not translate to Malay: ' + (err.message || 'unknown error'));
+    }
+  }
 });
 
 let quranFilter = { query: '', status: '' };
@@ -2338,7 +2403,7 @@ function renderQuran(){
           <button class="icon" data-speak-raw="${escapeHtml(q.arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
           <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic)}" title="Copy verse">⧉ AR</button>
         </div>
-        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation)}
+        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation, { malayId: q.id })}
         ${q.altTranslation ? tafsirBlockHtml(q.altTafsirSource || '', q.altTafsirArabic, q.altTranslation) : ''}
         ${q.note ? `<div class="due-meta" style="margin-top:6px;">${escapeHtml(q.note)}</div>` : ''}
       </div>
