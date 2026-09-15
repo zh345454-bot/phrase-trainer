@@ -217,6 +217,8 @@ button.icon.starred{ background:var(--brass); border-color:var(--brass); color:#
 }
 .badge.synced{ background:var(--teal-soft); color:var(--teal); }
 .badge.pending{ background:#F2E6C9; color:var(--brass-deep); }
+.badge.verified{ background:var(--teal-soft); color:var(--teal); }
+.badge.unverified{ background:#F2E6C9; color:var(--brass-deep); }
 
 .stats-row{ display:flex; gap:18px; flex-wrap:wrap; margin-bottom:6px; }
 .stat{ min-width:110px; }
@@ -344,6 +346,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
+    <button class="tab-btn" data-view="quran">Qur'an Translation</button>
     <button class="tab-btn" data-view="history">History</button>
   </nav>
 
@@ -490,6 +493,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
     <div class="panel">
       <h2>Today's session log</h2>
+      <div class="count-note" id="streakNote" style="margin-bottom:10px;"></div>
       <div id="sessionList"><div class="empty">No entries logged yet today.</div></div>
       <button class="primary" id="syncBtn" style="margin-top:12px;">Sync to Google Sheet</button>
       <div class="status-msg" id="syncStatus"></div>
@@ -500,6 +504,16 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-review">
     <div class="panel">
       <h2>Due for review</h2>
+      <div class="toolbar">
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="reviewSearch" placeholder="Search English, Arabic, or category">
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label>Category</label>
+          <select id="reviewCategoryFilter"><option value="">All categories</option></select>
+        </div>
+      </div>
       <div class="count-note" id="reviewSummary"></div>
       <div id="reviewList"></div>
     </div>
@@ -612,6 +626,51 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
   </section>
 
+  <!-- QURAN TRANSLATION -->
+  <section class="view" id="view-quran">
+    <div class="panel">
+      <h2>Qur'an translation</h2>
+      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
+      <div class="practice-set-row">
+        <div class="field" style="max-width:240px;">
+          <label>Reference (optional)</label>
+          <input type="text" id="quranRef" placeholder="e.g. Al-Baqarah 2:255">
+        </div>
+      </div>
+      <div class="field" style="margin:10px 0;">
+        <label>Arabic verse or phrase</label>
+        <textarea id="quranInput" dir="rtl" placeholder="بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"></textarea>
+      </div>
+      <button class="primary" id="quranTranslateBtn">Get AI translation</button>
+      <div id="quranOutput"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Your Qur'an log</h2>
+      <div class="toolbar">
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="quranSearch" placeholder="Search reference, Arabic, or translation">
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Status</label>
+          <select id="quranStatusFilter">
+            <option value="">All entries</option>
+            <option value="verified">Verified only</option>
+            <option value="unverified">Not yet verified</option>
+          </select>
+        </div>
+      </div>
+      <div class="count-note" id="quranCountNote"></div>
+      <div id="quranList"></div>
+      <div class="card-actions" style="margin-top:12px;">
+        <button class="ghost" id="quranSyncBtn">Sync Qur'an log to Google Sheet</button>
+        <button class="ghost" id="quranDownloadBtn">Download Qur'an log only</button>
+      </div>
+      <div class="status-msg" id="quranSyncStatus"></div>
+    </div>
+  </section>
+
   <!-- HISTORY -->
   <section class="view" id="view-history">
     <div class="panel">
@@ -695,7 +754,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
+let state = { bank: [], log: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -714,6 +773,7 @@ async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
   state.grammar = lsGet('grammar', []);
+  state.quran = lsGet('quran', []);
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
   if(state.settings.sharedSecret === undefined) state.settings.sharedSecret = '';
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
@@ -726,6 +786,7 @@ async function loadState(){
 async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); }
 async function saveSettings(){ lsSet('settings', state.settings); }
+async function saveQuran(){ lsSet('quran', state.quran); }
 
 // ---------- Speech ----------
 let voicesReady = false;
@@ -791,6 +852,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'review') renderReview();
     if(btn.dataset.view === 'grammar') renderGrammarList();
     if(btn.dataset.view === 'starred') renderStarred();
+    if(btn.dataset.view === 'quran') renderQuran();
   });
 });
 
@@ -893,14 +955,23 @@ function getDueHotLayer(){
   });
   return items;
 }
+let reviewFilter = { query: '', category: '' };
 function renderReview(){
-  const due = getDueReviews();
-  const hot = getDueHotLayer();
+  updateCategoryDropdowns();
+  const dueAll = getDueReviews();
+  const hotAll = getDueHotLayer();
+  const filterActive = !!(reviewFilter.query || reviewFilter.category);
+  const due = dueAll.filter(p => matchesFilter(p, reviewFilter.query, reviewFilter.category));
+  const hot = hotAll.filter(h => matchesFilter(h.phrase, reviewFilter.query, reviewFilter.category));
   const summary = document.getElementById('reviewSummary');
   const list = document.getElementById('reviewList');
-  summary.textContent = due.length + ' due for station review · ' + hot.length + ' hot-layer reinforcement' + (hot.length===1?'':'s');
+  summary.textContent = filterActive
+    ? `Showing ${due.length} of ${dueAll.length} due for station review · ${hot.length} of ${hotAll.length} hot-layer reinforcement${hotAll.length===1?'':'s'} matching this filter`
+    : due.length + ' due for station review · ' + hot.length + ' hot-layer reinforcement' + (hot.length===1?'':'s');
   if(due.length === 0 && hot.length === 0){
-    list.innerHTML = '<div class="empty">Nothing due right now — check back tomorrow.</div>';
+    list.innerHTML = filterActive
+      ? '<div class="empty">No due items match that search.</div>'
+      : '<div class="empty">Nothing due right now — check back tomorrow.</div>';
     return;
   }
   list.innerHTML = '';
@@ -1056,7 +1127,7 @@ function getCategories(){
 
 function updateCategoryDropdowns(){
   const cats = getCategories();
-  ['bankCategoryFilter','practiceCategoryFilter'].forEach(id=>{
+  ['bankCategoryFilter','practiceCategoryFilter','reviewCategoryFilter'].forEach(id=>{
     const sel = document.getElementById(id);
     const current = sel.value;
     sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
@@ -1168,6 +1239,14 @@ document.getElementById('bankCategoryFilter').addEventListener('change', (e)=>{
   bankFilter.category = e.target.value;
   bankVisibleCount = BANK_PAGE_SIZE;
   renderBank();
+});
+document.getElementById('reviewSearch').addEventListener('input', (e)=>{
+  reviewFilter.query = e.target.value.trim();
+  renderReview();
+});
+document.getElementById('reviewCategoryFilter').addEventListener('change', (e)=>{
+  reviewFilter.category = e.target.value;
+  renderReview();
 });
 document.getElementById('bankLoadMoreBtn').addEventListener('click', ()=>{
   bankVisibleCount += BANK_PAGE_SIZE;
@@ -1391,6 +1470,32 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function timeStr(){ return new Date().toTimeString().slice(0,5); }
 
+// ---------- Streak tracking ----------
+// Works off any array of {date: 'YYYY-MM-DD'} entries — used for both the
+// local session log (today's activity) and pulled sheet history (full record).
+function getStreakInfo(entries){
+  const days = new Set((entries||[]).map(e=>e.date).filter(Boolean));
+  const today = todayStr();
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0,10);
+  let current = 0;
+  if(days.has(today) || days.has(yesterday)){
+    let cursor = new Date(days.has(today) ? today : yesterday);
+    while(days.has(cursor.toISOString().slice(0,10))){
+      current++;
+      cursor = new Date(cursor.getTime() - 86400000);
+    }
+  }
+  const sorted = Array.from(days).sort();
+  let longest = 0, run = 0, prevTime = null;
+  sorted.forEach(d=>{
+    const t = new Date(d).getTime();
+    run = (prevTime !== null && (t - prevTime) === 86400000) ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    prevTime = t;
+  });
+  return { current, longest: Math.max(longest, current), practicedToday: days.has(today) };
+}
+
 // ---------- Gemini usage counter (local only, resets at midnight) ----------
 function bumpGeminiUsage(){
   const today = todayStr();
@@ -1416,6 +1521,17 @@ function renderSession(){
   const today = todayStr();
   const todays = state.log.filter(l=>l.date === today);
   const container = document.getElementById('sessionList');
+  const streakNote = document.getElementById('streakNote');
+  if(streakNote){
+    const streak = getStreakInfo(state.log);
+    if(streak.current > 0){
+      streakNote.textContent = `🔥 ${streak.current}-day streak` + (streak.practicedToday ? '' : ' — practice today to keep it going') + ` (longest: ${streak.longest})`;
+    } else if(state.log.length > 0){
+      streakNote.textContent = `No active streak right now — longest so far: ${streak.longest} day${streak.longest===1?'':'s'}. Log something today to start a new one.`;
+    } else {
+      streakNote.textContent = 'Log a phrase to start your streak.';
+    }
+  }
   if(todays.length === 0){
     container.innerHTML = '<div class="empty">No entries logged yet today.</div>';
     return;
@@ -1523,7 +1639,8 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     version: 1,
     bank: state.bank,
     log: state.log,
-    grammar: state.grammar
+    grammar: state.grammar,
+    quran: state.quran
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -1532,7 +1649,7 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
   document.body.appendChild(a);
   a.click();
   a.remove();
-  statusEl.textContent = 'Downloaded a backup of ' + state.bank.length + ' bank phrases, ' + state.log.length + ' log entries, and ' + state.grammar.length + ' grammar entries.';
+  statusEl.textContent = 'Downloaded a backup of ' + state.bank.length + ' bank phrases, ' + state.log.length + ' log entries, ' + state.grammar.length + ' grammar entries, and ' + state.quran.length + ' Qur\'an entries.';
   statusEl.className = 'status-msg';
 });
 
@@ -1547,16 +1664,18 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
   try{
     const text = await file.text();
     const payload = JSON.parse(text);
-    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar))){
+    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran))){
       throw new Error('This file doesn\'t look like a Phrase Trainer backup.');
     }
-    const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}`;
-    if(!confirm(`This replaces everything currently on this device (bank, log, grammar) with the contents of this file (${summary}), from ${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'an unknown date'}. Continue?`)) return;
+    const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}, quran: ${payload.quran ? payload.quran.length : 0}`;
+    const sectionsPresent = ['bank','log','grammar','quran'].filter(k => Array.isArray(payload[k]));
+    if(!confirm(`This replaces your ${sectionsPresent.join(', ')} on this device with the contents of this file (${summary}), from ${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'an unknown date'}. Continue?`)) return;
     if(Array.isArray(payload.bank)) state.bank = payload.bank;
     if(Array.isArray(payload.log)) state.log = payload.log;
     if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
-    await saveBank(); await saveLog(); await saveGrammar();
-    renderBank(); renderSession(); renderReview(); renderGrammarList();
+    if(Array.isArray(payload.quran)) state.quran = payload.quran;
+    await saveBank(); await saveLog(); await saveGrammar(); await saveQuran();
+    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran();
     statusEl.textContent = 'Restored from file: ' + summary + '.';
     statusEl.className = 'status-msg';
   }catch(err){
@@ -1652,11 +1771,14 @@ function renderHistory(entries){
   const enCount = entries.filter(e=>e.lang === 'en').length;
   const arCount = entries.filter(e=>e.lang === 'ar').length;
   const days = new Set(entries.map(e=>e.date)).size;
+  const streak = getStreakInfo(entries);
   statsRow.innerHTML = `
     <div class="stat"><div class="num">${entries.length}</div><div class="lbl">Total logged</div></div>
     <div class="stat"><div class="num">${enCount}</div><div class="lbl">English</div></div>
     <div class="stat"><div class="num">${arCount}</div><div class="lbl">Arabic</div></div>
-    <div class="stat"><div class="num">${days}</div><div class="lbl">Days practiced</div></div>`;
+    <div class="stat"><div class="num">${days}</div><div class="lbl">Days practiced</div></div>
+    <div class="stat"><div class="num">${streak.current}</div><div class="lbl">Current streak</div></div>
+    <div class="stat"><div class="num">${streak.longest}</div><div class="lbl">Longest streak</div></div>`;
   list.innerHTML = '';
   entries.slice().reverse().forEach(e=>{
     const row = document.createElement('div');
@@ -1778,11 +1900,21 @@ async function checkGrammar(text, lang){
   const system = `You are a patient ${lang} grammar tutor for a language learner. Given a piece of ${lang} text they wrote, correct any grammar, spelling, word-order, or (for Arabic) i'rab / agreement mistakes.
 ${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." : ""}
 Respond with ONLY a JSON object, no markdown fences, no extra text, in exactly this shape:
-{"corrected": "the fully corrected text", "notes": [{"original": "the wrong fragment", "fixed": "the corrected fragment", "explanation": "short reason, one sentence"}]}
-If the text has no mistakes, return the same text as "corrected" and an empty notes array.`;
+{"corrected": "the fully corrected text", "category": "a short 2-4 word grammar topic label for the main type of mistake found, e.g. 'Verb conjugation', 'Case endings (i'rab)', 'Agreement', 'Word order', 'Preposition usage', 'Vocabulary/spelling' — use an empty string if no mistakes were found", "notes": [{"original": "the wrong fragment", "fixed": "the corrected fragment", "explanation": "short reason, one sentence"}]}
+If the text has no mistakes, return the same text as "corrected", an empty string for "category", and an empty notes array.`;
   const { text: raw } = await callGemini(text, { system, useSearch: false });
   const cleaned = raw.replace(/```json|```/g, '').trim();
   return JSON.parse(cleaned);
+}
+
+// Reuse an existing category name (case-insensitively) if the AI's suggestion
+// is basically the same topic already in use, so the dropdown doesn't fill up
+// with near-duplicates like "Tenses" and "Tense".
+function normalizeCategorySuggestion(suggested){
+  if(!suggested) return '';
+  const existing = getGrammarCategories();
+  const match = existing.find(c => c.toLowerCase() === suggested.toLowerCase());
+  return match || suggested;
 }
 
 document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
@@ -1821,6 +1953,7 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
     document.getElementById('gcSaveBtn').addEventListener('click', ()=>{
       document.getElementById('gTitle').value = input.slice(0, 40) + (input.length > 40 ? '…' : '');
       document.getElementById('gLang').value = lang;
+      document.getElementById('gCategory').value = normalizeCategorySuggestion(result.category || '');
       document.getElementById('gRuleSummary').value = (result.notes||[]).map(n => n.explanation).join(' ');
       document.getElementById('gExamples').value = lang === 'Arabic'
         ? `${result.corrected} | ${input}`
@@ -2005,13 +2138,24 @@ async function runAnalysis(sentence, targetElId, triggerBtn){
   if(triggerBtn){ triggerBtn.disabled = true; triggerBtn.textContent = 'Analyzing...'; }
   box.style.display = 'block';
   box.innerHTML = 'Analyzing...';
-  const system = 'You are an Arabic grammar assistant. Respond ONLY with strict JSON, no prose, no code fences, in this exact shape: {"words":[{"word":"...","root":"...","pos":"...","note":"..."}]}. "pos" should be a short part-of-speech / role label (e.g. verb, subject-noun, preposition, object). "note" should mention gender/number agreement or case ending (i\'rab) briefly. Keep it concise.';
+  const system = 'You are an Arabic grammar assistant. Respond ONLY with strict JSON, no prose, no code fences, in this exact shape: {"translation":"a concise, natural English translation of the whole sentence","words":[{"word":"...","root":"...","pos":"...","note":"..."}]}. "pos" should be a short part-of-speech / role label (e.g. verb, subject-noun, preposition, object). "note" should mention gender/number agreement or case ending (i\'rab) briefly. Keep it concise.';
   try{
     const { text } = await callGemini('Break down this Arabic sentence word by word: ' + sentence, { system, useSearch: false });
     const cleaned = text.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(cleaned);
     const rows = (parsed.words||[]).map(w=>`<tr><td dir="rtl">${escapeHtml(w.word||'')}</td><td dir="rtl">${escapeHtml(w.root||'')}</td><td>${escapeHtml(w.pos||'')}</td><td>${escapeHtml(w.note||'')}</td></tr>`).join('');
-    box.innerHTML = `<table class="analysis-table"><tr><th>Word</th><th>Root</th><th>Role</th><th>Notes (agreement / i'rab)</th></tr>${rows}</table>`;
+    const dorarUrl = 'https://www.google.com/search?q=' + encodeURIComponent('site:dorar.net/tafseer ' + sentence);
+    box.innerHTML = `
+      <div class="due-card" style="margin-bottom:10px;">
+        <div class="phrase-texts">
+          <div class="phrase-en">${escapeHtml(parsed.translation || '')}</div>
+        </div>
+        <div class="card-actions" style="margin-top:8px;">
+          <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${dorarUrl}" target="_blank" rel="noopener">Cross-check on Dorar.net ↗</a>
+        </div>
+      </div>
+      <table class="analysis-table"><tr><th>Word</th><th>Root</th><th>Role</th><th>Notes (agreement / i'rab)</th></tr>${rows}</table>
+      <div class="count-note" style="margin-top:8px;">Translation and breakdown are AI-generated for study purposes — verify meaning against a recognized source (e.g. Dorar.net) before relying on it, especially for anything with religious significance.</div>`;
   }catch(err){
     console.error('Gemini analyze error:', err);
     box.innerHTML = err && err.code === 'missing-api-key'
@@ -2023,6 +2167,215 @@ async function runAnalysis(sentence, targetElId, triggerBtn){
 document.getElementById('analyzerBtn').addEventListener('click', ()=>{
   const sentence = document.getElementById('analyzerInput').value.trim();
   runAnalysis(sentence, 'analyzerOutput', document.getElementById('analyzerBtn'));
+});
+
+// ---------- Qur'an translation ----------
+async function translateQuran(text){
+  const system = 'You are an Arabic-to-English translation assistant helping with personal study of classical/Qur\'anic Arabic. Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape: {"translation":"a concise, natural English translation of the passage","note":"one short sentence flagging any word with a well-known alternate reading or interpretation worth double-checking, or an empty string if nothing notable"}. This is for personal study only — do not present this as a religious ruling or a substitute for a recognized tafsir.';
+  const { text: raw } = await callGemini(text, { system, useSearch: false });
+  const cleaned = raw.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+document.getElementById('quranTranslateBtn').addEventListener('click', async ()=>{
+  const arabic = document.getElementById('quranInput').value.trim();
+  const reference = document.getElementById('quranRef').value.trim();
+  const box = document.getElementById('quranOutput');
+  if(!arabic) return;
+  const btn = document.getElementById('quranTranslateBtn');
+  btn.disabled = true;
+  box.innerHTML = '<div class="status-msg">Translating...</div>';
+  try{
+    const result = await translateQuran(arabic);
+    const dorarUrl = 'https://www.google.com/search?q=' + encodeURIComponent('site:dorar.net/tafseer ' + (reference || arabic));
+    box.innerHTML = `
+      <div class="due-card" style="margin-top:10px;">
+        <div class="phrase-texts">
+          ${reference ? `<div class="tag">${escapeHtml(reference)}</div>` : ''}
+          <div class="phrase-ar" dir="rtl">${escapeHtml(arabic)}</div>
+          <div class="phrase-en">${escapeHtml(result.translation || '')}</div>
+          ${result.note ? `<div class="due-meta">${escapeHtml(result.note)}</div>` : ''}
+        </div>
+        <div class="card-actions" style="margin-top:8px;">
+          <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${dorarUrl}" target="_blank" rel="noopener">Cross-check on Dorar.net ↗</a>
+          <button class="ghost" id="quranSaveBtn">Save to my Qur'an log</button>
+        </div>
+      </div>
+      <div class="count-note" style="margin-top:8px;">AI-generated for personal study only — always verify against a recognized source (e.g. Dorar.net's Tafsir encyclopedia) before treating this as accurate.</div>`;
+    document.getElementById('quranSaveBtn').addEventListener('click', async ()=>{
+      state.quran.unshift({
+        id: uid(), reference, arabic, translation: result.translation || '', note: result.note || '',
+        verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false
+      });
+      await saveQuran();
+      renderQuran();
+      const saveBtn = document.getElementById('quranSaveBtn');
+      saveBtn.textContent = 'Saved ✓';
+      saveBtn.disabled = true;
+    });
+  }catch(err){
+    console.error('Quran translate error:', err);
+    box.innerHTML = err && err.code === 'missing-api-key'
+      ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
+      : `<div class="status-msg err">Could not translate that right now: ${escapeHtml((err && err.message) || 'unknown error')}</div>`;
+  }
+  btn.disabled = false;
+});
+
+let quranFilter = { query: '', status: '' };
+function matchesQuranFilter(q, f){
+  if(f.status === 'verified' && !q.verified) return false;
+  if(f.status === 'unverified' && q.verified) return false;
+  if(!f.query) return true;
+  const query = f.query.toLowerCase();
+  const hay = [q.reference, q.arabic, q.translation].join(' ');
+  return hay.toLowerCase().includes(query) || hay.includes(f.query);
+}
+
+function renderQuran(){
+  const list = document.getElementById('quranList');
+  const countNote = document.getElementById('quranCountNote');
+  if(!list) return;
+  if(state.quran.length === 0){
+    list.innerHTML = '<div class="empty">No Qur\'an entries yet — translate a verse above, then save it here.</div>';
+    countNote.textContent = '';
+    return;
+  }
+  const matches = state.quran.filter(q => matchesQuranFilter(q, quranFilter));
+  countNote.textContent = matches.length + ' of ' + state.quran.length + ' entries';
+  if(matches.length === 0){
+    list.innerHTML = '<div class="empty">No entries match that search.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  matches.forEach(q=>{
+    const card = document.createElement('div');
+    card.className = 'due-card';
+    card.innerHTML = `
+      <div class="phrase-texts">
+        ${q.reference ? `<div class="tag">${escapeHtml(q.reference)}</div>` : ''}
+        <div class="phrase-ar" dir="rtl">${escapeHtml(q.arabic)}</div>
+        <div class="phrase-en">${escapeHtml(q.translation)}</div>
+        ${q.note ? `<div class="due-meta">${escapeHtml(q.note)}</div>` : ''}
+      </div>
+      <div class="card-actions" style="margin-top:8px;">
+        <button class="icon" data-quran-speak="${q.id}" title="Speak Arabic">AR</button>
+        <button class="icon wide" data-quran-copy="${q.id}" title="Copy Arabic">⧉ AR</button>
+        <span class="badge ${q.verified ? 'verified' : 'unverified'}">${q.verified ? '✓ Verified' + (q.verifiedAt ? ' ' + q.verifiedAt.slice(0,10) : '') : 'Not yet verified'}</span>
+        <span class="badge ${q.synced ? 'synced' : 'pending'}">${q.synced ? 'Synced' : 'Pending'}</span>
+        ${!q.verified ? `<button class="ghost" data-quran-verify="${q.id}">✓ I've verified this</button>` : ''}
+        <button class="icon" data-quran-del="${q.id}" title="Delete">✕</button>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('quranSearch').addEventListener('input', (e)=>{
+  quranFilter.query = e.target.value.trim();
+  renderQuran();
+});
+document.getElementById('quranStatusFilter').addEventListener('change', (e)=>{
+  quranFilter.status = e.target.value;
+  renderQuran();
+});
+
+document.addEventListener('click', async (e)=>{
+  const speakId = e.target.dataset.quranSpeak;
+  if(speakId){
+    const q = state.quran.find(x=>x.id === speakId);
+    if(q) speak(q.arabic, 'ar');
+    return;
+  }
+  const copyId = e.target.dataset.quranCopy;
+  if(copyId){
+    const q = state.quran.find(x=>x.id === copyId);
+    if(q) copyText(q.arabic || '', e.target);
+    return;
+  }
+  const verifyId = e.target.dataset.quranVerify;
+  if(verifyId){
+    const q = state.quran.find(x=>x.id === verifyId);
+    if(q && confirm('Confirm you have checked this translation against a recognized Islamic authority (e.g. Dorar.net\'s Tafsir encyclopedia) and it is accurate?')){
+      q.verified = true;
+      q.verifiedAt = new Date().toISOString();
+      await saveQuran();
+      renderQuran();
+    }
+    return;
+  }
+  const quranDelId = e.target.dataset.quranDel;
+  if(quranDelId){
+    if(!confirm('Delete this Qur\'an entry?')) return;
+    state.quran = state.quran.filter(x=>x.id !== quranDelId);
+    await saveQuran();
+    renderQuran();
+    return;
+  }
+});
+
+document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('quranSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  const pending = state.quran.filter(q=>!q.synced);
+  if(pending.length === 0){ statusEl.textContent = 'Nothing to sync — everything is already up to date.'; statusEl.className = 'status-msg'; return; }
+  const unverifiedPending = pending.filter(q=>!q.verified);
+  if(unverifiedPending.length > 0){
+    const proceed = confirm(
+      unverifiedPending.length + ' of ' + pending.length + ' entr' + (pending.length===1?'y is':'ies are') + ' pending sync ' +
+      "haven't been verified yet (you haven't tapped \"✓ I've verified this\" on them). " +
+      'They\'ll still sync with "Verified: No" in the sheet so you don\'t lose the entry — but the translation itself hasn\'t been double-checked. ' +
+      'Sync anyway? Cancel to go verify them first.'
+    );
+    if(!proceed){
+      statusEl.textContent = 'Sync cancelled — verify the flagged entries, then sync again.';
+      statusEl.className = 'status-msg';
+      return;
+    }
+  }
+  statusEl.textContent = 'Syncing ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + '...';
+  statusEl.className = 'status-msg';
+  let failed = 0, lastErr = '';
+  for(const q of pending){
+    try{
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: sheetPostBody({ type: 'quran_log', reference: q.reference, arabic: q.arabic, translation: q.translation, note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded })
+      });
+      throwIfRejected(await res.json());
+      q.synced = true;
+    }catch(err){ failed++; lastErr = err.message || ''; }
+  }
+  await saveQuran();
+  renderQuran();
+  if(failed === 0){
+    statusEl.textContent = 'All Qur\'an entries synced to your Google Sheet.';
+    statusEl.className = 'status-msg';
+  } else {
+    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync' + (lastErr ? ': ' + lastErr : '.');
+    statusEl.className = 'status-msg err';
+  }
+});
+
+document.getElementById('quranDownloadBtn').addEventListener('click', ()=>{
+  const statusEl = document.getElementById('quranSyncStatus');
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: 'phrase-trainer',
+    section: 'quran',
+    version: 1,
+    quran: state.quran
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'phrase-trainer-quran-backup-' + todayStr() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  statusEl.textContent = 'Downloaded ' + state.quran.length + ' Qur\'an entr' + (state.quran.length===1?'y':'ies') + ' as a standalone backup file.';
+  statusEl.className = 'status-msg';
 });
 
 // ---------- Ask AI chat modal ----------
@@ -2215,6 +2568,7 @@ if('serviceWorker' in navigator){
   renderSession();
   renderReview();
   renderGrammarList();
+  renderQuran();
 
   if(!state.bank.length){
     state.bank = [
