@@ -660,7 +660,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-quran">
     <div class="panel">
       <h2>Qur'an translation</h2>
-      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation into Bahasa Melayu, based on Tafsir al-Jalalayn (default) and Tafsir al-Muyassar, for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
+      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation into Bahasa Melayu, based on Tafsir al-Muyassar, for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
       <div class="practice-set-row">
         <div class="field" style="max-width:240px;">
           <label>Reference (optional)</label>
@@ -929,7 +929,12 @@ const MAINTENANCE_GAP_DAYS = 30;
 const HOT_LAYER_OFFSETS = [3, 8, 13];
 
 function addDays(dateStr, n){
-  const d = new Date(dateStr + 'T00:00:00');
+  // Tolerate a full ISO timestamp as well as a plain YYYY-MM-DD (see the
+  // note in ensureSrs() above) so a stray un-normalized date can never
+  // throw and take down whatever called this.
+  const base = String(dateStr || '').slice(0, 10);
+  const d = new Date(base + 'T00:00:00');
+  if(isNaN(d.getTime())) return todayStr();
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0,10);
 }
@@ -941,7 +946,16 @@ function ensureSrs(p){
     const today = todayStr();
     p.srs = { station: 1, reps: 0, nextReview: today, dateAdded: p.dateAdded || today, hotLayerDone: [] };
   }
+  // Self-heal dates that came back from a Google Sheet round-trip as full
+  // timestamps (Sheets auto-converts date-like text into real Date cells,
+  // which then serialize as e.g. "2026-09-13T16:00:00.000Z" instead of a
+  // plain "2026-09-13"). addDays() below chokes on that shape and used to
+  // throw, which crashed the whole Review tab before it could render
+  // anything — so we normalize back to a plain date here every time.
+  if(p.srs.nextReview) p.srs.nextReview = String(p.srs.nextReview).slice(0,10);
+  if(p.srs.dateAdded) p.srs.dateAdded = String(p.srs.dateAdded).slice(0,10);
   if(!p.dateAdded) p.dateAdded = p.srs.dateAdded;
+  else p.dateAdded = String(p.dateAdded).slice(0,10);
   return p;
 }
 function rateReview(p, rating){
@@ -1736,7 +1750,8 @@ document.getElementById('backupBankBtn').addEventListener('click', async ()=>{
           lastPracticed: p.lastPracticed || '',
           station: p.srs.station, reps: p.srs.reps,
           nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
-          hotLayerDone: (p.hotLayerDone || []).join(';')
+          hotLayerDone: (p.hotLayerDone || []).join(';'),
+          starred: p.starred ? 'Yes' : ''
         };
       }) })
     });
@@ -1772,13 +1787,14 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
       arVoweled: p.arVoweled || '',
       practiceCount: parseInt(p.practiceCount, 10) || 0,
       lastPracticed: p.lastPracticed || null,
-      dateAdded: p.dateAdded || today,
+      dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
       hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
+      starred: p.starred === 'Yes' || p.starred === true,
       srs: {
         station: parseInt(p.station, 10) || 1,
         reps: parseInt(p.reps, 10) || 0,
-        nextReview: p.nextReview || today,
-        dateAdded: p.dateAdded || today,
+        nextReview: p.nextReview ? String(p.nextReview).slice(0,10) : today,
+        dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
         hotLayerDone: []
       }
     }));
@@ -2216,13 +2232,17 @@ function tafsirBlockHtml(label, arabicText, malayText, badge){
 }
 
 async function translateQuran(text){
-  const system = `You are an Arabic-to-Malay (Bahasa Melayu) translation assistant for personal study of Qur'anic Arabic.
-For TWO specific tafsir works, kept separate — 1) Tafsir al-Jalalayn, 2) Tafsir al-Muyassar — do the following for each:
-- Give the ORIGINAL Arabic text of that tafsir's own commentary/explanation for this passage, exactly as written in the source (not your own paraphrase, not the bare Qur'an verse itself — the tafsir's explanatory Arabic text). If you cannot find or are not confident of the exact original wording, say so plainly in that field instead of inventing text — never fabricate Arabic text and present it as the original source.
+  // Scoped to Tafsir al-Muyassar only (previously also requested Tafsir
+  // al-Jalalayn side-by-side, which roughly doubled the tokens used per
+  // call — both the generated content and the search-grounding calls —
+  // and was pushing some free-tier Gemini requests over their limit).
+  const system = `You are an Arabic-to-Malay (Bahasa Melayu) translation assistant for personal study of Qur'anic Arabic, focused specifically on Tafsir al-Muyassar.
+For this passage, do the following:
+- Give the ORIGINAL Arabic text of Tafsir al-Muyassar's own commentary/explanation for this passage, exactly as written in the source (not your own paraphrase, not the bare Qur'an verse itself — the tafsir's explanatory Arabic text). If you cannot find or are not confident of the exact original wording, say so plainly in that field instead of inventing text — never fabricate Arabic text and present it as the original source.
 - Then give a natural, concise Malay translation (Malaysian usage, not Indonesian spelling/vocabulary) of that tafsir's interpretation.
 Use search to verify the original Arabic wording against real sources before answering.
 Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape:
-{"jalalaynArabic":"original Arabic tafsir text from Tafsir al-Jalalayn","jalalayn":"Malay translation of that","muyassarArabic":"original Arabic tafsir text from Tafsir al-Muyassar","muyassar":"Malay translation of that","note":"one short sentence in Malay flagging any notable difference between the two tafsir on this passage, or a word with a well-known alternate reading worth double-checking, or an empty string if nothing notable"}
+{"muyassarArabic":"original Arabic tafsir text from Tafsir al-Muyassar","muyassar":"Malay translation of that","note":"one short sentence in Malay flagging anything worth double-checking (e.g. a well-known alternate reading), or an empty string if nothing notable"}
 This is for personal study only — do not present this as a religious ruling or a substitute for consulting a qualified scholar or the original tafsir source directly.`;
   const { text: raw } = await callGemini(text, { system, useSearch: true });
   const cleaned = raw.replace(/```json|```/g, '').trim();
@@ -2250,16 +2270,8 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
             <button class="icon" data-speak-raw="${escapeHtml(arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
             <button class="icon wide" data-copy-raw="${escapeHtml(arabic)}" title="Copy verse">⧉ AR</button>
           </div>
-          ${tafsirBlockHtml('Tafsir al-Jalalayn', result.jalalaynArabic, result.jalalayn, 'Default')}
           ${tafsirBlockHtml('Tafsir al-Muyassar', result.muyassarArabic, result.muyassar)}
           ${result.note ? `<div class="due-meta" style="margin-top:8px;">${escapeHtml(result.note)}</div>` : ''}
-        </div>
-        <div class="field" style="margin-top:10px; max-width:300px;">
-          <label>Save which as your primary translation?</label>
-          <select id="quranSourceSelect">
-            <option value="Al-Jalalayn" selected>Tafsir al-Jalalayn (default)</option>
-            <option value="Al-Muyassar">Tafsir al-Muyassar</option>
-          </select>
         </div>
         <div class="card-actions" style="margin-top:8px;">
           <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${dorarUrl}" target="_blank" rel="noopener">Cross-check on Dorar.net ↗</a>
@@ -2268,15 +2280,9 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
       </div>
       <div class="count-note" style="margin-top:8px;">AI-generated for personal study only — the Arabic tafsir text above is AI-retrieved, not copied directly from a verified source, so always cross-check it against a recognized source (e.g. Dorar.net's Tafsir encyclopedia) before treating any of this as accurate.</div>`;
     document.getElementById('quranSaveBtn').addEventListener('click', async ()=>{
-      const source = document.getElementById('quranSourceSelect').value;
-      const primary = source === 'Al-Muyassar' ? (result.muyassar || '') : (result.jalalayn || '');
-      const primaryArabic = source === 'Al-Muyassar' ? (result.muyassarArabic || '') : (result.jalalaynArabic || '');
-      const alt = source === 'Al-Muyassar' ? (result.jalalayn || '') : (result.muyassar || '');
-      const altArabic = source === 'Al-Muyassar' ? (result.jalalaynArabic || '') : (result.muyassarArabic || '');
-      const altSource = source === 'Al-Muyassar' ? 'Al-Jalalayn' : 'Al-Muyassar';
       state.quran.unshift({
-        id: uid(), reference, arabic, translation: primary, tafsirSource: source, tafsirArabic: primaryArabic,
-        altTranslation: alt, altTafsirSource: altSource, altTafsirArabic: altArabic, note: result.note || '',
+        id: uid(), reference, arabic, translation: result.muyassar || '', tafsirSource: 'Al-Muyassar', tafsirArabic: result.muyassarArabic || '',
+        altTranslation: '', altTafsirSource: '', altTafsirArabic: '', note: result.note || '',
         verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false
       });
       await saveQuran();
@@ -2332,7 +2338,7 @@ function renderQuran(){
           <button class="icon" data-speak-raw="${escapeHtml(q.arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
           <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic)}" title="Copy verse">⧉ AR</button>
         </div>
-        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Jalalayn', q.tafsirArabic, q.translation)}
+        ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation)}
         ${q.altTranslation ? tafsirBlockHtml(q.altTafsirSource || '', q.altTafsirArabic, q.altTranslation) : ''}
         ${q.note ? `<div class="due-meta" style="margin-top:6px;">${escapeHtml(q.note)}</div>` : ''}
       </div>
