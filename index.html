@@ -97,6 +97,36 @@ nav.tabs button.active{
   background:var(--panel);
 }
 
+@media (max-width: 700px){
+  .app{ padding:14px 14px 48px; }
+  header.top{ margin-bottom:14px; padding-bottom:12px; gap:8px 10px; }
+  header.top h1{ font-size:20px; }
+  header.top .sub{ font-size:11.5px; margin-top:2px; }
+  .gear-btn{ padding:7px 10px; font-size:12px; }
+  nav.tabs{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+    scroll-snap-type:x proximity;
+    margin-bottom:14px;
+    margin-left:-14px;
+    margin-right:-14px;
+    padding-left:14px;
+    padding-right:14px;
+    -webkit-mask-image:linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+    mask-image:linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  }
+  nav.tabs::-webkit-scrollbar{ display:none; }
+  nav.tabs button{
+    flex:0 0 auto;
+    white-space:nowrap;
+    padding:9px 13px;
+    font-size:12.5px;
+    scroll-snap-align:start;
+  }
+}
+
 section.view{ display:none; }
 section.view.active{ display:block; }
 
@@ -630,7 +660,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-quran">
     <div class="panel">
       <h2>Qur'an translation</h2>
-      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
+      <div class="count-note" style="margin-bottom:10px;">AI-generated rough translation into Bahasa Melayu, based on Tafsir al-Jalalayn (default) and Tafsir al-Muyassar, for personal study only — a starting point, never an authoritative tafsir. Always cross-check meaning against a recognized source before treating it as accurate, and never rely on this alone for matters of religious ruling.</div>
       <div class="practice-set-row">
         <div class="field" style="max-width:240px;">
           <label>Reference (optional)</label>
@@ -665,6 +695,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div id="quranList"></div>
       <div class="card-actions" style="margin-top:12px;">
         <button class="ghost" id="quranSyncBtn">Sync Qur'an log to Google Sheet</button>
+        <button class="ghost" id="quranRestoreBtn">Restore Qur'an log from Sheet</button>
         <button class="ghost" id="quranDownloadBtn">Download Qur'an log only</button>
       </div>
       <div class="status-msg" id="quranSyncStatus"></div>
@@ -849,6 +880,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('view-'+btn.dataset.view).classList.add('active');
+    btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     if(btn.dataset.view === 'review') renderReview();
     if(btn.dataset.view === 'grammar') renderGrammarList();
     if(btn.dataset.view === 'starred') renderStarred();
@@ -2171,7 +2203,14 @@ document.getElementById('analyzerBtn').addEventListener('click', ()=>{
 
 // ---------- Qur'an translation ----------
 async function translateQuran(text){
-  const system = 'You are an Arabic-to-English translation assistant helping with personal study of classical/Qur\'anic Arabic. Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape: {"translation":"a concise, natural English translation of the passage","note":"one short sentence flagging any word with a well-known alternate reading or interpretation worth double-checking, or an empty string if nothing notable"}. This is for personal study only — do not present this as a religious ruling or a substitute for a recognized tafsir.';
+  const system = `You are an Arabic-to-Malay (Bahasa Melayu) translation assistant for personal study of Qur'anic Arabic.
+Produce the translation strictly according to the interpretation found in TWO specific tafsir works, kept separate:
+1) Tafsir al-Jalalayn
+2) Tafsir al-Muyassar
+Write natural, concise Bahasa Melayu (Malaysian usage, not Indonesian spelling/vocabulary).
+Respond ONLY with strict JSON, no markdown fences, no extra text, in exactly this shape:
+{"jalalayn":"Malay translation of the passage based on Tafsir al-Jalalayn's interpretation","muyassar":"Malay translation of the passage based on Tafsir al-Muyassar's interpretation","note":"one short sentence in Malay flagging any notable difference between the two tafsir on this passage, or a word with a well-known alternate reading worth double-checking, or an empty string if nothing notable"}
+This is for personal study only — do not present this as a religious ruling or a substitute for consulting a qualified scholar or a recognized tafsir source directly.`;
   const { text: raw } = await callGemini(text, { system, useSearch: false });
   const cleaned = raw.replace(/```json|```/g, '').trim();
   return JSON.parse(cleaned);
@@ -2193,8 +2232,18 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
         <div class="phrase-texts">
           ${reference ? `<div class="tag">${escapeHtml(reference)}</div>` : ''}
           <div class="phrase-ar" dir="rtl">${escapeHtml(arabic)}</div>
-          <div class="phrase-en">${escapeHtml(result.translation || '')}</div>
-          ${result.note ? `<div class="due-meta">${escapeHtml(result.note)}</div>` : ''}
+          <div class="due-meta" style="margin-top:8px; font-weight:600;">Tafsir al-Jalalayn <span class="tag">Default</span></div>
+          <div class="phrase-en">${escapeHtml(result.jalalayn || '')}</div>
+          <div class="due-meta" style="margin-top:10px; font-weight:600;">Tafsir al-Muyassar</div>
+          <div class="phrase-en">${escapeHtml(result.muyassar || '')}</div>
+          ${result.note ? `<div class="due-meta" style="margin-top:8px;">${escapeHtml(result.note)}</div>` : ''}
+        </div>
+        <div class="field" style="margin-top:10px; max-width:300px;">
+          <label>Save which as your primary translation?</label>
+          <select id="quranSourceSelect">
+            <option value="Al-Jalalayn" selected>Tafsir al-Jalalayn (default)</option>
+            <option value="Al-Muyassar">Tafsir al-Muyassar</option>
+          </select>
         </div>
         <div class="card-actions" style="margin-top:8px;">
           <a class="ghost" style="text-decoration:none; display:inline-flex; align-items:center;" href="${dorarUrl}" target="_blank" rel="noopener">Cross-check on Dorar.net ↗</a>
@@ -2203,8 +2252,13 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
       </div>
       <div class="count-note" style="margin-top:8px;">AI-generated for personal study only — always verify against a recognized source (e.g. Dorar.net's Tafsir encyclopedia) before treating this as accurate.</div>`;
     document.getElementById('quranSaveBtn').addEventListener('click', async ()=>{
+      const source = document.getElementById('quranSourceSelect').value;
+      const primary = source === 'Al-Muyassar' ? (result.muyassar || '') : (result.jalalayn || '');
+      const alt = source === 'Al-Muyassar' ? (result.jalalayn || '') : (result.muyassar || '');
+      const altSource = source === 'Al-Muyassar' ? 'Al-Jalalayn' : 'Al-Muyassar';
       state.quran.unshift({
-        id: uid(), reference, arabic, translation: result.translation || '', note: result.note || '',
+        id: uid(), reference, arabic, translation: primary, tafsirSource: source,
+        altTranslation: alt, altTafsirSource: altSource, note: result.note || '',
         verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false
       });
       await saveQuran();
@@ -2228,7 +2282,7 @@ function matchesQuranFilter(q, f){
   if(f.status === 'unverified' && q.verified) return false;
   if(!f.query) return true;
   const query = f.query.toLowerCase();
-  const hay = [q.reference, q.arabic, q.translation].join(' ');
+  const hay = [q.reference, q.arabic, q.translation, q.altTranslation].join(' ');
   return hay.toLowerCase().includes(query) || hay.includes(f.query);
 }
 
@@ -2255,8 +2309,10 @@ function renderQuran(){
       <div class="phrase-texts">
         ${q.reference ? `<div class="tag">${escapeHtml(q.reference)}</div>` : ''}
         <div class="phrase-ar" dir="rtl">${escapeHtml(q.arabic)}</div>
+        <div class="due-meta" style="margin-top:6px; font-weight:600;">${escapeHtml(q.tafsirSource || 'Tafsir al-Jalalayn')}</div>
         <div class="phrase-en">${escapeHtml(q.translation)}</div>
-        ${q.note ? `<div class="due-meta">${escapeHtml(q.note)}</div>` : ''}
+        ${q.altTranslation ? `<div class="due-meta" style="margin-top:8px; font-weight:600;">${escapeHtml(q.altTafsirSource || '')}</div><div class="phrase-en">${escapeHtml(q.altTranslation)}</div>` : ''}
+        ${q.note ? `<div class="due-meta" style="margin-top:6px;">${escapeHtml(q.note)}</div>` : ''}
       </div>
       <div class="card-actions" style="margin-top:8px;">
         <button class="icon" data-quran-speak="${q.id}" title="Speak Arabic">AR</button>
@@ -2341,7 +2397,7 @@ document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ type: 'quran_log', reference: q.reference, arabic: q.arabic, translation: q.translation, note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded })
+        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded })
       });
       throwIfRejected(await res.json());
       q.synced = true;
@@ -2354,6 +2410,38 @@ document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
     statusEl.className = 'status-msg';
   } else {
     statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync' + (lastErr ? ': ' + lastErr : '.');
+    statusEl.className = 'status-msg err';
+  }
+});
+
+document.getElementById('quranRestoreBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('quranSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  if(state.quran.length > 0 && !confirm('This replaces your current Qur\'an log on this device (' + state.quran.length + ' entries) with whatever is in the sheet right now. Continue?')) return;
+  statusEl.textContent = 'Restoring from sheet...';
+  statusEl.className = 'status-msg';
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'quran' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    const today = todayStr();
+    state.quran = data.map(q => ({
+      id: q.id || uid(),
+      reference: q.reference || '', arabic: q.arabic || '', translation: q.translation || '',
+      tafsirSource: q.tafsirSource || '', altTranslation: '', altTafsirSource: '',
+      note: q.note || '',
+      verified: q.verified === 'Yes' || q.verified === true,
+      verifiedAt: q.verifiedAt || null,
+      dateAdded: q.dateAdded || today,
+      synced: true
+    }));
+    await saveQuran();
+    renderQuran();
+    statusEl.textContent = 'Restored ' + state.quran.length + ' Qur\'an entr' + (state.quran.length===1?'y':'ies') + ' from the sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
     statusEl.className = 'status-msg err';
   }
 });
