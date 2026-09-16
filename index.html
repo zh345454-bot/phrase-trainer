@@ -646,6 +646,14 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
 
     <div class="panel">
+      <h2>Backup &amp; restore grammar notebook</h2>
+      <div class="count-note">Your grammar notebook lives only in this app, unlike your phrase bank and Qur'an log which already sync to the Sheet. Back it up to its own sheet tab so it isn't only on this device, or restore it after reinstalling.</div>
+      <button class="ghost" id="backupGrammarBtn">Backup grammar to Sheet</button>
+      <button class="ghost" id="restoreGrammarBtn">Restore grammar from Sheet</button>
+      <div class="status-msg" id="grammarSyncStatus"></div>
+    </div>
+
+    <div class="panel">
       <h2>Arabic sentence analyzer</h2>
       <div class="count-note">AI-generated breakdown for study purposes — a helpful second opinion, not an authoritative grammatical parse.</div>
       <div class="field" style="margin:10px 0;">
@@ -664,7 +672,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="practice-set-row">
         <div class="field" style="max-width:240px;">
           <label>Reference (required — sura:ayah)</label>
-          <input type="text" id="quranRef" placeholder="e.g. Al-Baqarah 2:255 or just 2:255">
+          <input type="text" id="quranRef" placeholder="e.g. 2:255, Al-Baqarah 2:255, or [Surah Al-Anʿām: 61]">
         </div>
       </div>
       <div class="field" style="margin:10px 0;">
@@ -780,6 +788,18 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div id="flashcardContainer"></div>
     <div class="modal-actions">
       <button class="ghost" id="closeFlashcards">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="quickReviewModal">
+  <div class="modal">
+    <h2>Quick review</h2>
+    <p>How well did you recall this just now? This counts once toward its Review station — same rating scale as the Review tab, just triggered from here so practicing still moves it forward even on a day you don't get to the full Review queue.</p>
+    <div id="quickReviewCard" style="margin-bottom:10px;"></div>
+    <div class="rating-row" id="quickReviewRatingRow"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeQuickReview">Cancel</button>
     </div>
   </div>
 </div>
@@ -1184,6 +1204,7 @@ function updateCategoryDropdowns(){
 function phraseCardHtml(p, opts){
   const showDelete = opts && opts.showDelete;
   const showLog = opts && opts.showLog;
+  const showQuickReview = opts && opts.showQuickReview;
   const showStar = !opts || opts.showStar !== false;
   const showMeta = opts && opts.showMeta;
   let metaLine = '';
@@ -1192,6 +1213,7 @@ function phraseCardHtml(p, opts){
     const dueNow = p.srs.nextReview <= todayStr();
     metaLine = `<div class="due-meta">Seen ${p.practiceCount || 0}× in practice · Review station ${p.srs.station}/7 · ${dueNow ? 'due for review now' : 'next review ' + p.srs.nextReview}</div>`;
   }
+  const reviewedToday = p.quickReviewedOn === todayStr();
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${escapeHtml(p.en)}</div>
@@ -1207,6 +1229,9 @@ function phraseCardHtml(p, opts){
       ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
+      ${showQuickReview ? (reviewedToday
+        ? `<button class="ghost" disabled title="One quick review per phrase per day — come back tomorrow, or rate it properly in the Review tab if it's due">Reviewed today ✓</button>`
+        : `<button class="ghost" data-quickreview="${p.id}" title="Rate how well you just recalled this — counts once toward its Review station">Quick review</button>`) : ''}
       ${showDelete ? `<button class="icon" data-del="${p.id}" title="Delete">✕</button>` : ''}
     </div>`;
 }
@@ -1271,7 +1296,7 @@ function renderPracticeList(items){
   items.forEach(p=>{
     const pCard = document.createElement('div');
     pCard.className = 'phrase-card';
-    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true });
+    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true });
     practiceList.appendChild(pCard);
   });
 }
@@ -1399,7 +1424,41 @@ document.addEventListener('click', async (e)=>{
     }
     return;
   }
+  const quickReviewId = e.target.dataset.quickreview;
+  if(quickReviewId){
+    const p = state.bank.find(x=>x.id === quickReviewId);
+    if(p){
+      quickReviewPhraseId = p.id;
+      document.getElementById('quickReviewCard').innerHTML = `
+        <div class="phrase-en">${escapeHtml(p.en)}</div>
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}`;
+      document.getElementById('quickReviewRatingRow').innerHTML = `
+        <button class="rate-btn rate-1" data-quickrate="1">1 Major forgetting</button>
+        <button class="rate-btn rate-2" data-quickrate="2">2 Struggled</button>
+        <button class="rate-btn rate-3" data-quickrate="3">3 Okay</button>
+        <button class="rate-btn rate-4" data-quickrate="4">4 Good</button>
+        <button class="rate-btn rate-5" data-quickrate="5">5 Perfect</button>`;
+      document.getElementById('quickReviewModal').classList.add('open');
+    }
+    return;
+  }
+  const quickRateVal = e.target.dataset.quickrate;
+  if(quickRateVal){
+    const p = state.bank.find(x=>x.id === quickReviewPhraseId);
+    if(p){
+      rateReview(p, parseInt(quickRateVal, 10));
+      p.quickReviewedOn = todayStr();
+      await saveBank();
+      await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Quick review (from Practice) · rated ' + quickRateVal + '/5' + (p.category ? ' · ' + p.category : ''));
+      document.getElementById('quickReviewModal').classList.remove('open');
+      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeList(practiceSet);
+      if(document.getElementById('view-review').classList.contains('active')) renderReview();
+    }
+    return;
+  }
 });
+document.getElementById('closeQuickReview').addEventListener('click', ()=> document.getElementById('quickReviewModal').classList.remove('open'));
+let quickReviewPhraseId = null;
 
 // ---------- Practice set generation ----------
 // Scientific basis for this selection logic:
@@ -1801,6 +1860,72 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
     await saveBank();
     renderBank();
     statusEl.textContent = 'Restored ' + state.bank.length + ' phrases (with review progress) from the sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+// ---------- Grammar notebook backup / restore ----------
+// Mirrors the Bank backup/restore above exactly (full overwrite each time)
+// — the grammar notebook previously had no Sheet sync at all, only the
+// phrase bank and Qur'an log did, so it never left this one device unless
+// you used the separate local JSON backup file.
+document.getElementById('backupGrammarBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('grammarSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  statusEl.textContent = 'Backing up ' + state.grammar.length + ' grammar entries...';
+  statusEl.className = 'status-msg';
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'grammar_sync', entries: state.grammar.map(g => ({
+        id: g.id, title: g.title || '', language: g.language || '', category: g.category || '',
+        ruleSummary: g.rule_summary || '',
+        examples: (g.examples || []).map(ex => `${ex.target || ''} | ${ex.translation || ''}`).join('\n'),
+        tags: (g.tags || []).join(', '),
+        notes: g.user_notes || '',
+        dateCreated: g.date_created || ''
+      })) })
+    });
+    throwIfRejected(await res.json());
+    statusEl.textContent = 'Backed up ' + state.grammar.length + ' grammar entries to the Grammar sheet.';
+    statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = err && err.message ? err.message : 'Backup failed. Check the Web App URL and deployment access.';
+    statusEl.className = 'status-msg err';
+  }
+});
+
+document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('grammarSyncStatus');
+  const url = state.settings.webAppUrl;
+  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  if(state.grammar.length > 0 && !confirm('Restoring replaces your current local grammar notebook (' + state.grammar.length + ' entries) with whatever is in the sheet right now, discarding any local changes since your last backup. Continue?')) return;
+  statusEl.textContent = 'Restoring from sheet...';
+  statusEl.className = 'status-msg';
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'grammar' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    state.grammar = data.map(g => ({
+      id: g.id || uid(),
+      title: g.title || '', language: g.language || 'Arabic', category: g.category || '',
+      rule_summary: g.ruleSummary || '',
+      examples: String(g.examples || '').split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{
+        const parts = line.split('|').map(s=>s.trim());
+        return { target: parts[0] || '', translation: parts[1] || '' };
+      }),
+      tags: String(g.tags || '').split(',').map(t=>t.trim()).filter(Boolean),
+      user_notes: g.notes || '',
+      date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr()
+    }));
+    await saveGrammar();
+    renderGrammarList();
+    statusEl.textContent = 'Restored ' + state.grammar.length + ' grammar entries from the sheet.';
     statusEl.className = 'status-msg';
   }catch(err){
     statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
@@ -2246,24 +2371,41 @@ const SURAH_NAMES = {
   quraysh:106, maun:107, kawthar:108, kafirun:109, nasr:110, masad:111,
   ikhlas:112, falaq:113, nas:114
 };
+// Normalizes a surah name for lookup against SURAH_NAMES, tolerating the
+// transliteration diacritics Qur'an apps commonly use (Anʿām, Aʿrāf,
+// Ṭāhā, etc.): NFD-decomposes accented Latin letters (ā/ī/ū/ṭ/ḥ/ṣ/ḍ/ẓ...)
+// into a base letter + a combining mark, strips the combining marks, then
+// separately strips the standalone ayn/hamza modifier letters (ʿ ʾ) and
+// apostrophes that don't decompose that way.
 function normalizeSurahKey_(s){
-  return s.toLowerCase().replace(/^(al|an|as|ash|adh|at)[-\s]/, '').replace(/[^a-z]/g, '');
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[ʿʾʻʼ']/g, '')
+    .replace(/^(al|an|as|ash|adh|at)[-\s]/, '')
+    .replace(/[^a-z]/g, '');
 }
 function resolveSurahNumber_(name){
   if(/^\d+$/.test(name.trim())) return Number(name.trim());
   return SURAH_NAMES[normalizeSurahKey_(name)] || null;
 }
 // Parses a Reference field value into {sura, ayah}. Accepts "2:255",
-// "Al-Baqarah 2:255", "Baqarah 255", etc. Returns null if it can't resolve.
+// "Al-Baqarah 2:255", "Baqarah 255", and the bracketed "[Surah Al-Anʿām:
+// 61]" / "Surah Al-An'am: 61" format many Qur'an apps show next to a verse
+// (brackets and a leading "Surah"/"Sūrah" label are stripped before
+// matching, so you can paste that straight in without editing it).
+// Returns null if it can't resolve.
 function parseVerseRef(refText){
   if(!refText) return null;
-  const text = refText.trim();
+  let text = refText.trim();
+  text = text.replace(/^[\[\(]+|[\]\)]+$/g, '').trim();
+  text = text.replace(/^s[uū]rah?\s+/i, '').trim();
   const colonMatch = text.match(/(\d{1,3})\s*[:.]\s*(\d{1,3})/);
   if(colonMatch) return { sura: Number(colonMatch[1]), ayah: Number(colonMatch[2]) };
-  const wordMatch = text.match(/^([a-zA-Z'-]+)\s+(\d{1,3})$/);
-  if(wordMatch){
-    const sura = resolveSurahNumber_(wordMatch[1]);
-    if(sura) return { sura, ayah: Number(wordMatch[2]) };
+  let nameMatch = text.match(/^(.+?)\s*:\s*(\d{1,3})$/);
+  if(!nameMatch) nameMatch = text.match(/^(.+?)\s+(\d{1,3})$/);
+  if(nameMatch){
+    const sura = resolveSurahNumber_(nameMatch[1]);
+    if(sura) return { sura, ayah: Number(nameMatch[2]) };
   }
   return null;
 }
