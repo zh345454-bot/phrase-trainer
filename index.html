@@ -201,6 +201,13 @@ button.icon{
 button.icon:hover{ background:var(--teal); color:#fff; }
 button.icon.wide{ width:auto; padding:0 9px; }
 button.icon.starred{ background:var(--brass); border-color:var(--brass); color:#fff; }
+button.recording{ background:#9B2C2C !important; border-color:#9B2C2C !important; color:#fff !important; animation:pulse 1.4s ease-in-out infinite; }
+@keyframes pulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.65; } }
+.drill-box{ border:1px solid var(--line); padding:14px; margin-top:10px; }
+.drill-target{ font-family:'Amiri',serif; font-size:26px; line-height:1.9; }
+.diff-ok{ color:#2F6F4F; font-weight:600; }
+.diff-bad{ color:#9B2C2C; font-weight:600; text-decoration:line-through; }
+.diff-miss{ color:#9B2C2C; font-weight:600; }
 .freq-row{ margin-bottom:8px; }
 .freq-label{ font-size:13px; margin-bottom:3px; }
 .freq-bar-track{ height:8px; background:var(--teal-soft); border-radius:4px; overflow:hidden; }
@@ -387,6 +394,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="starred">★ Starred</button>
     <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
     <button class="tab-btn" data-view="review">Review</button>
+    <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
     <button class="tab-btn" data-view="history">History</button>
@@ -607,8 +615,56 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
   </section>
 
+  <!-- DRILLS -->
+  <section class="view" id="view-drills">
+    <div class="panel">
+      <h2>Today's plan</h2>
+      <div class="count-note" style="margin-bottom:10px;">A realistic daily structure — about 45 minutes. The ordering matters more than the exact minutes: production and active recall first, passive review last.</div>
+      <div id="dailyPlan"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Tashkeel drill</h2>
+      <div class="count-note" style="margin-bottom:10px;">Bare text is shown; type it back <em>with</em> full diacritics. Targets i'rab directly — the thing your grammar checker flags most. Uses only phrases whose vowelled form is already cached, so it costs no AI quota.</div>
+      <div id="tashkeelDrill"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Dictation drill</h2>
+      <div class="count-note" style="margin-bottom:10px;">The app speaks a phrase; type what you hear. Trains listening — nothing else here exercises it. Entirely free: browser speech, no API.</div>
+      <div id="dictationDrill"></div>
+    </div>
+  </section>
+
   <!-- GRAMMAR HUB -->
   <section class="view" id="view-grammar">
+    <div class="panel">
+      <h2>🎙 Voice practice</h2>
+      <p class="count-note" style="margin-bottom:10px;">Speak, get a transcript, then have it critiqued like written work. Record in <strong>short turns (30–90s)</strong> — critique of a long monologue collapses into vague advice, while turn-sized chunks give you specific, fixable corrections. Audio is held in memory only and dropped the moment it's transcribed; nothing is ever stored.</p>
+      <div class="field-row" style="margin-bottom:10px;">
+        <div class="field" style="max-width:180px;">
+          <label>Speaking in</label>
+          <select id="vpLang"><option value="ar">Arabic</option><option value="en">English</option></select>
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label>Prompt (optional)</label>
+          <select id="vpPrompt">
+            <option value="">Free speech</option>
+            <option value="describe">Describe your day</option>
+            <option value="opinion">Give an opinion</option>
+            <option value="retell">Retell a starred phrase in your own words</option>
+          </select>
+        </div>
+      </div>
+      <div id="vpPromptText" class="count-note" style="margin-bottom:10px;"></div>
+      <div class="card-actions">
+        <button class="primary" id="vpRecordBtn">● Start recording</button>
+        <span id="vpTimer" class="badge pending" style="display:none;">0:00</span>
+      </div>
+      <div class="status-msg" id="vpStatus"></div>
+      <div id="vpResult" style="margin-top:14px;"></div>
+    </div>
+
     <div class="panel">
       <h2>Grammar check</h2>
       <p class="count-note" style="margin-bottom:10px;">Write a sentence or short paragraph and get it corrected, with an explanation for each fix — powered by the same Gemini key as Ask AI (uses your daily quota).</p>
@@ -955,6 +1011,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'review') renderReview();
     if(btn.dataset.view === 'grammar') renderGrammarList();
     if(btn.dataset.view === 'starred') renderStarred();
+    if(btn.dataset.view === 'drills') renderDrills();
     if(btn.dataset.view === 'quran') renderQuran();
     if(btn.dataset.view === 'practice') renderTodayStrip();
   });
@@ -2347,6 +2404,359 @@ async function googleSearchFallback(query){
 }
 
 // ---------- Grammar Hub ----------
+// ---------- Voice practice ----------
+// Records short turns, transcribes via the Apps Script Groq proxy, shows you
+// the RAW transcript first (so a mis-hearing doesn't get silently "corrected"
+// into a sentence you never said), then critiques on demand.
+// The audio Blob is never written to disk or localStorage — it lives in this
+// variable until transcription finishes, then the reference is dropped and
+// the browser garbage-collects it. That's strictly safer than storing and
+// deleting daily: there's nothing to leak and no cleanup job to fail.
+let vpRecorder = null, vpChunks = [], vpTimerInt = null, vpStartedAt = 0;
+let vpLastTranscript = null;
+
+const VP_PROMPTS = {
+  describe: { ar: 'صف يومك: ماذا فعلت هذا الصباح؟ ماذا ستفعل الليلة؟', en: 'Describe your day: what did you do this morning? What will you do tonight?' },
+  opinion: { ar: 'ما رأيك في العمل من البيت؟ ولماذا؟', en: 'What is your opinion on working from home? Why?' },
+  retell: { ar: 'اختر عبارة محفوظة بنجمة وأعد صياغتها بكلماتك.', en: 'Pick a starred phrase and retell it in your own words.' }
+};
+
+function vpUpdatePrompt(){
+  const key = document.getElementById('vpPrompt').value;
+  const lang = document.getElementById('vpLang').value;
+  const el = document.getElementById('vpPromptText');
+  if(!key){ el.textContent = ''; return; }
+  const p = VP_PROMPTS[key];
+  el.innerHTML = `<strong>Prompt:</strong> <span ${lang==='ar'?'dir="rtl"':''}>${escapeHtml(p[lang])}</span>`;
+}
+document.getElementById('vpPrompt').addEventListener('change', vpUpdatePrompt);
+document.getElementById('vpLang').addEventListener('change', vpUpdatePrompt);
+
+function vpSetStatus(msg, isErr){
+  const el = document.getElementById('vpStatus');
+  el.textContent = msg || '';
+  el.className = isErr ? 'status-msg err' : 'status-msg';
+}
+
+async function vpStart(){
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    vpSetStatus('This browser does not support audio recording.', true);
+    return;
+  }
+  if(!state.settings.webAppUrl){
+    vpSetStatus('Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.', true);
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    vpChunks = [];
+    vpRecorder = new MediaRecorder(stream);
+    vpRecorder.ondataavailable = ev => { if(ev.data.size > 0) vpChunks.push(ev.data); };
+    vpRecorder.onstop = async ()=>{
+      stream.getTracks().forEach(t=>t.stop()); // release the mic indicator
+      const blob = new Blob(vpChunks, { type: vpRecorder.mimeType || 'audio/webm' });
+      vpChunks = [];
+      await vpTranscribe(blob);
+    };
+    vpRecorder.start();
+    vpStartedAt = Date.now();
+    document.getElementById('vpRecordBtn').textContent = '■ Stop & transcribe';
+    document.getElementById('vpRecordBtn').classList.add('recording');
+    const timerEl = document.getElementById('vpTimer');
+    timerEl.style.display = 'inline-block';
+    vpTimerInt = setInterval(()=>{
+      const s = Math.floor((Date.now()-vpStartedAt)/1000);
+      timerEl.textContent = Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+      // Nudge at 90s, hard stop at 5 min — long clips give worse transcripts
+      // and vaguer critique, and Apps Script has a 6-minute execution ceiling.
+      timerEl.className = s > 90 ? 'badge unverified' : 'badge pending';
+      if(s >= 300) vpStop();
+    }, 500);
+    vpSetStatus('Recording... aim for 30–90 seconds, then stop.');
+  }catch(err){
+    vpSetStatus('Could not access the microphone: ' + (err.message || 'permission denied.'), true);
+  }
+}
+
+function vpStop(){
+  if(vpRecorder && vpRecorder.state !== 'inactive') vpRecorder.stop();
+  clearInterval(vpTimerInt);
+  document.getElementById('vpTimer').style.display = 'none';
+  const btn = document.getElementById('vpRecordBtn');
+  btn.textContent = '● Start recording';
+  btn.classList.remove('recording');
+}
+
+async function vpTranscribe(blob){
+  vpSetStatus('Transcribing...');
+  const btn = document.getElementById('vpRecordBtn');
+  btn.disabled = true;
+  try{
+    const base64 = await new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onload = ()=> resolve(String(r.result).split(',')[1]);
+      r.onerror = ()=> reject(new Error('Could not read the recording.'));
+      r.readAsDataURL(blob);
+    });
+    const lang = document.getElementById('vpLang').value;
+    const res = await fetch(state.settings.webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'transcribe', audio: base64, mimeType: blob.type, language: lang })
+    });
+    const data = await res.json();
+    if(data.status !== 'ok') throw new Error(data.message || 'Transcription failed.');
+    if(!data.text){ vpSetStatus('Nothing was heard in that recording — try again, closer to the mic.', true); return; }
+    vpLastTranscript = { text: data.text, lang };
+    vpRenderTranscript();
+    vpSetStatus('');
+  }catch(err){
+    vpSetStatus(err.message || 'Transcription failed.', true);
+  }
+  btn.disabled = false;
+  // blob goes out of scope here — audio is never persisted anywhere
+}
+
+function vpRenderTranscript(){
+  const t = vpLastTranscript;
+  const isAr = t.lang === 'ar';
+  document.getElementById('vpResult').innerHTML = `
+    <div class="due-card">
+      <div class="phrase-texts">
+        <div class="due-meta" style="font-weight:600;">Raw transcript — check this matches what you actually said</div>
+        <textarea id="vpTranscriptBox" ${isAr?'dir="rtl"':''} style="min-height:90px; width:100%;">${escapeHtml(t.text)}</textarea>
+        <div class="count-note">Whisper can mishear, especially on dialect or background noise. Fix it here first — otherwise the AI will confidently "correct" a sentence you never said.</div>
+      </div>
+      <div class="card-actions" style="margin-top:8px;">
+        <button class="primary" id="vpCritiqueBtn">Critique this</button>
+        <button class="icon wide" id="vpCopyBtn" title="Copy transcript">⧉ Copy</button>
+        <button class="ghost" id="vpSendToGcBtn">Send to Grammar check</button>
+        <button class="ghost" id="vpDiscardBtn">Discard</button>
+      </div>
+      <div id="vpCritique" style="margin-top:12px;"></div>
+    </div>`;
+  document.getElementById('vpCopyBtn').addEventListener('click', (ev)=> copyText(document.getElementById('vpTranscriptBox').value, ev.target));
+  document.getElementById('vpDiscardBtn').addEventListener('click', ()=>{
+    vpLastTranscript = null;
+    document.getElementById('vpResult').innerHTML = '';
+  });
+  document.getElementById('vpSendToGcBtn').addEventListener('click', ()=>{
+    document.getElementById('gcInput').value = document.getElementById('vpTranscriptBox').value;
+    document.getElementById('gcLang').value = isAr ? 'Arabic' : 'English';
+    document.getElementById('gcInput').scrollIntoView({ behavior:'smooth', block:'center' });
+  });
+  document.getElementById('vpCritiqueBtn').addEventListener('click', vpCritique);
+}
+
+async function vpCritique(){
+  const text = document.getElementById('vpTranscriptBox').value.trim();
+  const isAr = vpLastTranscript.lang === 'ar';
+  const langName = isAr ? 'Arabic' : 'English';
+  const box = document.getElementById('vpCritique');
+  const btn = document.getElementById('vpCritiqueBtn');
+  if(!text) return;
+  btn.disabled = true;
+  box.innerHTML = '<div class="status-msg">Analysing your speech...</div>';
+  try{
+    const result = await checkGrammar(text, langName);
+    const notesHtml = (result.notes && result.notes.length)
+      ? '<ul class="grammar-notes">' + result.notes.map(n =>
+          `<li><s>${escapeHtml(n.original||'')}</s> → <strong>${escapeHtml(n.fixed||'')}</strong><br><span class="due-meta">${escapeHtml(n.explanation||'')}</span></li>`
+        ).join('') + '</ul>'
+      : '<div class="count-note">No corrections needed — that was clean.</div>';
+    box.innerHTML = `
+      <div class="due-meta" style="font-weight:600;">Corrected</div>
+      <div class="${isAr?'phrase-ar':'phrase-en'}" ${isAr?'dir="rtl"':''}>${escapeHtml(result.corrected||'')}</div>
+      <div class="example-actions" style="margin-top:4px;">
+        <button class="icon" data-speak-raw="${escapeHtml(result.corrected||'')}" data-speak-lang="${isAr?'ar':'en'}" title="Hear it correct">▶</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(result.corrected||'')}" title="Copy">⧉ Copy</button>
+      </div>
+      ${notesHtml}
+      <div class="card-actions" style="margin-top:10px;">
+        <button class="ghost" id="vpKeepPhraseBtn">Keep corrected as phrase</button>
+        <button class="ghost" id="vpKeepGrammarBtn">Keep as grammar entry</button>
+      </div>`;
+    document.getElementById('vpKeepPhraseBtn').addEventListener('click', async (ev)=>{
+      const corrected = result.corrected || '';
+      state.bank.unshift({
+        id: uid(), en: isAr ? '' : corrected, ar: isAr ? corrected : '',
+        category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false
+      });
+      await saveBank(); renderBank(); renderStarred();
+      ev.target.textContent = 'Saved ✓'; ev.target.disabled = true;
+    });
+    document.getElementById('vpKeepGrammarBtn').addEventListener('click', (ev)=>{
+      document.getElementById('gTitle').value = text.slice(0,40) + (text.length>40?'…':'');
+      document.getElementById('gLang').value = langName;
+      document.getElementById('gCategory').value = normalizeCategorySuggestion(result.category || '');
+      document.getElementById('gRuleSummary').value = (result.notes||[]).map(n=>n.explanation).join(' ');
+      document.getElementById('gExamples').value = `${result.corrected||''} | ${text}`;
+      document.getElementById('gTitle').scrollIntoView({ behavior:'smooth', block:'center' });
+      ev.target.textContent = 'Filled below ✓';
+    });
+    // Log it so voice practice counts toward your streak like any other practice
+    await addLogEntry(text.slice(0,120), vpLastTranscript.lang, 'Voice practice');
+  }catch(err){
+    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    box.innerHTML = err && err.code === 'missing-api-key'
+      ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
+      : isQuota
+        ? '<div class="status-msg err">Gemini\'s free daily quota is used up — the transcript above is still yours to keep.</div>'
+        : `<div class="status-msg err">Could not analyse that: ${escapeHtml(err.message||'unknown error')}</div>`;
+  }
+  btn.disabled = false;
+}
+
+document.getElementById('vpRecordBtn').addEventListener('click', ()=>{
+  if(vpRecorder && vpRecorder.state === 'recording') vpStop();
+  else vpStart();
+});
+
+// ---------- Drills ----------
+// Both drills are deliberately API-free: they run off data the app already
+// has (cached tashkeel, browser TTS), so they still work when the Gemini
+// daily quota is exhausted — which is exactly when you'd otherwise stop.
+
+function renderDailyPlan(){
+  const el = document.getElementById('dailyPlan');
+  if(!el) return;
+  const dueCount = state.bank.filter(p=>{ ensureSrs(p); return p.srs.nextReview <= todayStr(); }).length;
+  const streak = getStreakInfo(state.log);
+  const plan = [
+    ['5 min', 'Review what\'s due', `${dueCount} phrase${dueCount===1?'':'s'} due. Do these first, while attention is fresh — spaced repetition only works if the schedule is actually honoured.`],
+    ['10 min', 'Voice practice', 'Two or three 60–90s turns in Grammar Hub. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure.'],
+    ['10 min', 'Write & check', 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising.'],
+    ['5 min', 'Tashkeel drill', 'Below. Short and daily beats long and occasional for case endings.'],
+    ['5 min', 'Dictation drill', 'Below. Closes the listening gap.'],
+    ['5 min', 'Add new phrases', `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear.`],
+    ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked.']
+  ];
+  el.innerHTML = plan.map(([t,title,desc])=>`
+    <div class="log-row" style="align-items:flex-start;">
+      <span><strong>${escapeHtml(title)}</strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
+      <span class="badge pending">${escapeHtml(t)}</span>
+    </div>`).join('')
+    + `<div class="count-note" style="margin-top:10px;">Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — 45 minutes daily beats 5 hours on Saturday, because forgetting happens on the days between.</div>`;
+}
+
+// Compares two strings token by token so the user sees exactly which word
+// was wrong, rather than a bare right/wrong verdict.
+function diffTokens(expected, actual){
+  const e = expected.trim().split(/\s+/), a = actual.trim().split(/\s+/);
+  const out = [];
+  const max = Math.max(e.length, a.length);
+  let correct = 0;
+  for(let i=0;i<max;i++){
+    if(e[i] && a[i] && e[i] === a[i]){ out.push(`<span class="diff-ok">${escapeHtml(a[i])}</span>`); correct++; }
+    else if(a[i] && e[i]) out.push(`<span class="diff-bad">${escapeHtml(a[i])}</span> <span class="diff-miss">${escapeHtml(e[i])}</span>`);
+    else if(a[i]) out.push(`<span class="diff-bad">${escapeHtml(a[i])}</span>`);
+    else out.push(`<span class="diff-miss">${escapeHtml(e[i])}</span>`);
+  }
+  return { html: out.join(' '), score: max ? Math.round(correct/max*100) : 0 };
+}
+
+let tashkeelCurrent = null;
+function renderTashkeelDrill(){
+  const el = document.getElementById('tashkeelDrill');
+  if(!el) return;
+  const pool = state.bank.filter(p => p.arVoweled && hasTashkeel(p.arVoweled));
+  if(pool.length === 0){
+    el.innerHTML = '<div class="empty">No vowelled phrases cached yet. Tap the AR speak button on a few Arabic phrases first — that caches the diacritics this drill uses.</div>';
+    return;
+  }
+  tashkeelCurrent = pool[Math.floor(Math.random()*pool.length)];
+  el.innerHTML = `
+    <div class="drill-box">
+      <div class="due-meta">Add the full tashkeel:</div>
+      <div class="drill-target" dir="rtl">${escapeHtml(stripTashkeel(tashkeelCurrent.arVoweled))}</div>
+      ${tashkeelCurrent.en ? `<div class="due-meta">${escapeHtml(tashkeelCurrent.en)}</div>` : ''}
+      <div class="field" style="margin-top:10px;">
+        <input type="text" id="tashkeelAnswer" dir="rtl" placeholder="اكتب بالتشكيل الكامل">
+      </div>
+      <div class="card-actions">
+        <button class="primary" id="tashkeelCheckBtn">Check</button>
+        <button class="ghost" id="tashkeelSkipBtn">Skip / next</button>
+      </div>
+      <div id="tashkeelFeedback" style="margin-top:10px;"></div>
+    </div>`;
+  document.getElementById('tashkeelCheckBtn').addEventListener('click', ()=>{
+    const ans = document.getElementById('tashkeelAnswer').value.trim();
+    if(!ans) return;
+    const d = diffTokens(tashkeelCurrent.arVoweled.trim(), ans);
+    document.getElementById('tashkeelFeedback').innerHTML = `
+      <div class="due-meta">Your answer vs. expected (${d.score}% exact):</div>
+      <div class="drill-target" dir="rtl">${d.html}</div>
+      <div class="due-meta" style="margin-top:6px;">Expected: <span dir="rtl">${escapeHtml(tashkeelCurrent.arVoweled)}</span></div>
+      <button class="ghost" id="tashkeelNextBtn" style="margin-top:8px;">Next phrase</button>`;
+    document.getElementById('tashkeelNextBtn').addEventListener('click', renderTashkeelDrill);
+    addLogEntry(tashkeelCurrent.ar || '', 'ar', 'Tashkeel drill · ' + d.score + '%');
+  });
+  document.getElementById('tashkeelSkipBtn').addEventListener('click', renderTashkeelDrill);
+}
+
+let dictationCurrent = null;
+function renderDictationDrill(){
+  const el = document.getElementById('dictationDrill');
+  if(!el) return;
+  const pool = state.bank.filter(p => p.ar || p.en);
+  if(pool.length === 0){
+    el.innerHTML = '<div class="empty">Add some phrases to your bank first.</div>';
+    return;
+  }
+  dictationCurrent = pool[Math.floor(Math.random()*pool.length)];
+  const useAr = !!dictationCurrent.ar;
+  const target = useAr ? (dictationCurrent.arVoweled || dictationCurrent.ar) : dictationCurrent.en;
+  el.innerHTML = `
+    <div class="drill-box">
+      <div class="due-meta">Listen, then type what you hear (${useAr ? 'Arabic' : 'English'}):</div>
+      <div class="card-actions" style="margin-top:6px;">
+        <button class="primary" id="dictPlayBtn">▶ Play</button>
+        <button class="ghost" id="dictSlowBtn">▶ Play slowly</button>
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <input type="text" id="dictAnswer" ${useAr?'dir="rtl"':''} placeholder="Type what you hear">
+      </div>
+      <div class="card-actions">
+        <button class="primary" id="dictCheckBtn">Check</button>
+        <button class="ghost" id="dictSkipBtn">Skip / next</button>
+      </div>
+      <div id="dictFeedback" style="margin-top:10px;"></div>
+    </div>`;
+  const play = (rate)=>{
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(target);
+    u.lang = useAr ? 'ar-SA' : 'en-US';
+    const v = window.speechSynthesis.getVoices().find(x=>x.lang && x.lang.toLowerCase().startsWith(useAr?'ar':'en'));
+    if(v) u.voice = v;
+    u.rate = rate;
+    window.speechSynthesis.speak(u);
+  };
+  document.getElementById('dictPlayBtn').addEventListener('click', ()=>play(0.92));
+  document.getElementById('dictSlowBtn').addEventListener('click', ()=>play(0.6));
+  document.getElementById('dictCheckBtn').addEventListener('click', ()=>{
+    const ans = document.getElementById('dictAnswer').value.trim();
+    if(!ans) return;
+    // Compare without diacritics: this drill tests hearing, not vowelling
+    const expected = useAr ? stripTashkeel(target) : target;
+    const given = useAr ? stripTashkeel(ans) : ans;
+    const d = diffTokens(expected.trim(), given.trim());
+    document.getElementById('dictFeedback').innerHTML = `
+      <div class="due-meta">${d.score}% of words matched:</div>
+      <div class="${useAr?'drill-target':''}" ${useAr?'dir="rtl"':''}>${d.html}</div>
+      <div class="due-meta" style="margin-top:6px;">Expected: <span ${useAr?'dir="rtl"':''}>${escapeHtml(expected)}</span></div>
+      <button class="ghost" id="dictNextBtn" style="margin-top:8px;">Next phrase</button>`;
+    document.getElementById('dictNextBtn').addEventListener('click', renderDictationDrill);
+    addLogEntry(expected.slice(0,120), useAr?'ar':'en', 'Dictation drill · ' + d.score + '%');
+  });
+  document.getElementById('dictSkipBtn').addEventListener('click', renderDictationDrill);
+}
+
+function renderDrills(){
+  renderDailyPlan();
+  renderTashkeelDrill();
+  renderDictationDrill();
+}
+
 async function checkGrammar(text, lang){
   const system = `You are a patient ${lang} grammar tutor for a language learner. Given a piece of ${lang} text they wrote, correct any grammar, spelling, word-order, or (for Arabic) i'rab / agreement mistakes.
 ${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." : ""}
