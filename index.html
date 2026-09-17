@@ -911,6 +911,57 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </div>
 </div>
 
+<div class="modal-backdrop" id="editPhraseModal">
+  <div class="modal">
+    <h2>Edit phrase</h2>
+    <p style="margin-top:-6px;">Select any text and tap Bold to mark it — stored as <code>**text**</code>, so it stays intact through Sheet sync and looks bold wherever this phrase shows up.</p>
+    <div class="field">
+      <label>English</label>
+      <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="editPhraseEnBold" type="button">Bold</button></div>
+      <textarea id="editPhraseEn" style="min-height:60px;"></textarea>
+    </div>
+    <div class="field">
+      <label>Arabic</label>
+      <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="editPhraseArBold" type="button">Bold</button></div>
+      <textarea id="editPhraseAr" dir="rtl" style="min-height:60px;"></textarea>
+    </div>
+    <div class="field">
+      <label>Category</label>
+      <input type="text" id="editPhraseCat">
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeEditPhrase">Cancel</button>
+      <button class="primary" id="saveEditPhrase">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="editQuranModal">
+  <div class="modal">
+    <h2>Edit Qur'an entry</h2>
+    <p style="margin-top:-6px;">Select text and tap Bold to mark it — stays intact through Sheet sync. Alternate-tafsir text isn't editable here; it regenerates via the translate/refresh actions on the card.</p>
+    <div class="field">
+      <label>Verse (Arabic)</label>
+      <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="editQuranArabicBold" type="button">Bold</button></div>
+      <textarea id="editQuranArabic" dir="rtl" style="min-height:60px;"></textarea>
+    </div>
+    <div class="field">
+      <label>Tafsir (Arabic)</label>
+      <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="editQuranTafsirBold" type="button">Bold</button></div>
+      <textarea id="editQuranTafsir" dir="rtl" style="min-height:80px;"></textarea>
+    </div>
+    <div class="field">
+      <label>Translation (English)</label>
+      <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="editQuranTranslationBold" type="button">Bold</button></div>
+      <textarea id="editQuranTranslation" style="min-height:60px;"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeEditQuran">Cancel</button>
+      <button class="primary" id="saveEditQuran">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let state = { bank: [], log: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
@@ -982,12 +1033,13 @@ async function vowelizeArabic(text){
 }
 async function speakArabicSmart(phraseObj, btn, onCached){
   const apiKey = (state.settings.geminiApiKey || '').trim();
-  let text = phraseObj.ar;
-  if(apiKey && phraseObj.ar){
+  const cleanAr = stripBold(phraseObj.ar);
+  let text = cleanAr;
+  if(apiKey && cleanAr){
     if(!phraseObj.arVoweled){
       if(btn){ btn.disabled = true; }
       try{
-        const voweled = await vowelizeArabic(phraseObj.ar);
+        const voweled = await vowelizeArabic(cleanAr);
         if(voweled){
           phraseObj.arVoweled = voweled;
           if(onCached) await onCached();
@@ -995,7 +1047,7 @@ async function speakArabicSmart(phraseObj, btn, onCached){
       }catch(e){ /* fall back to unvoweled text below */ }
       if(btn){ btn.disabled = false; }
     }
-    text = phraseObj.arVoweled || phraseObj.ar;
+    text = phraseObj.arVoweled || cleanAr;
   }
   speak(text, 'ar');
 }
@@ -1199,8 +1251,8 @@ function renderReview(){
     card.className = 'due-card';
     card.innerHTML = `
       <div class="phrase-texts">
-        <div class="phrase-en">${escapeHtml(p.en)} <span class="hot-badge">Hot · day ${offset}</span></div>
-        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
+        <div class="phrase-en">${mdToHtml(p.en)} <span class="hot-badge">Hot · day ${offset}</span></div>
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
       </div>
       <div class="card-actions" style="margin-top:8px;">
         ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
@@ -1217,8 +1269,8 @@ function renderReview(){
     card.className = 'due-card';
     card.innerHTML = `
       <div class="phrase-texts">
-        <div class="phrase-en">${escapeHtml(p.en)} <span class="station-pill">Station ${p.srs.station}</span></div>
-        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
+        <div class="phrase-en">${mdToHtml(p.en)} <span class="station-pill">Station ${p.srs.station}</span></div>
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
         <div class="due-meta">${p.srs.reps}/${MIN_TO_ADVANCE[p.srs.station]} reps at this station${p.category ? ' · '+escapeHtml(p.category) : ''}</div>
       </div>
       <div>
@@ -1333,6 +1385,55 @@ function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ---------- Bold markup ----------
+// Bold is stored as plain **word** markers right in the text, not as
+// separate rich-text/HTML — it's just a string, so it round-trips through
+// every Sheet column with zero schema changes and survives copy/paste,
+// search, and export untouched. mdToHtml is the ONLY place that ever turns
+// it into <strong> for display; the stored value stays plain markdown.
+function mdToHtml(s){
+  return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+// Counterpart to mdToHtml for every path that ISN'T display — text-to-speech,
+// clipboard, and anything sent to the AI. Without this, a bolded phrase
+// would literally be spoken/copied/sent as "**word**", asterisks and all.
+function stripBold(s){
+  return (s||'').replace(/\*\*(.+?)\*\*/g, '$1');
+}
+
+// Wires a "Bold" button to a textarea: wraps the current selection in
+// **...**, or unwraps it if the selection is already exactly a bolded
+// span. No-ops (with a brief nudge) if nothing is selected — there's no
+// sensible "bold the whole field" default here.
+function wireBoldButton(boldBtnId, textareaId){
+  const btn = document.getElementById(boldBtnId);
+  const ta = document.getElementById(textareaId);
+  if(!btn || !ta) return;
+  btn.addEventListener('click', ()=>{
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    if(start === end){
+      ta.focus();
+      btn.textContent = 'Select text first';
+      setTimeout(()=>{ btn.textContent = 'Bold'; }, 1000);
+      return;
+    }
+    const val = ta.value;
+    const selected = val.slice(start, end);
+    let newVal, newStart, newEnd;
+    if(selected.startsWith('**') && selected.endsWith('**') && selected.length >= 4){
+      const inner = selected.slice(2, -2);
+      newVal = val.slice(0,start) + inner + val.slice(end);
+      newStart = start; newEnd = start + inner.length;
+    } else {
+      newVal = val.slice(0,start) + '**' + selected + '**' + val.slice(end);
+      newStart = start; newEnd = end + 4;
+    }
+    ta.value = newVal;
+    ta.focus();
+    ta.setSelectionRange(newStart, newEnd);
+  });
+}
+
 function matchesFilter(p, query, category){
   if(category && p.category !== category) return false;
   if(!query) return true;
@@ -1367,10 +1468,11 @@ function phraseCardHtml(p, opts){
     metaLine = `<div class="due-meta">Seen ${p.practiceCount || 0}× in practice · Review station ${p.srs.station}/7 · ${dueNow ? 'due for review now' : 'next review ' + p.srs.nextReview}</div>`;
   }
   const reviewedToday = p.quickReviewedOn === todayStr();
+  const showEdit = opts && opts.showEdit;
   return `
     <div class="phrase-texts">
-      <div class="phrase-en">${escapeHtml(p.en)}</div>
-      ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}
+      <div class="phrase-en">${mdToHtml(p.en)}</div>
+      ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
       ${metaLine}
     </div>
@@ -1380,6 +1482,7 @@ function phraseCardHtml(p, opts){
       ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
       ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
       ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
+      ${showEdit ? `<button class="ghost" data-edit-phrase="${p.id}" title="Edit text, incl. bold">✎ Edit</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
       ${showQuickReview ? (reviewedToday
@@ -1455,7 +1558,7 @@ function starredCardHtml(item){
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
   }
-  return phraseCardHtml(item.ref, { showDelete: true, showLog: true });
+  return phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true });
 }
 
 function renderStarred(){
@@ -1521,7 +1624,7 @@ function renderBank(){
   visible.forEach(p=>{
     const card = document.createElement('div');
     card.className = 'phrase-card';
-    card.innerHTML = phraseCardHtml(p, { showDelete: true });
+    card.innerHTML = phraseCardHtml(p, { showDelete: true, showEdit: true });
     list.appendChild(card);
   });
   loadMoreRow.style.display = matches.length > visible.length ? 'block' : 'none';
@@ -1616,14 +1719,14 @@ document.addEventListener('click', async (e)=>{
     const p = state.bank.find(x=>x.id === e.target.dataset.id);
     if(p){
       if(speakId === 'ar') await speakArabicSmart(p, e.target, saveBank);
-      else speak(p.en, 'en');
+      else speak(stripBold(p.en), 'en');
     }
     return;
   }
   const copyId = e.target.dataset.copy;
   if(copyId){
     const p = state.bank.find(x=>x.id === e.target.dataset.id);
-    if(p) copyText(copyId === 'ar' ? (p.ar||'') : (p.en||''), e.target);
+    if(p) copyText(stripBold(copyId === 'ar' ? (p.ar||'') : (p.en||'')), e.target);
     return;
   }
   const starId = e.target.dataset.star;
@@ -1637,6 +1740,11 @@ document.addEventListener('click', async (e)=>{
       if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
     }
+    return;
+  }
+  const editPhraseBtnId = e.target.dataset.editPhrase;
+  if(editPhraseBtnId){
+    openEditPhrase(editPhraseBtnId);
     return;
   }
   const delId = e.target.dataset.del;
@@ -1671,8 +1779,8 @@ document.addEventListener('click', async (e)=>{
     if(p){
       quickReviewPhraseId = p.id;
       document.getElementById('quickReviewCard').innerHTML = `
-        <div class="phrase-en">${escapeHtml(p.en)}</div>
-        ${p.ar ? `<div class="phrase-ar" dir="rtl">${escapeHtml(p.ar)}</div>` : ''}`;
+        <div class="phrase-en">${mdToHtml(p.en)}</div>
+        ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}`;
       document.getElementById('quickReviewRatingRow').innerHTML = `
         <button class="rate-btn rate-1" data-quickrate="1">1 Major forgetting</button>
         <button class="rate-btn rate-2" data-quickrate="2">2 Struggled</button>
@@ -1700,6 +1808,59 @@ document.addEventListener('click', async (e)=>{
 });
 document.getElementById('closeQuickReview').addEventListener('click', ()=> document.getElementById('quickReviewModal').classList.remove('open'));
 let quickReviewPhraseId = null;
+
+// ---------- Edit phrase modal ----------
+let editPhraseId = null;
+function openEditPhrase(id){
+  const p = state.bank.find(x=>x.id === id);
+  if(!p) return;
+  editPhraseId = id;
+  document.getElementById('editPhraseEn').value = p.en || '';
+  document.getElementById('editPhraseAr').value = p.ar || '';
+  document.getElementById('editPhraseCat').value = p.category || '';
+  document.getElementById('editPhraseModal').classList.add('open');
+}
+wireBoldButton('editPhraseEnBold', 'editPhraseEn');
+wireBoldButton('editPhraseArBold', 'editPhraseAr');
+document.getElementById('closeEditPhrase').addEventListener('click', ()=> document.getElementById('editPhraseModal').classList.remove('open'));
+document.getElementById('saveEditPhrase').addEventListener('click', async ()=>{
+  const p = state.bank.find(x=>x.id === editPhraseId);
+  if(!p) return;
+  p.en = document.getElementById('editPhraseEn').value.trim();
+  p.ar = document.getElementById('editPhraseAr').value.trim();
+  p.category = document.getElementById('editPhraseCat').value.trim();
+  await saveBank();
+  renderBank(); renderStarred();
+  if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
+  document.getElementById('editPhraseModal').classList.remove('open');
+});
+
+// ---------- Edit Qur'an entry modal ----------
+let editQuranId = null;
+function openEditQuran(id){
+  const q = state.quran.find(x=>x.id === id);
+  if(!q) return;
+  editQuranId = id;
+  document.getElementById('editQuranArabic').value = q.arabic || '';
+  document.getElementById('editQuranTafsir').value = q.tafsirArabic || '';
+  document.getElementById('editQuranTranslation').value = q.translation || '';
+  document.getElementById('editQuranModal').classList.add('open');
+}
+wireBoldButton('editQuranArabicBold', 'editQuranArabic');
+wireBoldButton('editQuranTafsirBold', 'editQuranTafsir');
+wireBoldButton('editQuranTranslationBold', 'editQuranTranslation');
+document.getElementById('closeEditQuran').addEventListener('click', ()=> document.getElementById('editQuranModal').classList.remove('open'));
+document.getElementById('saveEditQuran').addEventListener('click', async ()=>{
+  const q = state.quran.find(x=>x.id === editQuranId);
+  if(!q) return;
+  q.arabic = document.getElementById('editQuranArabic').value.trim();
+  q.tafsirArabic = document.getElementById('editQuranTafsir').value.trim();
+  q.translation = document.getElementById('editQuranTranslation').value.trim();
+  if(q.synced) q.synced = false; // content changed since the last sheet sync
+  await saveQuran();
+  renderQuran(); renderStarred();
+  document.getElementById('editQuranModal').classList.remove('open');
+});
 
 // ---------- Practice set generation ----------
 // Scientific basis for this selection logic:
@@ -2617,13 +2778,38 @@ document.getElementById('vpRecordBtn').addEventListener('click', ()=>{
 // has (cached tashkeel, browser TTS), so they still work when the Gemini
 // daily quota is exhausted — which is exactly when you'd otherwise stop.
 
+// A phrase entry pairs EN+AR, so reviewing "one" phrase is really recall in
+// two languages — you told me ~2 min/phrase is the realistic pace for that,
+// not the instant flip a flat headcount implies. Used only for the
+// review/practice dose below, not for lighter actions like just adding a
+// phrase to the bank (that's seconds, not recall practice).
+const PER_PHRASE_MINUTES = 2;
+
 function renderDailyPlan(){
   const el = document.getElementById('dailyPlan');
   if(!el) return;
-  const dueCount = state.bank.filter(p=>{ ensureSrs(p); return p.srs.nextReview <= todayStr(); }).length;
+  state.bank.forEach(ensureSrs);
+  const today = todayStr();
+  const dueCount = state.bank.filter(p=>p.srs.nextReview <= today).length;
   const streak = getStreakInfo(state.log);
-  const plan = [
-    ['5 min', 'Review what\'s due', `${dueCount} phrase${dueCount===1?'':'s'} due. Do these first, while attention is fresh — spaced repetition only works if the schedule is actually honoured.`],
+
+  // Cap today's suggested dose at 10 — Practice & Log's smallest preset —
+  // rather than the full backlog. 34 materials × 2 phrases can mean ~68
+  // due at once; asking for all of it in "one slot" is exactly what made
+  // the old flat "5 min" label dishonest. The rest carries forward and is
+  // still reachable in full via Review whenever you want a longer
+  // catch-up session — this slot is a bounded daily dose, not the whole
+  // queue.
+  const reviewDose = Math.min(dueCount, 10);
+  const reviewMinutes = reviewDose * PER_PHRASE_MINUTES;
+
+  const reviewDesc = dueCount === 0
+    ? 'Nothing due right now — good time to add new material or spend the slot on drills instead.'
+    : dueCount > reviewDose
+      ? `${dueCount} phrases are due in total; today's realistic dose is ${reviewDose} (~${reviewMinutes} min). The remaining ${dueCount - reviewDose} carry forward — Review still has the full queue whenever you want a longer catch-up session.`
+      : `${dueCount} phrase${dueCount===1?'':'s'} due — small enough to clear in one go today.`;
+
+  const otherLines = [
     ['10 min', 'Voice practice', 'Two or three 60–90s turns in Grammar Hub. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure.'],
     ['10 min', 'Write & check', 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising.'],
     ['5 min', 'Tashkeel drill', 'Below. Short and daily beats long and occasional for case endings.'],
@@ -2631,12 +2817,34 @@ function renderDailyPlan(){
     ['5 min', 'Add new phrases', `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear.`],
     ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked.']
   ];
-  el.innerHTML = plan.map(([t,title,desc])=>`
+  const otherMinutes = otherLines.reduce((sum,[t])=> sum + parseInt(t,10), 0);
+  const totalMinutes = reviewMinutes + otherMinutes;
+
+  const reviewRow = `
+    <div class="log-row" style="align-items:flex-start;">
+      <span><strong>Practice what's due</strong><br><span class="due-meta">${escapeHtml(reviewDesc)}</span></span>
+      <span class="badge pending">${reviewMinutes} min</span>
+    </div>
+    ${dueCount > 0 ? `<div style="margin:4px 0 10px 0;"><button class="ghost" id="dailyPlanPracticeBtn">Start this dose in Practice & Log →</button></div>` : ''}`;
+
+  el.innerHTML = reviewRow + otherLines.map(([t,title,desc])=>`
     <div class="log-row" style="align-items:flex-start;">
       <span><strong>${escapeHtml(title)}</strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
       <span class="badge pending">${escapeHtml(t)}</span>
     </div>`).join('')
-    + `<div class="count-note" style="margin-top:10px;">Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — 45 minutes daily beats 5 hours on Saturday, because forgetting happens on the days between.</div>`;
+    + `<div class="count-note" style="margin-top:10px;">~${totalMinutes} min total today. Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — this daily total beats one long weekend session, because forgetting happens on the days between.</div>`;
+
+  const goBtn = document.getElementById('dailyPlanPracticeBtn');
+  if(goBtn){
+    goBtn.addEventListener('click', ()=>{
+      document.getElementById('practiceMode').value = 'due';
+      // practiceCount is a fixed 10/20/50 preset — 10 is the closest match
+      // to a bounded daily dose and is never more than what's actually due.
+      document.getElementById('practiceCount').value = '10';
+      goToTab('practice');
+      document.getElementById('genPracticeBtn').click();
+    });
+  }
 }
 
 // Compares two strings token by token so the user sees exactly which word
@@ -2669,7 +2877,7 @@ function renderTashkeelDrill(){
     <div class="drill-box">
       <div class="due-meta">Add the full tashkeel:</div>
       <div class="drill-target" dir="rtl">${escapeHtml(stripTashkeel(tashkeelCurrent.arVoweled))}</div>
-      ${tashkeelCurrent.en ? `<div class="due-meta">${escapeHtml(tashkeelCurrent.en)}</div>` : ''}
+      ${tashkeelCurrent.en ? `<div class="due-meta">${mdToHtml(tashkeelCurrent.en)}</div>` : ''}
       <div class="field" style="margin-top:10px;">
         <input type="text" id="tashkeelAnswer" dir="rtl" placeholder="اكتب بالتشكيل الكامل">
       </div>
@@ -2705,7 +2913,7 @@ function renderDictationDrill(){
   }
   dictationCurrent = pool[Math.floor(Math.random()*pool.length)];
   const useAr = !!dictationCurrent.ar;
-  const target = useAr ? (dictationCurrent.arVoweled || dictationCurrent.ar) : dictationCurrent.en;
+  const target = stripBold(useAr ? (dictationCurrent.arVoweled || dictationCurrent.ar) : dictationCurrent.en);
   el.innerHTML = `
     <div class="drill-box">
       <div class="due-meta">Listen, then type what you hear (${useAr ? 'Arabic' : 'English'}):</div>
@@ -2954,7 +3162,7 @@ function renderGrammarList(){
       return `
         <div class="example-row">
           <div class="example-target" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(targetText)}</div>
-          <div class="example-translation">${escapeHtml(ex.translation || '')}</div>
+          <div class="example-translation" id="ex-translation-${g.id}-${i}">${ex.translation ? escapeHtml(ex.translation) : `<button class="ghost" data-translate-example="${g.id}" data-ex-index="${i}" title="Add a translation now — useful if quota was exhausted when this was first saved">+ Add translation</button>`}</div>
           <div class="example-actions">
             <button class="icon" data-speak-raw="${escapeHtml(ex.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
             <button class="icon wide" data-copy-raw="${escapeHtml(ex.target)}" title="Copy">⧉ Copy</button>
@@ -3052,6 +3260,26 @@ document.addEventListener('click', async (e)=>{
     const g = state.grammar.find(x=>x.id === analyzeId);
     const exIdx = parseInt(e.target.dataset.analyzeEx, 10);
     if(g && g.examples[exIdx]) runAnalysis(g.examples[exIdx].target, 'analysis-'+analyzeId+'-'+exIdx, e.target);
+    return;
+  }
+  const translateExId = e.target.dataset.translateExample;
+  if(translateExId !== undefined){
+    const g = state.grammar.find(x=>x.id === translateExId);
+    const exIdx = parseInt(e.target.dataset.exIndex, 10);
+    if(!g || !g.examples[exIdx]) return;
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = 'Translating…';
+    try{
+      const translation = await translateGrammarText(g.examples[exIdx].target, g.language);
+      g.examples[exIdx].translation = translation;
+      await saveGrammar();
+      renderGrammarList();
+    }catch(err){
+      btn.disabled = false;
+      btn.textContent = '+ Add translation';
+      alert('Could not translate: ' + (err.message || 'unknown error'));
+    }
     return;
   }
   const askEntryId = e.target.dataset.askEntry;
@@ -3177,16 +3405,17 @@ function parseVerseRef(refText){
 function tafsirBlockHtml(label, arabicText, englishText, opts){
   opts = opts || {};
   if(!arabicText && !englishText) return '';
+  const cleanArabic = stripBold(arabicText);
   return `
     <div class="due-meta" style="margin-top:10px; font-weight:600;">${escapeHtml(label)}${opts.badge ? ' <span class="tag">'+escapeHtml(opts.badge)+'</span>' : ''}</div>
     ${arabicText ? `
-    <div class="phrase-ar" dir="rtl">${escapeHtml(arabicText)}</div>
+    <div class="phrase-ar" dir="rtl">${mdToHtml(arabicText)}</div>
     <div class="example-actions" style="margin-top:4px;">
-      <button class="icon" data-speak-raw="${escapeHtml(arabicText)}" data-speak-lang="ar" title="Speak original Arabic">AR</button>
-      <button class="icon wide" data-copy-raw="${escapeHtml(arabicText)}" title="Copy original Arabic">⧉ AR</button>
+      <button class="icon" data-speak-raw="${escapeHtml(cleanArabic)}" data-speak-lang="ar" title="Speak original Arabic">AR</button>
+      <button class="icon wide" data-copy-raw="${escapeHtml(cleanArabic)}" title="Copy original Arabic">⧉ AR</button>
       ${(!englishText && opts.translateId) ? `<button class="icon wide" data-quran-translate="${escapeHtml(opts.translateId)}" title="Translate this to English">→ English</button>` : ''}
     </div>` : ''}
-    ${englishText ? `<div class="phrase-en" style="margin-top:6px;">${escapeHtml(englishText)}</div>` : ''}`;
+    ${englishText ? `<div class="phrase-en" style="margin-top:6px;">${mdToHtml(englishText)}</div>` : ''}`;
 }
 
 // Fetches the real Tafsir al-Muyassar Arabic text for a given sura/ayah,
@@ -3288,7 +3517,7 @@ document.addEventListener('click', async (e)=>{
     if(!freshQuranResult || !freshQuranResult.arabic) return;
     btn.disabled = true; btn.textContent = 'Translating…';
     try{
-      const english = await translateArabicToEnglish(freshQuranResult.arabic);
+      const english = await translateArabicToEnglish(stripBold(freshQuranResult.arabic));
       freshQuranResult.english = english;
       const out = document.createElement('div');
       out.className = 'phrase-en';
@@ -3307,7 +3536,7 @@ document.addEventListener('click', async (e)=>{
   if(q){
     btn.disabled = true; btn.textContent = 'Translating…';
     try{
-      const english = await translateArabicToEnglish(q.tafsirArabic);
+      const english = await translateArabicToEnglish(stripBold(q.tafsirArabic));
       q.translation = english;
       if(q.synced) q.synced = false; // content changed since the last sheet sync
       await saveQuran();
@@ -3353,10 +3582,10 @@ function renderQuran(){
       <div class="phrase-texts">
         ${q.reference ? `<div class="tag">${escapeHtml(q.reference)}</div>` : ''}
         <div class="due-meta" style="font-weight:600;">Verse</div>
-        <div class="phrase-ar" dir="rtl">${escapeHtml(q.arabic)}</div>
+        <div class="phrase-ar" dir="rtl">${mdToHtml(q.arabic)}</div>
         <div class="example-actions" style="margin-top:4px;">
-          <button class="icon" data-speak-raw="${escapeHtml(q.arabic)}" data-speak-lang="ar" title="Speak verse">AR</button>
-          <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic)}" title="Copy verse">⧉ AR</button>
+          <button class="icon" data-speak-raw="${escapeHtml(stripBold(q.arabic))}" data-speak-lang="ar" title="Speak verse">AR</button>
+          <button class="icon wide" data-copy-raw="${escapeHtml(stripBold(q.arabic))}" title="Copy verse">⧉ AR</button>
         </div>
         ${tafsirBlockHtml(q.tafsirSource || 'Tafsir al-Muyassar', q.tafsirArabic, q.translation, { translateId: q.id })}
         ${q.altTranslation ? tafsirBlockHtml(q.altTafsirSource || '', q.altTafsirArabic, q.altTranslation) : ''}
@@ -3367,6 +3596,7 @@ function renderQuran(){
         <span class="badge ${q.synced ? 'synced' : 'pending'}">${q.synced ? 'Synced' : 'Pending'}</span>
         <button class="icon${q.starred ? ' starred' : ''}" data-quran-star="${q.id}" title="${q.starred ? 'Remove star' : 'Star'}">${q.starred ? '★' : '☆'}</button>
         ${!q.verified ? `<button class="ghost" data-quran-verify="${q.id}">✓ I've verified this</button>` : ''}
+        <button class="ghost" data-quran-edit="${q.id}" title="Edit text, incl. bold">✎ Edit</button>
         <button class="icon" data-quran-del="${q.id}" title="Delete">✕</button>
       </div>`;
     list.appendChild(card);
