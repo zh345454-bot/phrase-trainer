@@ -73,6 +73,9 @@ header.top .sub{
   cursor:pointer;
 }
 .gear-btn:hover{ background:var(--ink); color:var(--paper); }
+.gear-btn.primary-action{ background:var(--brass); border-color:var(--brass); color:#fff; font-weight:600; }
+.gear-btn.primary-action:hover{ background:var(--ink); border-color:var(--ink); }
+.gear-btn.primary-action:disabled{ opacity:0.6; cursor:default; }
 
 nav.tabs{
   display:flex;
@@ -373,9 +376,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <h1>Bilingual Phrase Trainer</h1>
       <div class="sub">Daily English &amp; Arabic speaking practice, logged to your Google Sheet</div>
     </div>
+    <button class="gear-btn primary-action" id="syncAllBtn">⟳ Sync all</button>
     <button class="gear-btn" id="aiBtn">Ask AI</button>
     <button class="gear-btn" id="settingsBtn">Sheet &amp; AI settings</button>
   </header>
+  <div class="status-msg" id="syncAllStatus" style="display:none; margin-bottom:12px;"></div>
 
   <nav class="tabs">
     <button class="tab-btn active" data-view="bank">Phrase Bank</button>
@@ -460,8 +465,31 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <!-- STARRED -->
   <section class="view" id="view-starred">
     <div class="panel">
-      <h2>★ Starred phrases</h2>
-      <div class="count-note">Tap ☆ on any phrase (Phrase Bank, Practice, or Review) to pin it here — handy for a shortlist you want to focus on.</div>
+      <h2>★ Starred</h2>
+      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin.</div>
+      <div class="field-row" style="margin-top:10px;">
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="starredSearch" placeholder="Search across everything starred">
+        </div>
+        <div class="field" style="max-width:190px;">
+          <label>Type</label>
+          <select id="starredTypeFilter">
+            <option value="">All types</option>
+            <option value="phrase">Phrases</option>
+            <option value="grammar">Grammar</option>
+            <option value="quran">Qur'an</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:190px;">
+          <label>Language</label>
+          <select id="starredLangFilter">
+            <option value="">All languages</option>
+            <option value="ar">Arabic</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
       <div class="count-note" id="starredCountNote"></div>
       <div id="starredList"></div>
     </div>
@@ -1304,24 +1332,112 @@ function phraseCardHtml(p, opts){
     </div>`;
 }
 
+let starredFilter = { query: '', type: '', lang: '' };
+
+// Collects every starred item across the three things that can be starred
+// (phrases, grammar entries, Qur'an entries) into one normalized list, so
+// the Starred tab is a genuine hub rather than a phrases-only view.
+function collectStarredItems(){
+  const items = [];
+  state.bank.filter(p=>p.starred).forEach(p=>{
+    items.push({
+      type: 'phrase', label: 'Phrase', ref: p,
+      // a bank phrase carries both languages, so it matches either filter
+      langs: [p.en ? 'en' : null, p.ar ? 'ar' : null].filter(Boolean),
+      haystack: [p.en, p.ar, p.category].join(' ')
+    });
+  });
+  state.grammar.filter(g=>g.starred).forEach(g=>{
+    items.push({
+      type: 'grammar', label: 'Grammar', ref: g,
+      langs: [g.language === 'Arabic' ? 'ar' : 'en'],
+      haystack: [g.title, g.category, g.rule_summary, g.user_notes, (g.tags||[]).join(' '),
+        (g.examples||[]).map(ex=>`${ex.target||''} ${ex.translation||''}`).join(' ')].join(' ')
+    });
+  });
+  state.quran.filter(q=>q.starred).forEach(q=>{
+    items.push({
+      type: 'quran', label: 'Qur\'an', ref: q,
+      langs: ['ar'],
+      haystack: [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic, q.note].join(' ')
+    });
+  });
+  return items;
+}
+
+function starredCardHtml(item){
+  const g = item.ref, q = item.ref;
+  if(item.type === 'grammar'){
+    const isAr = g.language === 'Arabic';
+    const firstEx = (g.examples || [])[0];
+    return `
+      <div class="phrase-texts">
+        <div class="tag">Grammar${g.category ? ' · ' + escapeHtml(g.category) : ''}</div>
+        <div class="phrase-en" ${isAr ? 'dir="rtl"' : ''} style="font-weight:600;">${escapeHtml(g.title || '')}</div>
+        ${g.rule_summary ? `<div class="due-meta">${escapeHtml(g.rule_summary)}</div>` : ''}
+        ${firstEx && firstEx.target ? `<div class="${isAr ? 'phrase-ar' : 'phrase-en'}" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(firstEx.target)}</div>` : ''}
+        ${firstEx && firstEx.translation ? `<div class="due-meta">${escapeHtml(firstEx.translation)}</div>` : ''}
+      </div>
+      <div class="card-actions">
+        ${firstEx && firstEx.target ? `<button class="icon" data-speak-raw="${escapeHtml(firstEx.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(firstEx.target)}" title="Copy">⧉ Copy</button>` : ''}
+        <button class="icon starred" data-star-grammar="${g.id}" title="Remove star">★</button>
+      </div>`;
+  }
+  if(item.type === 'quran'){
+    return `
+      <div class="phrase-texts">
+        <div class="tag">Qur'an${q.reference ? ' · ' + escapeHtml(q.reference) : ''}</div>
+        <div class="phrase-ar" dir="rtl">${escapeHtml(q.arabic || '')}</div>
+        ${q.translation ? `<div class="due-meta" style="font-weight:600;">${escapeHtml(q.tafsirSource || '')}</div><div class="phrase-en">${escapeHtml(q.translation)}</div>` : ''}
+      </div>
+      <div class="card-actions">
+        <button class="icon" data-speak-raw="${escapeHtml(q.arabic || '')}" data-speak-lang="ar" title="Speak verse">AR</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic || '')}" title="Copy verse">⧉ AR</button>
+        <span class="badge ${q.verified ? 'verified' : 'unverified'}">${q.verified ? '✓ Verified' : 'Not verified'}</span>
+        <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
+      </div>`;
+  }
+  return phraseCardHtml(item.ref, { showDelete: true, showLog: true });
+}
+
 function renderStarred(){
   const list = document.getElementById('starredList');
   const countNote = document.getElementById('starredCountNote');
   if(!list) return; // view not in DOM yet on first call ordering
-  const starred = state.bank.filter(p=>p.starred);
-  countNote.textContent = starred.length + ' starred phrase' + (starred.length===1?'':'s');
-  if(starred.length === 0){
-    list.innerHTML = '<div class="empty">No starred phrases yet — tap ☆ on a phrase to add it here.</div>';
+  const all = collectStarredItems();
+  const q = starredFilter.query.toLowerCase();
+  const matches = all.filter(item=>{
+    if(starredFilter.type && item.type !== starredFilter.type) return false;
+    if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
+    if(q && !item.haystack.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  if(all.length === 0){
+    countNote.textContent = '';
+    list.innerHTML = '<div class="empty">Nothing starred yet — tap ☆ on a phrase, grammar entry, or Qur\'an entry to pin it here.</div>';
+    return;
+  }
+  const byType = t => all.filter(i=>i.type===t).length;
+  countNote.textContent = matches.length + ' of ' + all.length + ' starred '
+    + '(' + byType('phrase') + ' phrases, ' + byType('grammar') + ' grammar, ' + byType('quran') + ' Qur\'an)';
+  if(matches.length === 0){
+    list.innerHTML = '<div class="empty">Nothing starred matches those filters.</div>';
     return;
   }
   list.innerHTML = '';
-  starred.forEach(p=>{
+  matches.forEach(item=>{
     const card = document.createElement('div');
-    card.className = 'phrase-card';
-    card.innerHTML = phraseCardHtml(p, { showDelete: true, showLog: true });
+    card.className = item.type === 'phrase' ? 'phrase-card' : 'due-card';
+    card.innerHTML = starredCardHtml(item);
     list.appendChild(card);
   });
 }
+
+document.getElementById('starredSearch').addEventListener('input', e=>{ starredFilter.query = e.target.value.trim(); renderStarred(); });
+document.getElementById('starredTypeFilter').addEventListener('change', e=>{ starredFilter.type = e.target.value; renderStarred(); });
+document.getElementById('starredLangFilter').addEventListener('change', e=>{ starredFilter.lang = e.target.value; renderStarred(); });
 
 function renderBank(){
   updateCategoryDropdowns();
@@ -1737,24 +1853,18 @@ function throwIfRejected(data){
   if(data && data.status === 'error') throw new Error(data.message || 'Rejected by the sheet script.');
 }
 
-document.getElementById('syncBtn').addEventListener('click', async ()=>{
-  const statusEl = document.getElementById('syncStatus');
+// ---------- Core sync operations ----------
+// Each returns { ok, message, skipped } and never throws, so both the
+// per-tab buttons and the header's "Sync all" can share one code path
+// instead of duplicating the request logic four times.
+function noUrlResult(){ return { ok: false, message: 'Add your Apps Script Web App URL in Sheet settings first.' }; }
+
+async function coreSyncLog(){
   const url = state.settings.webAppUrl;
-  if(!url){
-    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
-    statusEl.className = 'status-msg err';
-    return;
-  }
+  if(!url) return noUrlResult();
   const pending = state.log.filter(l=>!l.synced);
-  if(pending.length === 0){
-    statusEl.textContent = 'Nothing to sync — everything is already up to date.';
-    statusEl.className = 'status-msg';
-    return;
-  }
-  statusEl.textContent = 'Syncing ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + '...';
-  statusEl.className = 'status-msg';
-  let failed = 0;
-  let lastErr = '';
+  if(pending.length === 0) return { ok: true, skipped: true, message: 'Practice log: already up to date.' };
+  let failed = 0, lastErr = '';
   for(const entry of pending){
     try{
       const res = await fetch(url, {
@@ -1771,13 +1881,151 @@ document.getElementById('syncBtn').addEventListener('click', async ()=>{
   }
   await saveLog();
   renderSession();
-  if(failed === 0){
-    statusEl.textContent = 'All entries synced to your Google Sheet.';
-    statusEl.className = 'status-msg';
-  } else {
-    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync' + (lastErr ? ': ' + lastErr : '. Check the Web App URL and deployment access.');
-    statusEl.className = 'status-msg err';
+  if(failed === 0) return { ok: true, message: 'Practice log: ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + ' synced.' };
+  return { ok: false, message: 'Practice log: ' + failed + ' entr' + (failed===1?'y':'ies') + ' failed' + (lastErr ? ' (' + lastErr + ')' : '') + '.' };
+}
+
+async function coreBackupBank(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'bank_sync', phrases: state.bank.map(p=>{
+        ensureSrs(p);
+        return {
+          id: p.id, en: p.en, ar: p.ar, category: p.category,
+          arVoweled: p.arVoweled || '',
+          practiceCount: p.practiceCount || 0,
+          lastPracticed: p.lastPracticed || '',
+          station: p.srs.station, reps: p.srs.reps,
+          nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
+          hotLayerDone: (p.hotLayerDone || []).join(';'),
+          starred: p.starred ? 'Yes' : ''
+        };
+      }) })
+    });
+    throwIfRejected(await res.json());
+    state.settings.lastBackupAt = new Date().toISOString();
+    await saveSettings();
+    return { ok: true, message: 'Phrase bank: ' + state.bank.length + ' phrases backed up.' };
+  }catch(err){
+    return { ok: false, message: 'Phrase bank: ' + (err && err.message ? err.message : 'backup failed.') };
   }
+}
+
+async function coreBackupGrammar(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'grammar_sync', entries: state.grammar.map(g => ({
+        id: g.id, title: g.title || '', language: g.language || '', category: g.category || '',
+        ruleSummary: g.rule_summary || '',
+        examples: (g.examples || []).map(ex => `${ex.target || ''} | ${ex.translation || ''}`).join('\n'),
+        tags: (g.tags || []).join(', '),
+        notes: g.user_notes || '',
+        dateCreated: g.date_created || '',
+        starred: g.starred ? 'Yes' : ''
+      })) })
+    });
+    throwIfRejected(await res.json());
+    return { ok: true, message: 'Grammar notebook: ' + state.grammar.length + ' entries backed up.' };
+  }catch(err){
+    return { ok: false, message: 'Grammar notebook: ' + (err && err.message ? err.message : 'backup failed.') };
+  }
+}
+
+// confirmUnverified: when true, prompts before sending entries you haven't
+// ticked "I've verified this" on. Kept for both paths — the whole point of
+// that gate is that it shouldn't be bypassable by using a different button.
+async function coreSyncQuran(confirmUnverified){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  const pending = state.quran.filter(q=>!q.synced);
+  if(pending.length === 0) return { ok: true, skipped: true, message: 'Qur\'an log: already up to date.' };
+  if(confirmUnverified){
+    const unverifiedPending = pending.filter(q=>!q.verified);
+    if(unverifiedPending.length > 0){
+      const proceed = confirm(
+        unverifiedPending.length + ' of ' + pending.length + ' Qur\'an entr' + (pending.length===1?'y is':'ies are') + ' pending sync ' +
+        "haven't been verified yet (you haven't tapped \"✓ I've verified this\" on them). " +
+        'They\'ll still sync with "Verified: No" in the sheet so you don\'t lose the entry — but the translation itself hasn\'t been double-checked. ' +
+        'Sync anyway? Cancel to go verify them first.'
+      );
+      if(!proceed) return { ok: true, skipped: true, message: 'Qur\'an log: skipped (verify the flagged entries first).' };
+    }
+  }
+  let failed = 0, lastErr = '';
+  for(const q of pending){
+    try{
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '' })
+      });
+      throwIfRejected(await res.json());
+      q.synced = true;
+    }catch(err){ failed++; lastErr = err.message || ''; }
+  }
+  await saveQuran();
+  renderQuran();
+  if(failed === 0) return { ok: true, message: 'Qur\'an log: ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + ' synced.' };
+  return { ok: false, message: 'Qur\'an log: ' + failed + ' entr' + (failed===1?'y':'ies') + ' failed' + (lastErr ? ' (' + lastErr + ')' : '') + '.' };
+}
+
+document.getElementById('syncBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('syncStatus');
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true;
+  statusEl.textContent = 'Syncing...';
+  statusEl.className = 'status-msg';
+  const r = await coreSyncLog();
+  statusEl.textContent = r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
+  btn.disabled = false;
+});
+
+// ---------- Sync all (header button) ----------
+// Pushes everything that lives in this app up to the Sheet in one go:
+// practice log, phrase bank, grammar notebook, Qur'an log. Push only —
+// it never pulls/restores, so it can't overwrite local work by surprise.
+document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('syncAllBtn');
+  const statusEl = document.getElementById('syncAllStatus');
+  statusEl.style.display = 'block';
+  if(!state.settings.webAppUrl){
+    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = '⟳ Syncing...';
+  statusEl.textContent = 'Syncing everything to your Google Sheet...';
+  statusEl.className = 'status-msg';
+
+  const results = [];
+  statusEl.textContent = 'Syncing practice log...';
+  results.push(await coreSyncLog());
+  statusEl.textContent = 'Backing up phrase bank...';
+  results.push(await coreBackupBank());
+  statusEl.textContent = 'Backing up grammar notebook...';
+  results.push(await coreBackupGrammar());
+  statusEl.textContent = 'Syncing Qur\'an log...';
+  results.push(await coreSyncQuran(true));
+
+  const anyFailed = results.some(r=>!r.ok);
+  statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>All synced.</strong><br>')
+    + results.map(r=>escapeHtml(r.message)).join('<br>');
+  statusEl.className = anyFailed ? 'status-msg err' : 'status-msg';
+  btn.disabled = false;
+  btn.textContent = origLabel;
+  renderBank();
+  renderStarred();
 });
 
 document.getElementById('pullBtn').addEventListener('click', async ()=>{
@@ -1860,37 +2108,14 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
 // ---------- Bank backup / restore ----------
 document.getElementById('backupBankBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('bankSyncStatus');
-  const url = state.settings.webAppUrl;
-  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  const btn = document.getElementById('backupBankBtn');
+  btn.disabled = true;
   statusEl.textContent = 'Backing up ' + state.bank.length + ' phrases...';
   statusEl.className = 'status-msg';
-  try{
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: sheetPostBody({ type: 'bank_sync', phrases: state.bank.map(p=>{
-        ensureSrs(p);
-        return {
-          id: p.id, en: p.en, ar: p.ar, category: p.category,
-          arVoweled: p.arVoweled || '',
-          practiceCount: p.practiceCount || 0,
-          lastPracticed: p.lastPracticed || '',
-          station: p.srs.station, reps: p.srs.reps,
-          nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
-          hotLayerDone: (p.hotLayerDone || []).join(';'),
-          starred: p.starred ? 'Yes' : ''
-        };
-      }) })
-    });
-    throwIfRejected(await res.json());
-    state.settings.lastBackupAt = new Date().toISOString();
-    await saveSettings();
-    statusEl.textContent = 'Backed up ' + state.bank.length + ' phrases (with review progress) to the Bank sheet.';
-    statusEl.className = 'status-msg';
-  }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Backup failed. Check the Web App URL and deployment access.';
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreBackupBank();
+  statusEl.textContent = r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
+  btn.disabled = false;
 });
 
 document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
@@ -1942,31 +2167,14 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
 // you used the separate local JSON backup file.
 document.getElementById('backupGrammarBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('grammarSyncStatus');
-  const url = state.settings.webAppUrl;
-  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
+  const btn = document.getElementById('backupGrammarBtn');
+  btn.disabled = true;
   statusEl.textContent = 'Backing up ' + state.grammar.length + ' grammar entries...';
   statusEl.className = 'status-msg';
-  try{
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: sheetPostBody({ type: 'grammar_sync', entries: state.grammar.map(g => ({
-        id: g.id, title: g.title || '', language: g.language || '', category: g.category || '',
-        ruleSummary: g.rule_summary || '',
-        examples: (g.examples || []).map(ex => `${ex.target || ''} | ${ex.translation || ''}`).join('\n'),
-        tags: (g.tags || []).join(', '),
-        notes: g.user_notes || '',
-        dateCreated: g.date_created || '',
-        starred: g.starred ? 'Yes' : ''
-      })) })
-    });
-    throwIfRejected(await res.json());
-    statusEl.textContent = 'Backed up ' + state.grammar.length + ' grammar entries to the Grammar sheet.';
-    statusEl.className = 'status-msg';
-  }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Backup failed. Check the Web App URL and deployment access.';
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreBackupGrammar();
+  statusEl.textContent = r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
+  btn.disabled = false;
 });
 
 document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=>{
@@ -2418,6 +2626,7 @@ document.addEventListener('click', async (e)=>{
       g.starred = !g.starred;
       await saveGrammar();
       renderGrammarList();
+      renderStarred();
     }
     return;
   }
@@ -2783,6 +2992,7 @@ document.addEventListener('click', async (e)=>{
       if(q.synced) q.synced = false; // content changed since the last sheet sync
       await saveQuran();
       renderQuran();
+      renderStarred();
     }
     return;
   }
@@ -2798,47 +3008,14 @@ document.addEventListener('click', async (e)=>{
 
 document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('quranSyncStatus');
-  const url = state.settings.webAppUrl;
-  if(!url){ statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; statusEl.className = 'status-msg err'; return; }
-  const pending = state.quran.filter(q=>!q.synced);
-  if(pending.length === 0){ statusEl.textContent = 'Nothing to sync — everything is already up to date.'; statusEl.className = 'status-msg'; return; }
-  const unverifiedPending = pending.filter(q=>!q.verified);
-  if(unverifiedPending.length > 0){
-    const proceed = confirm(
-      unverifiedPending.length + ' of ' + pending.length + ' entr' + (pending.length===1?'y is':'ies are') + ' pending sync ' +
-      "haven't been verified yet (you haven't tapped \"✓ I've verified this\" on them). " +
-      'They\'ll still sync with "Verified: No" in the sheet so you don\'t lose the entry — but the translation itself hasn\'t been double-checked. ' +
-      'Sync anyway? Cancel to go verify them first.'
-    );
-    if(!proceed){
-      statusEl.textContent = 'Sync cancelled — verify the flagged entries, then sync again.';
-      statusEl.className = 'status-msg';
-      return;
-    }
-  }
-  statusEl.textContent = 'Syncing ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + '...';
+  const btn = document.getElementById('quranSyncBtn');
+  btn.disabled = true;
+  statusEl.textContent = 'Syncing...';
   statusEl.className = 'status-msg';
-  let failed = 0, lastErr = '';
-  for(const q of pending){
-    try{
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '' })
-      });
-      throwIfRejected(await res.json());
-      q.synced = true;
-    }catch(err){ failed++; lastErr = err.message || ''; }
-  }
-  await saveQuran();
-  renderQuran();
-  if(failed === 0){
-    statusEl.textContent = 'All Qur\'an entries synced to your Google Sheet.';
-    statusEl.className = 'status-msg';
-  } else {
-    statusEl.textContent = failed + ' entr' + (failed===1?'y':'ies') + ' failed to sync' + (lastErr ? ': ' + lastErr : '.');
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreSyncQuran(true);
+  statusEl.textContent = r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
+  btn.disabled = false;
 });
 
 document.getElementById('quranRestoreBtn').addEventListener('click', async ()=>{
