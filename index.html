@@ -198,6 +198,13 @@ button.icon{
 button.icon:hover{ background:var(--teal); color:#fff; }
 button.icon.wide{ width:auto; padding:0 9px; }
 button.icon.starred{ background:var(--brass); border-color:var(--brass); color:#fff; }
+.freq-row{ margin-bottom:8px; }
+.freq-label{ font-size:13px; margin-bottom:3px; }
+.freq-bar-track{ height:8px; background:var(--teal-soft); border-radius:4px; overflow:hidden; }
+.freq-bar-fill{ height:100%; background:var(--brass); border-radius:4px; }
+.today-strip-line{ margin-bottom:6px; font-size:13px; }
+.today-strip-line:last-child{ margin-bottom:0; }
+.today-strip-line button.ghost{ padding:2px 8px; font-size:12px; }
 
 .phrase-card{
   display:flex;
@@ -462,6 +469,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
   <!-- PRACTICE & LOG -->
   <section class="view" id="view-practice">
+    <div class="panel" id="todayStripPanel">
+      <h2>Today at a glance</h2>
+      <div id="todayStrip"></div>
+    </div>
+
     <div class="panel">
       <h2>Quick practice (not saved to bank)</h2>
       <div class="field-row">
@@ -585,6 +597,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
 
     <div class="panel">
+      <h2>Recurring mistake categories</h2>
+      <div class="count-note" style="margin-bottom:10px;">Which grammar categories keep coming up across your saved entries — a 30-second scan here most weeks beats re-reading old entries chronologically to spot the pattern yourself.</div>
+      <div id="categoryFrequencyList"></div>
+    </div>
+
+    <div class="panel">
       <h2>Add a grammar entry</h2>
       <div class="field-row">
         <div class="field">
@@ -641,6 +659,10 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         <input type="checkbox" id="tashkeelToggle" checked>
         <label for="tashkeelToggle">Show diacritics (tashkeel) on Arabic examples</label>
       </div>
+      <div class="diacritics-toggle" style="margin-bottom:10px;">
+        <input type="checkbox" id="gStarredOnly">
+        <label for="gStarredOnly">★ Starred only</label>
+      </div>
       <div class="count-note" id="grammarCountNote"></div>
       <div id="grammarList"></div>
     </div>
@@ -696,6 +718,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="">All entries</option>
             <option value="verified">Verified only</option>
             <option value="unverified">Not yet verified</option>
+            <option value="starred">Starred only</option>
           </select>
         </div>
       </div>
@@ -905,7 +928,52 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'grammar') renderGrammarList();
     if(btn.dataset.view === 'starred') renderStarred();
     if(btn.dataset.view === 'quran') renderQuran();
+    if(btn.dataset.view === 'practice') renderTodayStrip();
   });
+});
+
+// One-line jump used by the "Today at a glance" strip's shortcut buttons —
+// reuses the normal tab-click path rather than duplicating its logic.
+function goToTab(viewName){
+  const btn = document.querySelector('.tab-btn[data-view="'+viewName+'"]');
+  if(btn) btn.click();
+}
+
+// A compact, glanceable summary at the top of Practice & Log — deliberately
+// not a separate tab, since this is the tab visited most often day to day,
+// and folding it in here avoids adding a seventh nav item for four lines of
+// text. Kept to: due-review count, a queue-size nudge only when it's
+// actually grown large (silent otherwise, not a standing warning), the
+// top recurring grammar categories, and one quiet tip — never more.
+function renderTodayStrip(){
+  const box = document.getElementById('todayStrip');
+  if(!box) return;
+  const dueAll = getDueReviews();
+  const hotAll = getDueHotLayer();
+  const dueTotal = dueAll.length + hotAll.length;
+  const lines = [];
+
+  lines.push(`<div class="today-strip-line"><strong>${dueTotal}</strong> due for review (${dueAll.length} station · ${hotAll.length} hot-layer) <button class="ghost" data-goto="review" style="margin-left:6px;">Go to Review →</button></div>`);
+
+  if(dueTotal > 40){
+    lines.push('<div class="today-strip-line due-meta">Queue\'s grown past a healthy daily size — a couple of Quick Reviews below chip away at it without needing a full Review session.</div>');
+  }
+
+  const catCounts = {};
+  state.grammar.forEach(g => { if(g.category) catCounts[g.category] = (catCounts[g.category] || 0) + 1; });
+  const topCats = Object.entries(catCounts).sort((a,b) => b[1] - a[1]).slice(0, 2);
+  if(topCats.length){
+    const catText = topCats.map(([c,n]) => `${c} (${n}×)`).join(', ');
+    lines.push(`<div class="today-strip-line due-meta">Recent focus: ${escapeHtml(catText)} <button class="ghost" data-goto="grammar" style="margin-left:6px;">Grammar Hub →</button></div>`);
+  }
+
+  lines.push('<div class="today-strip-line due-meta">Tip: a sentence in Grammar Check before you browse below trains recall harder than review alone.</div>');
+
+  box.innerHTML = lines.join('');
+}
+document.addEventListener('click', (e)=>{
+  const gotoView = e.target.dataset.goto;
+  if(gotoView) goToTab(gotoView);
 });
 
 // ---------- Settings modal ----------
@@ -1888,7 +1956,8 @@ document.getElementById('backupGrammarBtn').addEventListener('click', async ()=>
         examples: (g.examples || []).map(ex => `${ex.target || ''} | ${ex.translation || ''}`).join('\n'),
         tags: (g.tags || []).join(', '),
         notes: g.user_notes || '',
-        dateCreated: g.date_created || ''
+        dateCreated: g.date_created || '',
+        starred: g.starred ? 'Yes' : ''
       })) })
     });
     throwIfRejected(await res.json());
@@ -1921,7 +1990,8 @@ document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=
       }),
       tags: String(g.tags || '').split(',').map(t=>t.trim()).filter(Boolean),
       user_notes: g.notes || '',
-      date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr()
+      date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr(),
+      starred: g.starred === 'Yes' || g.starred === true
     }));
     await saveGrammar();
     renderGrammarList();
@@ -2090,9 +2160,19 @@ function normalizeCategorySuggestion(suggested){
   return match || suggested;
 }
 
+let freshGrammarResult = null;
+
+async function translateGrammarText(text, fromLang){
+  const toLang = fromLang === 'Arabic' ? 'English' : 'Arabic';
+  const system = `Translate the given ${fromLang} text into natural, clear ${toLang}.${toLang === 'Arabic' ? ' Include full tashkeel (diacritics).' : ''} Respond with ONLY the ${toLang} translation - no explanation, no quotation marks, nothing else.`;
+  const { text: out } = await callGemini(text, { system, useSearch: false });
+  return out.trim();
+}
+
 document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   const input = document.getElementById('gcInput').value.trim();
   const lang = document.getElementById('gcLang').value;
+  const otherLang = lang === 'Arabic' ? 'English' : 'Arabic';
   const resultBox = document.getElementById('gcResult');
   if(!input) return;
   const btn = document.getElementById('gcCheckBtn');
@@ -2100,6 +2180,7 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   resultBox.innerHTML = '<div class="status-msg">Checking...</div>';
   try{
     const result = await checkGrammar(input, lang);
+    freshGrammarResult = { corrected: result.corrected || '', translation: '' };
     const notesHtml = (result.notes && result.notes.length)
       ? '<ul class="grammar-notes">' + result.notes.map(n =>
           `<li><s>${escapeHtml(n.original||'')}</s> → <strong>${escapeHtml(n.fixed||'')}</strong><br><span class="due-meta">${escapeHtml(n.explanation||'')}</span></li>`
@@ -2107,12 +2188,13 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
       : '<div class="count-note">No corrections needed — looks good!</div>';
     resultBox.innerHTML = `
       <div class="due-card">
-        <div class="phrase-texts">
+        <div class="phrase-texts" id="gcResultTexts">
           <div class="${lang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${lang==='Arabic'?'rtl':'ltr'}">${escapeHtml(result.corrected||'')}</div>
         </div>
         <div class="card-actions" style="margin-top:8px;">
           <button class="icon" id="gcSpeakBtn">${lang==='Arabic'?'AR':'EN'}</button>
           <button class="icon wide" id="gcCopyBtn" title="Copy corrected text">⧉ Copy</button>
+          <button class="ghost" id="gcTranslateBtn" title="Translate this to ${otherLang}">→ ${otherLang}</button>
           <button class="ghost" id="gcSaveBtn">Save as grammar entry</button>
         </div>
       </div>
@@ -2123,14 +2205,37 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
     document.getElementById('gcCopyBtn').addEventListener('click', (ev)=>{
       copyText(result.corrected || '', ev.target);
     });
+    document.getElementById('gcTranslateBtn').addEventListener('click', async ()=>{
+      const tBtn = document.getElementById('gcTranslateBtn');
+      tBtn.disabled = true;
+      tBtn.textContent = 'Translating…';
+      try{
+        const translation = await translateGrammarText(result.corrected, lang);
+        freshGrammarResult.translation = translation;
+        const out = document.createElement('div');
+        out.className = otherLang === 'Arabic' ? 'phrase-ar' : 'phrase-en';
+        if(otherLang === 'Arabic') out.dir = 'rtl';
+        out.style.marginTop = '6px';
+        out.textContent = translation;
+        document.getElementById('gcResultTexts').appendChild(out);
+        tBtn.remove();
+      }catch(err){
+        tBtn.disabled = false;
+        tBtn.textContent = '→ ' + otherLang;
+        alert('Could not translate: ' + (err.message || 'unknown error'));
+      }
+    });
     document.getElementById('gcSaveBtn').addEventListener('click', ()=>{
       document.getElementById('gTitle').value = input.slice(0, 40) + (input.length > 40 ? '…' : '');
       document.getElementById('gLang').value = lang;
       document.getElementById('gCategory').value = normalizeCategorySuggestion(result.category || '');
       document.getElementById('gRuleSummary').value = (result.notes||[]).map(n => n.explanation).join(' ');
-      document.getElementById('gExamples').value = lang === 'Arabic'
-        ? `${result.corrected} | ${input}`
-        : `${result.corrected} | `;
+      // Second field is the AI translation into the other language if you
+      // fetched one via "→ {otherLang}" above — never the raw original text,
+      // which for Arabic input used to get reused here untashkeeled and
+      // mislabeled as a "translation" when it was really just your own
+      // unvowelled input repeated back.
+      document.getElementById('gExamples').value = `${result.corrected} | ${freshGrammarResult.translation || ''}`;
       document.getElementById('gTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }catch(err){
@@ -2145,7 +2250,7 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   btn.disabled = false;
 });
 
-let grammarFilter = { query: '', language: '', category: '' };
+let grammarFilter = { query: '', language: '', category: '', starredOnly: false };
 let currentAiEntry = null; // grammar entry the Ask-AI modal is scoped to, if any
 let chatHistory = [];
 
@@ -2171,14 +2276,42 @@ function updateGrammarCategoryDropdown(){
 function matchesGrammarFilter(g, f){
   if(f.language && g.language !== f.language) return false;
   if(f.category && g.category !== f.category) return false;
+  if(f.starredOnly && !g.starred) return false;
   if(!f.query) return true;
   const q = f.query.toLowerCase();
   const hay = [g.title, g.rule_summary, g.user_notes, (g.tags||[]).join(' '), (g.examples||[]).map(e=>e.target+' '+e.translation).join(' ')].join(' ');
   return hay.toLowerCase().includes(q) || hay.includes(f.query);
 }
 
+function renderCategoryFrequency(){
+  const box = document.getElementById('categoryFrequencyList');
+  if(!box) return;
+  const counts = {};
+  const lastSeen = {};
+  state.grammar.forEach(g=>{
+    if(!g.category) return;
+    counts[g.category] = (counts[g.category] || 0) + 1;
+    if(!lastSeen[g.category] || (g.date_created || '') > lastSeen[g.category]) lastSeen[g.category] = g.date_created || '';
+  });
+  const entries = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+  if(entries.length === 0){
+    box.innerHTML = '<div class="empty">No categorized entries yet — categories fill in automatically as you check and save grammar entries.</div>';
+    return;
+  }
+  const max = entries[0][1];
+  box.innerHTML = entries.slice(0, 10).map(([cat, count]) => {
+    const pct = Math.max(6, Math.round((count / max) * 100));
+    return `
+      <div class="freq-row">
+        <div class="freq-label">${escapeHtml(cat)} <span class="due-meta">${count}× · last ${escapeHtml(lastSeen[cat] || '—')}</span></div>
+        <div class="freq-bar-track"><div class="freq-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+  }).join('');
+}
+
 function renderGrammarList(){
   updateGrammarCategoryDropdown();
+  renderCategoryFrequency();
   const list = document.getElementById('grammarList');
   const countNote = document.getElementById('grammarCountNote');
   const showTashkeel = document.getElementById('tashkeelToggle').checked;
@@ -2223,6 +2356,7 @@ function renderGrammarList(){
       ${examplesHtml}
       ${g.user_notes ? `<div class="notes-line">${escapeHtml(g.user_notes)}</div>` : ''}
       <div class="grammar-actions">
+        <button class="icon${g.starred ? ' starred' : ''}" data-star-grammar="${g.id}" title="${g.starred ? 'Remove star' : 'Star'}">${g.starred ? '★' : '☆'}</button>
         <button class="ghost" data-ask-entry="${g.id}">Ask AI about this rule</button>
         <button class="ghost" data-flash-entry="${g.id}">Make flashcards</button>
         <button class="icon" data-del-grammar="${g.id}" title="Delete">✕</button>
@@ -2234,6 +2368,7 @@ function renderGrammarList(){
 document.getElementById('gSearch').addEventListener('input', e=>{ grammarFilter.query = e.target.value.trim(); renderGrammarList(); });
 document.getElementById('gLangFilter').addEventListener('change', e=>{ grammarFilter.language = e.target.value; renderGrammarList(); });
 document.getElementById('gCategoryFilter').addEventListener('change', e=>{ grammarFilter.category = e.target.value; renderGrammarList(); });
+document.getElementById('gStarredOnly').addEventListener('change', e=>{ grammarFilter.starredOnly = e.target.checked; renderGrammarList(); });
 document.getElementById('tashkeelToggle').addEventListener('change', renderGrammarList);
 
 document.getElementById('addGrammarBtn').addEventListener('click', async ()=>{
@@ -2249,7 +2384,7 @@ document.getElementById('addGrammarBtn').addEventListener('click', async ()=>{
   const tags = document.getElementById('gTags').value.split(',').map(t=>t.trim()).filter(Boolean);
   const user_notes = document.getElementById('gNotes').value.trim();
   if(!title) return;
-  state.grammar.unshift({ id: uid(), title, language, category, rule_summary, examples, user_notes, tags, date_created: todayStr() });
+  state.grammar.unshift({ id: uid(), title, language, category, rule_summary, examples, user_notes, tags, date_created: todayStr(), starred: false });
   await saveGrammar();
   ['gTitle','gCategory','gRuleSummary','gExamples','gTags','gNotes'].forEach(id=> document.getElementById(id).value = '');
   renderGrammarList();
@@ -2273,6 +2408,16 @@ document.addEventListener('click', async (e)=>{
       speak(toSpeak, lang);
     } else {
       speak(rawTarget, lang);
+    }
+    return;
+  }
+  const starGid = e.target.dataset.starGrammar;
+  if(starGid){
+    const g = state.grammar.find(x=>x.id === starGid);
+    if(g){
+      g.starred = !g.starred;
+      await saveGrammar();
+      renderGrammarList();
     }
     return;
   }
@@ -2494,7 +2639,7 @@ document.getElementById('quranTranslateBtn').addEventListener('click', async ()=
       state.quran.unshift({
         id: uid(), reference, arabic, translation: result.english || '', tafsirSource: 'Al-Muyassar', tafsirArabic: result.arabic,
         altTranslation: '', altTafsirSource: '', altTafsirArabic: '', note: '',
-        verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false
+        verified: false, verifiedAt: null, dateAdded: todayStr(), synced: false, starred: false
       });
       await saveQuran();
       renderQuran();
@@ -2559,6 +2704,7 @@ let quranFilter = { query: '', status: '' };
 function matchesQuranFilter(q, f){
   if(f.status === 'verified' && !q.verified) return false;
   if(f.status === 'unverified' && q.verified) return false;
+  if(f.status === 'starred' && !q.starred) return false;
   if(!f.query) return true;
   const query = f.query.toLowerCase();
   const hay = [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic].join(' ');
@@ -2600,6 +2746,7 @@ function renderQuran(){
       <div class="card-actions" style="margin-top:8px;">
         <span class="badge ${q.verified ? 'verified' : 'unverified'}">${q.verified ? '✓ Verified' + (q.verifiedAt ? ' ' + q.verifiedAt.slice(0,10) : '') : 'Not yet verified'}</span>
         <span class="badge ${q.synced ? 'synced' : 'pending'}">${q.synced ? 'Synced' : 'Pending'}</span>
+        <button class="icon${q.starred ? ' starred' : ''}" data-quran-star="${q.id}" title="${q.starred ? 'Remove star' : 'Star'}">${q.starred ? '★' : '☆'}</button>
         ${!q.verified ? `<button class="ghost" data-quran-verify="${q.id}">✓ I've verified this</button>` : ''}
         <button class="icon" data-quran-del="${q.id}" title="Delete">✕</button>
       </div>`;
@@ -2623,6 +2770,17 @@ document.addEventListener('click', async (e)=>{
     if(q && confirm('Confirm you have checked this translation against a recognized Islamic authority (e.g. Dorar.net\'s Tafsir encyclopedia) and it is accurate?')){
       q.verified = true;
       q.verifiedAt = new Date().toISOString();
+      await saveQuran();
+      renderQuran();
+    }
+    return;
+  }
+  const quranStarId = e.target.dataset.quranStar;
+  if(quranStarId){
+    const q = state.quran.find(x=>x.id === quranStarId);
+    if(q){
+      q.starred = !q.starred;
+      if(q.synced) q.synced = false; // content changed since the last sheet sync
       await saveQuran();
       renderQuran();
     }
@@ -2666,7 +2824,7 @@ document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded })
+        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '' })
       });
       throwIfRejected(await res.json());
       q.synced = true;
@@ -2704,6 +2862,7 @@ document.getElementById('quranRestoreBtn').addEventListener('click', async ()=>{
       verified: q.verified === 'Yes' || q.verified === true,
       verifiedAt: q.verifiedAt || null,
       dateAdded: q.dateAdded || today,
+      starred: q.starred === 'Yes' || q.starred === true,
       synced: true
     }));
     await saveQuran();
