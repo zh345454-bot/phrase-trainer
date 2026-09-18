@@ -912,14 +912,33 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
     <p style="margin-top:-8px; font-size:11.5px;">Stops anyone who discovers your Web App URL from reading or writing your sheet. Must match SHARED_SECRET in phrase-trainer-sheet-sync.gs exactly, or be blank on both sides.</p>
     <div class="field">
-      <label>Gemini API key</label>
+      <label>Gemini API key 1</label>
       <input type="text" id="geminiApiKeyInput" placeholder="AIza...">
+    </div>
+    <div class="field">
+      <label>Gemini API key 2 (optional backup)</label>
+      <input type="text" id="geminiApiKey2Input" placeholder="AIza...">
+    </div>
+    <div class="field">
+      <label>Gemini API key 3 (optional backup)</label>
+      <input type="text" id="geminiApiKey3Input" placeholder="AIza...">
+    </div>
+    <p style="margin-top:-8px; font-size:11.5px;"><strong>Important:</strong> Google's free limits are per <em>project</em>, not per key. Make each key with <em>Create API key in new project</em> in AI Studio (or from a different Google account) — two keys from the same project share one quota and won't help. When a key or model hits its limit, the app moves to the next one automatically. Daily limits reset at midnight Pacific time.</p>
+    <div class="field">
+      <label style="text-transform:none; letter-spacing:0; font-size:12.5px; display:flex; gap:8px; align-items:flex-start;">
+        <input type="checkbox" id="fallbackEnabledInput" style="margin-top:3px;">
+        <span>Use fallback AI (Groq, through your Apps Script) when every Gemini key and model is unavailable. Needs the updated .gs script deployed and a Groq key in it.</span>
+      </label>
     </div>
     <div class="field">
       <label>Gemini model (optional override)</label>
       <input type="text" id="geminiModelInput" placeholder="leave blank to auto-detect">
     </div>
     <p id="geminiModelNote" style="margin-top:-8px; font-size:11.5px;"></p>
+    <div class="card-actions" style="flex-wrap:wrap; margin-bottom:6px;">
+      <button class="ghost" id="testAiBtn" type="button">Test AI connections</button>
+    </div>
+    <div id="aiTestResult" style="margin-bottom:10px; font-size:12.5px;"></div>
     <p style="margin-top:-8px;">Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>. Nothing is sent anywhere except Google's Gemini API, directly from your browser.</p>
     <div class="field">
       <label>Google Search API key (optional — see note below)</label>
@@ -1049,6 +1068,9 @@ async function loadState(){
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
   if(state.settings.sharedSecret === undefined) state.settings.sharedSecret = '';
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
+  if(state.settings.geminiApiKey2 === undefined) state.settings.geminiApiKey2 = '';
+  if(state.settings.geminiApiKey3 === undefined) state.settings.geminiApiKey3 = '';
+  if(state.settings.fallbackEnabled === undefined) state.settings.fallbackEnabled = true;
   if(state.settings.geminiModel === undefined) state.settings.geminiModel = '';
   if(state.settings.geminiModelOverride === undefined) state.settings.geminiModelOverride = '';
   if(state.settings.googleSearchApiKey === undefined) state.settings.googleSearchApiKey = '';
@@ -1147,11 +1169,11 @@ function shortenForSearch(text, maxWords){
 // original text, same as before.
 async function vowelizeArabic(text){
   const system = 'You add full Arabic diacritics (tashkeel/harakat, including i\'rab case endings) to Modern Standard Arabic text so a text-to-speech engine pronounces it correctly. Respond with ONLY the fully diacritized Arabic text - no explanation, no quotation marks, no transliteration, nothing else.';
-  const { text: result } = await callGemini(text, { system, useSearch: false });
+  const { text: result } = await callGemini(text, { system, useSearch: false, noFallback: true }); // cached per phrase, so never from the weaker fallback
   return (result || '').trim();
 }
 async function speakArabicSmart(phraseObj, btn, onCached){
-  const apiKey = (state.settings.geminiApiKey || '').trim();
+  const apiKey = getGeminiKeys().length ? 'set' : '';
   const cleanAr = stripBold(phraseObj.ar);
   let text = cleanAr;
   if(apiKey && cleanAr){
@@ -1238,19 +1260,31 @@ document.getElementById('settingsBtn').addEventListener('click', ()=>{
   document.getElementById('webAppUrlInput').value = state.settings.webAppUrl || '';
   document.getElementById('sharedSecretInput').value = state.settings.sharedSecret || '';
   document.getElementById('geminiApiKeyInput').value = state.settings.geminiApiKey || '';
+  document.getElementById('geminiApiKey2Input').value = state.settings.geminiApiKey2 || '';
+  document.getElementById('geminiApiKey3Input').value = state.settings.geminiApiKey3 || '';
+  document.getElementById('fallbackEnabledInput').checked = state.settings.fallbackEnabled !== false;
+  document.getElementById('aiTestResult').innerHTML = '';
   document.getElementById('geminiModelInput').value = state.settings.geminiModelOverride || '';
+  const bySlot = getGeminiUsageBySlot();
+  const slotNote = Object.keys(bySlot).sort().map(k => 'key ' + k + ': ' + bySlot[k]).join(', ');
   document.getElementById('geminiModelNote').textContent = (state.settings.geminiModel
-    ? 'Currently using: ' + state.settings.geminiModel + ' (auto-detected). '
-    : '') + 'Gemini calls used today: ' + getGeminiUsageToday() + '.';
+    ? 'Last answered by: ' + state.settings.geminiModel + '. '
+    : '') + 'Gemini calls counted on this device today: ' + getGeminiUsageToday() + (slotNote ? ' (' + slotNote + ')' : '') + '. The count restarts at your local midnight; Google\'s limits restart at midnight Pacific time.';
   document.getElementById('googleSearchApiKeyInput').value = state.settings.googleSearchApiKey || '';
   document.getElementById('googleSearchCxInput').value = state.settings.googleSearchCx || '';
   modal.classList.add('open');
 });
 document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
-document.getElementById('saveSettings').addEventListener('click', async ()=>{
+// Reads every field of the settings modal into state.settings. Shared by
+// Save and by "Test AI connections" so a test always uses what's on screen.
+async function applySettingsFromInputs(){
   state.settings.webAppUrl = document.getElementById('webAppUrlInput').value.trim();
   state.settings.sharedSecret = document.getElementById('sharedSecretInput').value.trim();
   state.settings.geminiApiKey = document.getElementById('geminiApiKeyInput').value.trim();
+  state.settings.geminiApiKey2 = document.getElementById('geminiApiKey2Input').value.trim();
+  state.settings.geminiApiKey3 = document.getElementById('geminiApiKey3Input').value.trim();
+  state.settings.fallbackEnabled = document.getElementById('fallbackEnabledInput').checked;
+  lsSet('geminiCooldowns', {}); // keys may have changed — forget old "used up" markers
   const modelOverride = document.getElementById('geminiModelInput').value.trim();
   if(modelOverride !== state.settings.geminiModelOverride){
     // Override changed — drop the auto-detected cache so the new value gets tried fresh.
@@ -1260,7 +1294,21 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   state.settings.googleSearchApiKey = document.getElementById('googleSearchApiKeyInput').value.trim();
   state.settings.googleSearchCx = document.getElementById('googleSearchCxInput').value.trim();
   await saveSettings();
+}
+document.getElementById('saveSettings').addEventListener('click', async ()=>{
+  await applySettingsFromInputs();
   modal.classList.remove('open');
+});
+document.getElementById('testAiBtn').addEventListener('click', async (ev)=>{
+  const btn = ev.target;
+  btn.disabled = true; btn.textContent = 'Testing…';
+  try{
+    await applySettingsFromInputs();
+    await testAiConnections();
+  }catch(err){
+    document.getElementById('aiTestResult').innerHTML = `<div class="status-msg err">Test failed: ${escapeHtml(err.message || 'unknown error')}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Test AI connections';
 });
 
 // ---------- Phrase bank ----------
@@ -2264,11 +2312,14 @@ function getStreakInfo(entries){
 }
 
 // ---------- Gemini usage counter (local only, resets at midnight) ----------
-function bumpGeminiUsage(){
+function bumpGeminiUsage(slot){
   const today = todayStr();
-  let usage = lsGet('geminiUsage', { date: today, count: 0 });
-  if(usage.date !== today) usage = { date: today, count: 0 };
+  let usage = lsGet('geminiUsage', { date: today, count: 0, bySlot: {} });
+  if(usage.date !== today) usage = { date: today, count: 0, bySlot: {} };
+  usage.bySlot = usage.bySlot || {};
+  const sl = slot || 1;
   usage.count += 1;
+  usage.bySlot[sl] = (usage.bySlot[sl] || 0) + 1;
   lsSet('geminiUsage', usage);
   return usage.count;
 }
@@ -2276,6 +2327,11 @@ function getGeminiUsageToday(){
   const today = todayStr();
   const usage = lsGet('geminiUsage', { date: today, count: 0 });
   return usage.date === today ? usage.count : 0;
+}
+function getGeminiUsageBySlot(){
+  const today = todayStr();
+  const usage = lsGet('geminiUsage', { date: today, count: 0, bySlot: {} });
+  return usage.date === today ? (usage.bySlot || {}) : {};
 }
 
 // ---------- Daily review-dose progress ----------
@@ -2914,29 +2970,150 @@ function renderHistory(entries){
 // a list newest-to-oldest, and once one responds successfully we remember it
 // in settings so every later call goes straight there. If Google retires
 // that one too, this same fallback kicks in again automatically.
-const GEMINI_MODEL_FALLBACKS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+// Best-first. All of these are free-tier text models on Google's pricing
+// page (checked Sept 2026). gemini-2.0-flash(-lite) were shut down on
+// 1 June 2026 and 1.5-flash is long gone, so they are no longer listed.
+// Each model has its OWN daily quota, so dropping to the next model is a
+// second source of capacity even with a single key.
+const GEMINI_MODEL_FALLBACKS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+// Google Search grounding is free-tier only on these (3.x models: paid only).
+const GEMINI_SEARCH_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
-async function callGemini(userText, opts, _modelIndex){
+// ---- keys ----
+function getGeminiKeys(){
+  const s = state.settings;
+  const seen = new Set();
+  return [s.geminiApiKey, s.geminiApiKey2, s.geminiApiKey3]
+    .map((k, i) => ({ key: (k || '').trim(), slot: i + 1 }))
+    .filter(k => k.key && !seen.has(k.key) && seen.add(k.key));
+}
+function geminiKeyId(k){ return k.key.slice(-6); }
+
+// ---- "used up" markers ----
+// Google's daily quotas reset at midnight Pacific time, so a daily marker
+// stores the Pacific calendar day it was set on; per-minute limits and
+// hiccups store a short expiry instead.
+function pacificDay(){
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+function loadCooldowns(){ return lsGet('geminiCooldowns', {}); }
+function isCooledDown(map, keyId, model){
+  const now = Date.now(), day = pacificDay();
+  return [keyId + '|' + model, '*|' + model, keyId + '|*'].some(id => {
+    const c = map[id];
+    if(!c) return false;
+    return c.day ? c.day === day : c.until > now;
+  });
+}
+function recordGeminiOutcome(k, cdModel, r){
+  const map = loadCooldowns();
+  const id = geminiKeyId(k);
+  const now = Date.now();
+  if(r.kind === 'quota-day') map[id + '|' + cdModel] = { day: pacificDay() };
+  else if(r.kind === 'quota-min') map[id + '|' + cdModel] = { until: now + r.retryMs };
+  else if(r.kind === 'transient') map[id + '|' + cdModel] = { until: now + 30000 };
+  else if(r.kind === 'gone') map['*|' + cdModel] = { day: pacificDay() };
+  else if(r.kind === 'badkey') map[id + '|*'] = { until: now + 30 * 60000 };
+  else return;
+  lsSet('geminiCooldowns', map);
+}
+
+// ---- one HTTP call, classified ----
+function classifyGeminiError(httpStatus, data, raw){
+  const e = data.error || {};
+  const status = e.status || '';
+  const msg = e.message || 'Gemini API error';
+  const base = { ok: false, msg: (status || httpStatus) + ': ' + msg };
+  if(status === 'NOT_FOUND' || /no longer available|is not found|not supported for generateContent/i.test(msg)) return Object.assign(base, { kind: 'gone' });
+  if(status === 'RESOURCE_EXHAUSTED' || httpStatus === 429){
+    // A "per day" quota id, or "limit: 0" (model/feature not on the free tier), won't recover today.
+    if(/PerDay|limit:\s*0\b/i.test(raw)) return Object.assign(base, { kind: 'quota-day' });
+    const m = raw.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+    const secs = m ? parseFloat(m[1]) : 60;
+    return Object.assign(base, { kind: 'quota-min', retryMs: Math.min(Math.max(secs * 1000, 5000), 10 * 60000) });
+  }
+  if(/API key not valid|API_KEY_INVALID|API key expired/i.test(status + ' ' + msg + ' ' + raw) || status === 'PERMISSION_DENIED' || status === 'UNAUTHENTICATED' || httpStatus === 401 || httpStatus === 403) return Object.assign(base, { kind: 'badkey' });
+  if(status === 'UNAVAILABLE' || status === 'INTERNAL' || status === 'DEADLINE_EXCEEDED' || httpStatus >= 500) return Object.assign(base, { kind: 'transient' });
+  return Object.assign(base, { kind: 'badrequest' });
+}
+async function geminiRequest(k, model, body){
+  bumpGeminiUsage(k.slot);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(k.key)}`;
+  let res, raw;
+  try{
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    raw = await res.text();
+  }catch(e){
+    return { ok: false, kind: 'network', msg: (e && e.message) || 'Network error' };
+  }
+  let data;
+  try{ data = JSON.parse(raw); }catch(e){
+    return { ok: false, kind: 'transient', msg: `HTTP ${res.status} (non-JSON response)` };
+  }
+  if(data.error) return classifyGeminiError(res.status, data, raw);
+  return { ok: true, data };
+}
+
+// ---- fallback AI (Groq via your Apps Script) ----
+function fallbackConfigured(){
+  return state.settings.fallbackEnabled !== false && !!state.settings.webAppUrl;
+}
+async function callFallbackAI(userText, opts){
   opts = opts || {};
-  const apiKey = (state.settings.geminiApiKey || '').trim();
-  if(!apiKey){
+  let data;
+  try{
+    const res = await fetch(state.settings.webAppUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'chat', system: opts.system || '', history: (opts.history || []).slice(-8), text: userText })
+    });
+    data = await res.json();
+  }catch(e){
+    throw new Error('Could not reach your Apps Script: ' + ((e && e.message) || 'network error'));
+  }
+  if(data && data.status === 'error') throw new Error(data.message || 'Fallback AI failed.');
+  if(!data || !data.text) throw new Error('Your Apps Script did not return an AI reply — paste in the updated .gs and deploy a new version.');
+  return data;
+}
+
+function isQuotaError(err){
+  return !!(err && (err.allExhausted || (err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || ''))));
+}
+function aiViaNote(via){
+  return `<div class="count-note" style="margin-top:8px;">⚠ Gemini was unavailable, so this came from the fallback AI (${escapeHtml(via.label || 'Groq')}). It is weaker on Arabic diacritics and i'rab — double-check it, or use Search Google ↗.</div>`;
+}
+// Fallback models are chattier than Gemini: pull the JSON object out even
+// if there is a sentence before or after it.
+function parseAiJson(raw){
+  const cleaned = String(raw || '').replace(/```json|```/gi, '').trim();
+  try{ return JSON.parse(cleaned); }catch(e){}
+  const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}');
+  if(a >= 0 && b > a){
+    try{ return JSON.parse(cleaned.slice(a, b + 1)); }catch(e){}
+  }
+  throw new Error('The AI reply was not in the expected format — try again.');
+}
+
+// ---- main entry point ----
+// Order of attempts: best model first, and for each model every key, then
+// the next model. "Used up" combinations are remembered (see above) so a
+// spent key/model is skipped instantly instead of being retried each time.
+// If every Gemini option fails, the fallback AI is tried (unless the call
+// opts out with noFallback — used where a weaker answer would be cached).
+async function callGemini(userText, opts){
+  opts = opts || {};
+  const keys = getGeminiKeys();
+  if(!keys.length){
     const err = new Error('missing-api-key');
     err.code = 'missing-api-key';
     throw err;
   }
   const override = (state.settings.geminiModelOverride || '').trim();
-  const cached = (state.settings.geminiModel || '').trim();
-  const preferred = override || cached;
-  const modelsToTry = preferred
-    ? [preferred, ...GEMINI_MODEL_FALLBACKS.filter(m => m !== preferred)]
-    : GEMINI_MODEL_FALLBACKS;
-  const idx = _modelIndex || 0;
-  const model = modelsToTry[idx];
-  if(!model){
-    const err = new Error('No working Gemini model found. Set one manually in Sheet & AI settings.');
-    err.code = 'api-error';
-    throw err;
-  }
+  const chain = override ? [override, ...GEMINI_MODEL_FALLBACKS.filter(m => m !== override)] : GEMINI_MODEL_FALLBACKS.slice();
+  const wantSearch = opts.useSearch !== false;
+  const attempts = [];
+  if(wantSearch) GEMINI_SEARCH_MODELS.forEach(m => attempts.push({ model: m, search: true }));
+  chain.forEach(m => attempts.push({ model: m, search: false }));
 
   const contents = (opts.history || []).map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
@@ -2945,53 +3122,105 @@ async function callGemini(userText, opts, _modelIndex){
   contents.push({ role: 'user', parts: [{ text: userText }] });
   const body = { contents };
   if(opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
-  if(opts.useSearch !== false) body.tools = [{ google_search: {} }];
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  bumpGeminiUsage();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  const raw = await res.text();
-  let data;
-  try{ data = JSON.parse(raw); }catch(e){
-    const err = new Error(`HTTP ${res.status} ${res.statusText || ''} (non-JSON response)`.trim());
-    err.code = 'api-error';
-    throw err;
-  }
-  if(data.error){
-    const retirable = data.error.status === 'NOT_FOUND' || /no longer available|not found/i.test(data.error.message || '');
-    if(retirable && idx + 1 < modelsToTry.length){
-      return callGemini(userText, opts, idx + 1); // try the next model down the list
+  const failures = [];
+  for(const a of attempts){
+    const attemptBody = a.search ? Object.assign({}, body, { tools: [{ google_search: {} }] }) : body;
+    const cdModel = a.model + (a.search ? '+search' : '');
+    for(const k of keys){
+      if(isCooledDown(loadCooldowns(), geminiKeyId(k), cdModel)) continue;
+      const r = await geminiRequest(k, a.model, attemptBody);
+      if(r.ok){
+        if(a.model !== state.settings.geminiModel){
+          state.settings.geminiModel = a.model;
+          await saveSettings();
+        }
+        const candidate = (r.data.candidates || [])[0];
+        const text = ((candidate && candidate.content && candidate.content.parts) || [])
+          .map(p => p.text || '').join('');
+        let sources = [];
+        const grounding = candidate && candidate.groundingMetadata;
+        if(grounding && Array.isArray(grounding.groundingChunks)){
+          grounding.groundingChunks.forEach(c => {
+            if(c.web && c.web.uri) sources.push({ url: c.web.uri, title: c.web.title || c.web.uri });
+          });
+        }
+        const seen = new Set();
+        sources = sources.filter(x => { if(seen.has(x.url)) return false; seen.add(x.url); return true; });
+        return { text: text.trim() || '(no response)', sources, provider: 'gemini', model: a.model, keySlot: k.slot, ungrounded: wantSearch && !a.search };
+      }
+      if(r.kind === 'network'){
+        const err = new Error('Could not reach Gemini: ' + r.msg);
+        err.code = 'network-error';
+        throw err;
+      }
+      recordGeminiOutcome(k, cdModel, r);
+      failures.push(r);
+      if(r.kind === 'gone') break; // retired model: no point trying it on the other keys
     }
-    const err = new Error(`${data.error.status || res.status}: ${data.error.message || 'Gemini API error'}`);
-    err.code = 'api-error';
-    throw err;
   }
 
-  // This model worked — remember it so we skip straight to it next time.
-  if(model !== state.settings.geminiModel){
-    state.settings.geminiModel = model;
-    await saveSettings();
+  // Every Gemini option failed or is cooling down.
+  const allRejected = failures.length > 0 && failures.every(f => f.kind === 'badkey');
+  let message = allRejected
+    ? 'Every Gemini key was rejected (' + failures[0].msg + '). Check the keys in Sheet & AI settings.'
+    : 'RESOURCE_EXHAUSTED: every Gemini key and model is used up or unavailable right now' + (failures.length ? ' (last: ' + failures[failures.length - 1].msg + ')' : ' (they are cooling down after earlier limits)') + '.';
+  if(!opts.noFallback && fallbackConfigured()){
+    try{
+      const fb = await callFallbackAI(userText, opts);
+      return { text: fb.text.trim(), sources: [], provider: fb.provider || 'groq', model: fb.model || '', fallback: true, ungrounded: true };
+    }catch(fbErr){
+      message += ' Fallback AI: ' + fbErr.message;
+    }
   }
+  const err = new Error(message);
+  err.code = 'api-error';
+  err.allExhausted = !allRejected;
+  throw err;
+}
 
-  const candidate = (data.candidates || [])[0];
-  const text = ((candidate && candidate.content && candidate.content.parts) || [])
-    .map(p => p.text || '').join('');
-
-  // Pull grounding sources (the pages Google Search actually used) if present.
-  let sources = [];
-  const grounding = candidate && candidate.groundingMetadata;
-  if(grounding && Array.isArray(grounding.groundingChunks)){
-    grounding.groundingChunks.forEach(c=>{
-      if(c.web && c.web.uri) sources.push({ url: c.web.uri, title: c.web.title || c.web.uri });
-    });
+// ---- "Test AI connections" ----
+async function testAiConnections(){
+  const out = document.getElementById('aiTestResult');
+  const lines = [];
+  const render = () => { out.innerHTML = lines.join(''); };
+  const good = t => `<div class="status-msg">✓ ${t}</div>`;
+  const bad = t => `<div class="status-msg err">✗ ${t}</div>`;
+  const kindLabel = { 'quota-day': 'daily limit reached', 'quota-min': 'per-minute limit (try again shortly)', gone: 'model retired', badkey: 'key rejected', transient: 'temporarily unavailable', badrequest: 'request refused', network: 'network error' };
+  const keys = getGeminiKeys();
+  if(!keys.length){ lines.push(bad('No Gemini key entered yet.')); render(); }
+  for(const k of keys){
+    lines.push(`<div class="count-note">Testing Gemini key ${k.slot}…</div>`); render();
+    const tried = [];
+    let worked = null;
+    for(const model of GEMINI_MODEL_FALLBACKS){
+      const r = await geminiRequest(k, model, { contents: [{ role: 'user', parts: [{ text: 'Reply with the single word OK.' }] }] });
+      if(r.ok){ worked = model; break; }
+      recordGeminiOutcome(k, model, r);
+      tried.push(model + ': ' + (kindLabel[r.kind] || r.kind) + (r.kind === 'badkey' || r.kind === 'network' ? ' — ' + r.msg : ''));
+      if(r.kind === 'badkey' || r.kind === 'network') break;
+    }
+    lines.pop();
+    if(worked) lines.push(good(`Key ${k.slot} (…${escapeHtml(geminiKeyId(k))}) works on ${escapeHtml(worked)}.` + (tried.length ? `<br><span class="due-meta">Skipped: ${escapeHtml(tried.join('; '))}</span>` : '')));
+    else lines.push(bad(`Key ${k.slot} (…${escapeHtml(geminiKeyId(k))}) did not work.<br><span class="due-meta">${escapeHtml(tried.join('; '))}</span>`));
+    render();
   }
-  const seen = new Set();
-  sources = sources.filter(s=>{ if(seen.has(s.url)) return false; seen.add(s.url); return true; });
-  return { text: text.trim() || '(no response)', sources };
+  if(!state.settings.webAppUrl){
+    lines.push(bad('Fallback AI: add your Apps Script Web App URL first.'));
+  }else if(state.settings.fallbackEnabled === false){
+    lines.push(`<div class="count-note">Fallback AI is switched off.</div>`);
+  }else{
+    lines.push(`<div class="count-note">Testing fallback AI…</div>`); render();
+    try{
+      const fb = await callFallbackAI('Reply with the single word OK.', {});
+      lines.pop();
+      lines.push(good(`Fallback AI works (${escapeHtml(fb.provider || 'groq')} · ${escapeHtml(fb.model || 'model')}).`));
+    }catch(e){
+      lines.pop();
+      lines.push(bad(`Fallback AI: ${escapeHtml(e.message)}`));
+    }
+  }
+  render();
 }
 
 // ---------- Plain Google Search fallback (used when Gemini's quota runs out) ----------
@@ -3256,6 +3485,7 @@ async function vpCritique(){
         <button class="icon wide" data-copy-raw="${escapeHtml(result.corrected||'')}" title="Copy">⧉ Copy</button>
       </div>
       ${notesHtml}
+      ${result._via ? aiViaNote(result._via) : ''}
       <div class="card-actions" style="margin-top:10px;">
         <button class="ghost" id="vpKeepPhraseBtn">Keep corrected as phrase</button>
         <button class="ghost" id="vpKeepGrammarBtn">Keep as grammar entry</button>
@@ -3281,11 +3511,11 @@ async function vpCritique(){
     // Log it so voice practice counts toward your streak like any other practice
     await addLogEntry(text.slice(0,120), vpLastTranscript.lang, 'Voice practice');
   }catch(err){
-    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    const isQuota = isQuotaError(err);
     box.innerHTML = err && err.code === 'missing-api-key'
       ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
       : isQuota
-        ? '<div class="status-msg err">Gemini\'s free daily quota is used up — the transcript above is still yours to keep. Use <strong>Search Google ↗</strong> above in the meantime.</div>'
+        ? '<div class="status-msg err">Every AI option is used up or unavailable right now — the transcript above is still yours to keep. Use <strong>Search Google ↗</strong> above in the meantime.</div>'
         : `<div class="status-msg err">Could not analyse that: ${escapeHtml(err.message||'unknown error')}. Use <strong>Search Google ↗</strong> above in the meantime.</div>`;
   }
   btn.disabled = false;
@@ -3471,9 +3701,10 @@ ${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." 
 Respond with ONLY a JSON object, no markdown fences, no extra text, in exactly this shape:
 {"corrected": "the fully corrected text", "category": "a short 2-4 word grammar topic label for the main type of mistake found, e.g. 'Verb conjugation', 'Case endings (i'rab)', 'Agreement', 'Word order', 'Preposition usage', 'Vocabulary/spelling' — use an empty string if no mistakes were found", "notes": [{"original": "the wrong fragment", "fixed": "the corrected fragment", "explanation": "short reason, one sentence"}]}
 If the text has no mistakes, return the same text as "corrected", an empty string for "category", and an empty notes array.`;
-  const { text: raw } = await callGemini(text, { system, useSearch: false });
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(cleaned);
+  const { text: raw, fallback, model } = await callGemini(text, { system, useSearch: false });
+  const parsed = parseAiJson(raw);
+  if(fallback) parsed._via = { label: model };
+  return parsed;
 }
 
 // Reuse an existing category name (case-insensitively) if the AI's suggestion
@@ -3671,7 +3902,8 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
           <button class="ghost" id="gcSaveBtn">Save as grammar entry</button>
         </div>
       </div>
-      ${notesHtml}`;
+      ${notesHtml}
+      ${result._via ? aiViaNote(result._via) : ''}`;
     wireBoldButton('gcBoldBtn', 'gcCorrectedBox');
     document.getElementById('gcSpeakBtn').addEventListener('click', ()=>{
       speak(stripBold(document.getElementById('gcCorrectedBox').value), lang === 'Arabic' ? 'ar' : 'en');
@@ -3717,11 +3949,11 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
     });
   }catch(err){
     console.error('Grammar check error:', err);
-    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    const isQuota = isQuotaError(err);
     resultBox.innerHTML = err && err.code === 'missing-api-key'
       ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
       : isQuota
-        ? `<div class="status-msg err">Gemini's free daily quota is used up for today — try again tomorrow, or check <a href="https://www.google.com/search?q=${encodeURIComponent((lang==='Arabic'?'Arabic':'English')+' grammar check: '+input)}" target="_blank" rel="noopener">Google</a> in the meantime.</div>`
+        ? `<div class="status-msg err">Every AI option is used up or unavailable right now — try again later, or check <a href="https://www.google.com/search?q=${encodeURIComponent((lang==='Arabic'?'Arabic':'English')+' grammar check: '+input)}" target="_blank" rel="noopener">Google</a> in the meantime.</div>`
         : `<div class="status-msg err">Could not check that right now: ${escapeHtml(err.message || 'unknown error')}. Use <strong>Search Google ↗</strong> above in the meantime.</div>`;
   }
   btn.disabled = false;
@@ -3876,7 +4108,7 @@ document.addEventListener('click', async (e)=>{
   const rawTarget = e.target.dataset.speakRaw;
   if(rawTarget !== undefined){
     const lang = e.target.dataset.speakLang;
-    const apiKey = (state.settings.geminiApiKey || '').trim();
+    const apiKey = getGeminiKeys().length ? 'set' : '';
     if(lang === 'ar' && apiKey && !hasTashkeel(rawTarget)){
       e.target.disabled = true;
       let toSpeak = rawTarget;
@@ -3957,9 +4189,8 @@ async function runAnalysis(sentence, targetElId, triggerBtn){
   box.innerHTML = 'Analyzing...';
   const system = 'You are an Arabic grammar assistant. Respond ONLY with strict JSON, no prose, no code fences, in this exact shape: {"translation":"a concise, natural English translation of the whole sentence","words":[{"word":"...","root":"...","pos":"...","note":"..."}]}. "pos" should be a short part-of-speech / role label (e.g. verb, subject-noun, preposition, object). "note" should mention gender/number agreement or case ending (i\'rab) briefly. Keep it concise.';
   try{
-    const { text } = await callGemini('Break down this Arabic sentence word by word: ' + sentence, { system, useSearch: false });
-    const cleaned = text.replace(/```json|```/g,'').trim();
-    const parsed = JSON.parse(cleaned);
+    const { text, fallback, model } = await callGemini('Break down this Arabic sentence word by word: ' + sentence, { system, useSearch: false });
+    const parsed = parseAiJson(text);
     const rows = (parsed.words||[]).map(w=>`<tr><td dir="rtl">${escapeHtml(w.word||'')}</td><td dir="rtl">${escapeHtml(w.root||'')}</td><td>${escapeHtml(w.pos||'')}</td><td>${escapeHtml(w.note||'')}</td></tr>`).join('');
     const dorarUrl = 'https://www.google.com/search?q=' + encodeURIComponent('site:dorar.net/tafseer ' + sentence);
     box.innerHTML = `
@@ -3972,7 +4203,7 @@ async function runAnalysis(sentence, targetElId, triggerBtn){
         </div>
       </div>
       <table class="analysis-table"><tr><th>Word</th><th>Root</th><th>Role</th><th>Notes (agreement / i'rab)</th></tr>${rows}</table>
-      <div class="count-note" style="margin-top:8px;">Translation and breakdown are AI-generated for study purposes — verify meaning against a recognized source (e.g. Dorar.net) before relying on it, especially for anything with religious significance.</div>`;
+      <div class="count-note" style="margin-top:8px;">Translation and breakdown are AI-generated for study purposes — verify meaning against a recognized source (e.g. Dorar.net) before relying on it, especially for anything with religious significance.</div>${fallback ? aiViaNote({ label: model }) : ''}`;
   }catch(err){
     console.error('Gemini analyze error:', err);
     box.innerHTML = err && err.code === 'missing-api-key'
@@ -4174,7 +4405,7 @@ async function fetchMuyassarArabic(sura, ayah){
 // text out — so this is as cheap as a Gemini call gets.
 async function translateArabicToEnglish(arabicText){
   const system = `Translate the given Arabic Islamic tafsir text into natural, clear English. Respond with ONLY the English translation - no explanation, no quotation marks, nothing else.`;
-  const { text } = await callGemini(arabicText, { system, useSearch: false });
+  const { text } = await callGemini(arabicText, { system, useSearch: false, noFallback: true }); // religious text — no weaker fallback
   return text.trim();
 }
 
@@ -4489,27 +4720,29 @@ async function sendChat(){
     ? `Context — grammar entry "${currentAiEntry.title}" (${currentAiEntry.language}, ${currentAiEntry.category || 'uncategorized'}): ${currentAiEntry.rule_summary || ''}\n\nUser question: `
     : '';
   try{
-    const { text: reply, sources } = await callGemini(contextPrefix + text, { history: chatHistory.slice(0,-1), useSearch: true });
+    const { text: reply, sources, fallback, ungrounded, model } = await callGemini(contextPrefix + text, { history: chatHistory.slice(0,-1), useSearch: true });
     loadingBubble.remove();
-    appendChatBubble('assistant', reply, sources);
+    const aiNote = fallback ? '\n\n(Answered by the fallback AI ' + model + ' — no live web search, and weaker on Arabic. Double-check it.)'
+      : ungrounded ? '\n\n(Answered without live web search.)' : '';
+    appendChatBubble('assistant', reply + aiNote, sources);
     chatHistory.push({ role: 'assistant', content: reply });
   }catch(err){
     console.error('Gemini chat error:', err);
     loadingBubble.remove();
-    const isQuota = err && err.code === 'api-error' && /RESOURCE_EXHAUSTED|quota/i.test(err.message || '');
+    const isQuota = isQuotaError(err);
     if(isQuota){
       let handled = false;
       try{
         const results = await googleSearchFallback(text);
         if(results && results.length){
-          const summary = "Gemini's free daily quota is used up for today, so here are plain Google search results instead:\n\n" +
+          const summary = "Every AI option is used up or unavailable right now, so here are plain Google search results instead:\n\n" +
             results.map(r => r.snippet ? `${r.title} — ${r.snippet}` : r.title).join('\n\n');
           appendChatBubble('assistant', summary, results.map(r => ({ url: r.url, title: r.title })));
           handled = true;
         }
       }catch(searchErr){ console.error('Google Search fallback error:', searchErr); }
       if(!handled){
-        appendChatBubble('assistant', "Gemini's free daily quota is used up for today (it resets on its own, usually within a day). Here's a plain Google search link instead:", [
+        appendChatBubble('assistant', "Every AI option is used up or unavailable right now (Gemini's daily limits reset at midnight Pacific time). Here's a plain Google search link instead:", [
           { url: `https://www.google.com/search?q=${encodeURIComponent(text)}`, title: `Search Google for "${text}"` }
         ]);
       }
