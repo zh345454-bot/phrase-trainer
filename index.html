@@ -678,18 +678,18 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-grammar">
     <div class="panel">
       <h2>🎙 Voice practice</h2>
-      <p class="count-note" style="margin-bottom:10px;">Speak, get a transcript, then have it critiqued like written work. Record in <strong>short turns (30–90s)</strong> — critique of a long monologue collapses into vague advice, while turn-sized chunks give you specific, fixable corrections. Audio is held in memory only and dropped the moment it's transcribed; nothing is ever stored.</p>
+      <p class="count-note" style="margin-bottom:10px;">Speak, get a transcript, then have it critiqued like written work. Record in <strong>short turns (30–90s)</strong> — critique of a long monologue collapses into vague advice, while turn-sized chunks give you specific, fixable corrections. Audio is held in memory only and dropped the moment it's transcribed; nothing is ever stored. <strong>Can't find the words?</strong> Speak in Malay, then translate to English or Arabic and use the result as your script.</p>
       <div class="field-row" style="margin-bottom:10px;">
         <div class="field" style="max-width:180px;">
           <label>Speaking in</label>
-          <select id="vpLang"><option value="ar">Arabic</option><option value="en">English</option></select>
+          <select id="vpLang"><option value="ar">Arabic</option><option value="en">English</option><option value="ms">Malay</option></select>
         </div>
         <div class="field" style="max-width:220px;">
           <label>Prompt (optional)</label>
           <select id="vpPrompt">
             <option value="">Free speech</option>
             <option value="describe">Describe your day</option>
-            <option value="opinion">Give an opinion</option>
+            <option value="opinion">Give an opinion (120 topics)</option>
             <option value="retell">Retell a starred phrase in your own words</option>
           </select>
         </div>
@@ -1087,6 +1087,23 @@ let voicesReady = false;
 if('speechSynthesis' in window){
   window.speechSynthesis.onvoiceschanged = () => { voicesReady = true; };
 }
+// Speech language codes. Malay falls back to an Indonesian voice when the
+// device has no Malay one — the two are close enough to be understood.
+const TTS_LANG_CODES = { ar: 'ar-SA', en: 'en-US', ms: 'ms-MY' };
+function ttsVoiceFor(lang){
+  if(!('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  const find = prefix => voices.find(v => v.lang && v.lang.toLowerCase().startsWith(prefix));
+  return find(lang) || (lang === 'ms' ? find('id') : null) || null;
+}
+function applyTtsVoice(utter, lang){
+  utter.lang = TTS_LANG_CODES[lang] || 'en-US';
+  const voice = ttsVoiceFor(lang);
+  if(voice){
+    utter.voice = voice;
+    if(lang === 'ms' && !/^ms/i.test(voice.lang)) utter.lang = voice.lang;
+  }
+}
 function speak(text, lang){
   if(!text) return;
   if(!('speechSynthesis' in window)){
@@ -1095,10 +1112,7 @@ function speak(text, lang){
   }
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
-  const voices = window.speechSynthesis.getVoices();
-  const match = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang));
-  if(match) utter.voice = match;
+  applyTtsVoice(utter, lang);
   utter.rate = 0.92;
   window.speechSynthesis.speak(utter);
 }
@@ -1126,12 +1140,9 @@ function speakLong(text, lang){
       if(rest) chunks.push(rest);
     });
   });
-  const voices = window.speechSynthesis.getVoices();
-  const match = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang));
   chunks.forEach(chunk=>{
     const utter = new SpeechSynthesisUtterance(chunk);
-    utter.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
-    if(match) utter.voice = match;
+    applyTtsVoice(utter, lang);
     utter.rate = 0.92;
     window.speechSynthesis.speak(utter);
   });
@@ -1986,6 +1997,7 @@ document.getElementById('addBankBtn').addEventListener('click', async ()=>{
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
   await saveBank();
+  countTask('addPhrase');
   document.getElementById('bankEn').value = '';
   document.getElementById('bankAr').value = '';
   document.getElementById('bankCat').value = '';
@@ -2010,6 +2022,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
     added++;
   });
   await saveBank();
+  if(added) countTask('addPhrase', added);
   document.getElementById('quickAddArea').value = '';
   statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
     + (skipped ? ', skipped ' + skipped + ' already in your bank.' : '.');
@@ -3252,25 +3265,222 @@ async function googleSearchFallback(query){
 let vpRecorder = null, vpChunks = [], vpTimerInt = null, vpStartedAt = 0;
 let vpLastTranscript = null;
 
-const VP_PROMPTS = {
-  describe: { ar: 'صف يومك: ماذا فعلت هذا الصباح؟ ماذا ستفعل الليلة؟', en: 'Describe your day: what did you do this morning? What will you do tonight?' },
-  opinion: { ar: 'ما رأيك في العمل من البيت؟ ولماذا؟', en: 'What is your opinion on working from home? Why?' },
-  retell: { ar: 'اختر عبارة محفوظة بنجمة وأعد صياغتها بكلماتك.', en: 'Pick a starred phrase and retell it in your own words.' }
+// Language metadata for Voice practice. "ai" is the name handed to the AI
+// prompts; the search/placeholder strings are written in the language itself
+// so the Google/YouTube links land on material in that language.
+const VP_LANGS = {
+  ar: { label: 'Arabic', ai: 'Arabic', rtl: true,
+        placeholder: 'الصق النص هنا…',
+        googleQ: t => t + ' نص للتحدث حوالي دقيقة مثال',
+        youtubeQ: t => t + ' استماع عربي',
+        fallbackTopic: 'محادثة يومية' },
+  en: { label: 'English', ai: 'English', rtl: false,
+        placeholder: 'Paste the model text here…',
+        googleQ: t => t + ' speaking sample text about 60 seconds',
+        youtubeQ: t => t + ' English listening practice',
+        fallbackTopic: 'everyday conversation' },
+  ms: { label: 'Malay', ai: 'Malay (Bahasa Malaysia)', rtl: false,
+        placeholder: 'Tampal teks di sini…',
+        googleQ: t => t + ' contoh teks bercakap lebih kurang seminit',
+        youtubeQ: t => t + ' latihan mendengar bahasa Melayu',
+        fallbackTopic: 'perbualan harian' }
 };
 
-// Short search-friendly topic for each built-in prompt (the full prompt
-// sentences above make poor Google queries).
-const VP_TOPICS = {
-  describe: { ar: 'وصف يومي في الصباح والمساء', en: 'describe your day morning and evening' },
-  opinion: { ar: 'رأيي في العمل من البيت', en: 'opinion on working from home' }
+const VP_PROMPTS = {
+  describe: {
+    ar: 'صف يومك: ماذا فعلت هذا الصباح؟ ماذا ستفعل الليلة؟',
+    en: 'Describe your day: what did you do this morning? What will you do tonight?',
+    ms: 'Ceritakan hari anda: apa yang anda lakukan pagi tadi? Apa yang akan anda lakukan malam ini?'
+  },
+  retell: {
+    ar: 'اختر عبارة محفوظة بنجمة وأعد صياغتها بكلماتك.',
+    en: 'Pick a starred phrase and retell it in your own words.',
+    ms: 'Pilih frasa berbintang dan ceritakan semula dengan kata-kata anda sendiri.'
+  }
 };
+
+// Short search-friendly topic for the fixed prompts (the full prompt
+// sentences make poor Google queries). "Give an opinion" uses the current
+// topic's own question instead — see vpTopicFor().
+const VP_TOPICS = {
+  describe: { ar: 'وصف يومي في الصباح والمساء', en: 'describe your day morning and evening', ms: 'menceritakan hari saya pagi dan malam' }
+};
+
+// "Give an opinion" question bank — [English, Malay, Arabic] per row, 12
+// themes x 10 questions. Each one is a full question so it works as-is in any
+// of the three languages, and they are dealt from a shuffled deck (see
+// vpNextTopic) so you see every one before any repeats.
+const VP_OPINION_TOPICS = [
+  // Work & money
+  ["Is working from home better than working in an office?", "Adakah bekerja dari rumah lebih baik daripada bekerja di pejabat?", "هل العمل من المنزل أفضل من العمل في المكتب؟"],
+  ["Should people save money first or invest early?", "Adakah orang patut menyimpan wang dahulu atau melabur lebih awal?", "هل ينبغي للناس أن يدّخروا المال أولًا أم يستثمروا مبكرًا؟"],
+  ["Is a high salary more important than a job you love?", "Adakah gaji tinggi lebih penting daripada kerja yang anda suka?", "هل الراتب المرتفع أهم من وظيفة تحبها؟"],
+  ["Is it better to be an employee or to run your own business?", "Adakah lebih baik menjadi pekerja atau menjalankan perniagaan sendiri?", "هل الأفضل أن تكون موظفًا أم أن تدير عملك الخاص؟"],
+  ["Should a four-day work week become normal?", "Patutkah minggu bekerja empat hari menjadi perkara biasa?", "هل ينبغي أن يصبح أسبوع العمل من أربعة أيام أمرًا عاديًا؟"],
+  ["Is it wise to lend money to friends?", "Adakah bijak meminjamkan wang kepada kawan?", "هل من الحكمة إقراض المال للأصدقاء؟"],
+  ["Do credit cards do more good or more harm?", "Adakah kad kredit lebih banyak manfaat atau mudarat?", "هل تفعل بطاقات الائتمان خيرًا أكثر أم ضررًا؟"],
+  ["Should children get pocket money for doing chores?", "Patutkah kanak-kanak diberi wang saku kerana membuat kerja rumah?", "هل ينبغي أن يحصل الأطفال على مصروف مقابل مساعدتهم في أعمال المنزل؟"],
+  ["Is patience more important than skill when building a career?", "Adakah kesabaran lebih penting daripada kemahiran dalam membina kerjaya?", "هل الصبر أهم من المهارة في بناء المسيرة المهنية؟"],
+  ["Is it better to change jobs often or to stay in one company for years?", "Adakah lebih baik kerap bertukar kerja atau kekal di satu syarikat bertahun-tahun?", "هل من الأفضل تغيير الوظيفة كثيرًا أم البقاء في شركة واحدة سنوات طويلة؟"],
+  // Technology
+  ["Is artificial intelligence a help or a danger for people?", "Adakah kecerdasan buatan membantu atau membahayakan manusia?", "هل الذكاء الاصطناعي عون للناس أم خطر عليهم؟"],
+  ["Do smartphones bring us closer together or push us apart?", "Adakah telefon pintar mendekatkan atau menjauhkan kita antara satu sama lain?", "هل تقرّبنا الهواتف الذكية من بعضنا أم تباعدنا؟"],
+  ["At what age should a child get their first phone?", "Pada umur berapakah seorang kanak-kanak patut mendapat telefon pertamanya?", "في أي عمر ينبغي أن يحصل الطفل على أول هاتف له؟"],
+  ["Is social media good for society?", "Adakah media sosial baik untuk masyarakat?", "هل وسائل التواصل الاجتماعي مفيدة للمجتمع؟"],
+  ["Would you trust a self-driving car?", "Adakah anda akan mempercayai kereta pandu sendiri?", "هل ستثق بسيارة ذاتية القيادة؟"],
+  ["Is online shopping better than shopping in stores?", "Adakah membeli-belah dalam talian lebih baik daripada di kedai?", "هل التسوق عبر الإنترنت أفضل من التسوق في المتاجر؟"],
+  ["Should people take regular breaks from screens?", "Patutkah orang berehat daripada skrin secara berkala?", "هل ينبغي للناس أخذ فترات راحة منتظمة من الشاشات؟"],
+  ["Is it safe to keep all your personal data online?", "Adakah selamat menyimpan semua data peribadi anda dalam talian?", "هل من الآمن حفظ جميع بياناتك الشخصية على الإنترنت؟"],
+  ["Will robots take over most jobs in the future?", "Adakah robot akan mengambil alih kebanyakan pekerjaan pada masa depan?", "هل ستحل الروبوتات محل معظم الوظائف في المستقبل؟"],
+  ["Is it better to read a paper book or an e-book?", "Adakah lebih baik membaca buku bercetak atau e-buku?", "هل من الأفضل قراءة كتاب ورقي أم كتاب إلكتروني؟"],
+  // Education & learning
+  ["Is homework useful or a waste of time?", "Adakah kerja rumah berguna atau membuang masa?", "هل الواجبات المنزلية مفيدة أم مضيعة للوقت؟"],
+  ["Is it better to study at a university or to learn skills on your own?", "Adakah lebih baik belajar di universiti atau mempelajari kemahiran sendiri?", "هل من الأفضل الدراسة في الجامعة أم تعلّم المهارات بنفسك؟"],
+  ["Should schools teach money management?", "Patutkah sekolah mengajar pengurusan wang?", "هل ينبغي أن تُدرّس المدارس إدارة المال؟"],
+  ["Is learning a foreign language worth the effort?", "Adakah mempelajari bahasa asing berbaloi dengan usaha yang diberikan?", "هل يستحق تعلّم لغة أجنبية الجهد المبذول؟"],
+  ["Are exams a fair way to measure a person's ability?", "Adakah peperiksaan cara yang adil untuk mengukur kebolehan seseorang?", "هل الامتحانات وسيلة عادلة لقياس قدرة الإنسان؟"],
+  ["Is online learning as good as learning in a classroom?", "Adakah pembelajaran dalam talian sama baik dengan pembelajaran di bilik darjah?", "هل التعلّم عبر الإنترنت جيد مثل التعلّم في الفصل الدراسي؟"],
+  ["Should students wear school uniforms?", "Patutkah pelajar memakai pakaian seragam sekolah?", "هل ينبغي للطلاب ارتداء الزي المدرسي؟"],
+  ["What is the best way to learn a new skill quickly?", "Apakah cara terbaik untuk mempelajari kemahiran baharu dengan cepat?", "ما أفضل طريقة لتعلّم مهارة جديدة بسرعة؟"],
+  ["Do you learn more from mistakes or from success?", "Adakah anda belajar lebih banyak daripada kesilapan atau kejayaan?", "هل تتعلم من الأخطاء أكثر أم من النجاح؟"],
+  ["Should memorization still be part of education today?", "Patutkah hafalan masih menjadi sebahagian daripada pendidikan hari ini?", "هل ينبغي أن يبقى الحفظ جزءًا من التعليم اليوم؟"],
+  // Family & relationships
+  ["Is it better to live with your parents or to move out as an adult?", "Adakah lebih baik tinggal bersama ibu bapa atau berpindah keluar apabila dewasa?", "هل الأفضل أن تعيش مع والديك أم تنتقل للسكن المستقل عندما تكبر؟"],
+  ["What makes a good friend?", "Apakah yang menjadikan seseorang kawan yang baik?", "ما الذي يجعل الشخص صديقًا جيدًا؟"],
+  ["How important is it to eat dinner together as a family?", "Setakat mana pentingnya makan malam bersama keluarga?", "ما مدى أهمية تناول العشاء معًا كعائلة؟"],
+  ["Should parents be strict or relaxed with their children?", "Patutkah ibu bapa tegas atau santai dengan anak-anak mereka?", "هل ينبغي للوالدين أن يكونوا صارمين أم متساهلين مع أبنائهم؟"],
+  ["Is it good for children to grow up with their grandparents nearby?", "Adakah baik bagi kanak-kanak membesar dengan datuk dan nenek berdekatan?", "هل من الجيد أن ينشأ الأطفال بالقرب من أجدادهم؟"],
+  ["Is it better to have many friends or a few close ones?", "Adakah lebih baik mempunyai ramai kawan atau beberapa kawan rapat?", "هل من الأفضل أن يكون لديك أصدقاء كثيرون أم قلة مقرّبون؟"],
+  ["How should we care for our elderly parents?", "Bagaimanakah kita patut menjaga ibu bapa yang sudah tua?", "كيف ينبغي أن نعتني بوالدينا المسنّين؟"],
+  ["Can a friendship last a lifetime?", "Bolehkah persahabatan kekal seumur hidup?", "هل يمكن أن تدوم الصداقة مدى الحياة؟"],
+  ["Is it better to be the eldest child or the youngest?", "Adakah lebih baik menjadi anak sulung atau anak bongsu?", "هل الأفضل أن تكون الأكبر بين إخوتك أم الأصغر؟"],
+  ["What is the best way to settle a disagreement with someone you love?", "Apakah cara terbaik menyelesaikan perselisihan dengan orang yang anda sayangi?", "ما أفضل طريقة لحل خلاف مع شخص تحبه؟"],
+  // Health & lifestyle
+  ["Is it better to exercise in the morning or in the evening?", "Adakah lebih baik bersenam pada waktu pagi atau petang?", "هل من الأفضل ممارسة الرياضة في الصباح أم في المساء؟"],
+  ["How many hours of sleep does a person really need?", "Berapa jam tidurkah yang sebenarnya diperlukan oleh seseorang?", "كم ساعة من النوم يحتاج الإنسان فعلًا؟"],
+  ["Is walking better than going to the gym?", "Adakah berjalan kaki lebih baik daripada pergi ke gim?", "هل المشي أفضل من الذهاب إلى النادي الرياضي؟"],
+  ["Should unhealthy food be taxed?", "Patutkah makanan tidak sihat dikenakan cukai?", "هل ينبغي فرض ضرائب على الأطعمة غير الصحية؟"],
+  ["Is it possible to be very busy and still stay healthy?", "Mungkinkah seseorang sangat sibuk tetapi masih sihat?", "هل يمكن أن يكون الإنسان مشغولًا جدًا ومع ذلك يحافظ على صحته؟"],
+  ["Is fasting good for the body and the mind?", "Adakah berpuasa baik untuk tubuh dan minda?", "هل الصيام مفيد للجسد والعقل؟"],
+  ["Is drinking enough water more important than people think?", "Adakah minum air yang cukup lebih penting daripada yang orang sangka?", "هل شرب الماء بكمية كافية أهم مما يظن الناس؟"],
+  ["How can people reduce stress in daily life?", "Bagaimanakah orang boleh mengurangkan tekanan dalam kehidupan harian?", "كيف يمكن للناس تقليل التوتر في حياتهم اليومية؟"],
+  ["Should everyone learn basic first aid?", "Patutkah semua orang belajar pertolongan cemas asas?", "هل ينبغي أن يتعلم الجميع الإسعافات الأولية الأساسية؟"],
+  ["Is a healthy lifestyle expensive or affordable?", "Adakah gaya hidup sihat mahal atau mampu milik?", "هل نمط الحياة الصحي مكلف أم في المتناول؟"],
+  // Society & city life
+  ["Is it better to live in a big city or in a small town?", "Adakah lebih baik tinggal di bandar besar atau pekan kecil?", "هل من الأفضل العيش في مدينة كبيرة أم في بلدة صغيرة؟"],
+  ["Should public transport be free?", "Patutkah pengangkutan awam percuma?", "هل ينبغي أن تكون وسائل النقل العام مجانية؟"],
+  ["Do neighbours matter as much as they used to?", "Adakah jiran masih sepenting dahulu?", "هل ما زال الجيران بنفس الأهمية التي كانوا عليها من قبل؟"],
+  ["What is the biggest problem in cities today?", "Apakah masalah terbesar di bandar-bandar hari ini?", "ما أكبر مشكلة في المدن اليوم؟"],
+  ["Should people volunteer more in their community?", "Patutkah orang lebih kerap menjadi sukarelawan dalam komuniti mereka?", "هل ينبغي للناس التطوع أكثر في مجتمعهم؟"],
+  ["Can traffic congestion really be solved?", "Bolehkah kesesakan lalu lintas benar-benar diselesaikan?", "هل يمكننا فعلًا حل مشكلة الازدحام المروري؟"],
+  ["Are people lonelier today than in the past?", "Adakah orang hari ini lebih kesepian berbanding dahulu?", "هل الناس اليوم أكثر وحدة مما كانوا في الماضي؟"],
+  ["Is it important to keep traditions alive?", "Adakah penting untuk memelihara tradisi?", "هل من المهم الحفاظ على التقاليد حيّة؟"],
+  ["Should old buildings be preserved or replaced with new ones?", "Patutkah bangunan lama dipelihara atau diganti dengan yang baharu?", "هل ينبغي الحفاظ على المباني القديمة أم استبدالها بأخرى جديدة؟"],
+  ["What makes a community strong?", "Apakah yang menjadikan sesebuah komuniti kukuh?", "ما الذي يجعل المجتمع قويًا؟"],
+  // Environment
+  ["What is the easiest way for one person to help the environment?", "Apakah cara paling mudah bagi seseorang membantu alam sekitar?", "ما أسهل طريقة يساعد بها الفرد على حماية البيئة؟"],
+  ["Should plastic bags be banned?", "Patutkah beg plastik diharamkan?", "هل ينبغي حظر الأكياس البلاستيكية؟"],
+  ["Is climate change the most serious problem of our time?", "Adakah perubahan iklim masalah paling serius pada zaman kita?", "هل التغيّر المناخي هو أخطر مشكلة في عصرنا؟"],
+  ["Should we plant more trees in cities?", "Patutkah kita menanam lebih banyak pokok di bandar?", "هل ينبغي أن نزرع المزيد من الأشجار في المدن؟"],
+  ["Is recycling really worth the effort?", "Adakah kitar semula benar-benar berbaloi dengan usaha?", "هل إعادة التدوير تستحق الجهد فعلًا؟"],
+  ["Are electric cars really better for the planet?", "Adakah kereta elektrik benar-benar lebih baik untuk planet ini?", "هل السيارات الكهربائية أفضل للكوكب حقًا؟"],
+  ["Should people waste less food?", "Patutkah orang mengurangkan pembaziran makanan?", "هل ينبغي للناس أن يقللوا من هدر الطعام؟"],
+  ["Is it right to use animals for entertainment?", "Adakah betul menggunakan haiwan untuk hiburan?", "هل من الصواب استخدام الحيوانات في الترفيه؟"],
+  ["How should we deal with floods and heavy rain?", "Bagaimanakah kita patut menangani banjir dan hujan lebat?", "كيف ينبغي أن نتعامل مع الفيضانات والأمطار الغزيرة؟"],
+  ["Should farmers use more technology?", "Patutkah petani menggunakan lebih banyak teknologi?", "هل ينبغي للمزارعين استخدام تقنيات أكثر؟"],
+  // Food & culture
+  ["What is the best food in your country, and why?", "Apakah makanan terbaik di negara anda dan mengapa?", "ما أفضل طعام في بلدك، ولماذا؟"],
+  ["Is cooking at home better than eating out?", "Adakah memasak di rumah lebih baik daripada makan di luar?", "هل الطبخ في المنزل أفضل من تناول الطعام في المطاعم؟"],
+  ["Is fast food really that bad?", "Adakah makanan segera benar-benar seburuk itu?", "هل الوجبات السريعة سيئة إلى هذا الحد فعلًا؟"],
+  ["Should children learn to cook?", "Patutkah kanak-kanak belajar memasak?", "هل ينبغي أن يتعلم الأطفال الطبخ؟"],
+  ["Do you prefer tea or coffee, and why?", "Adakah anda lebih suka teh atau kopi, dan mengapa?", "هل تفضّل الشاي أم القهوة، ولماذا؟"],
+  ["How important is it to learn about other cultures?", "Setakat mana pentingnya mempelajari budaya lain?", "ما مدى أهمية التعرف على ثقافات أخرى؟"],
+  ["Is it fine to eat the same healthy meal every day?", "Adakah tidak mengapa makan hidangan sihat yang sama setiap hari?", "هل لا بأس بتناول الوجبة الصحية نفسها كل يوم؟"],
+  ["What is the best way to welcome a guest?", "Apakah cara terbaik menyambut seorang tetamu?", "ما أفضل طريقة لاستقبال الضيف؟"],
+  ["Should celebrations be simple or grand?", "Patutkah perayaan dibuat secara sederhana atau besar-besaran?", "هل ينبغي أن تكون الاحتفالات بسيطة أم فخمة؟"],
+  ["Is street food better than restaurant food?", "Adakah makanan jalanan lebih sedap daripada makanan restoran?", "هل طعام الشارع أفضل من طعام المطاعم؟"],
+  // Travel
+  ["Is it better to travel alone or with others?", "Adakah lebih baik mengembara bersendirian atau bersama orang lain?", "هل من الأفضل السفر وحدك أم مع الآخرين؟"],
+  ["Is travelling worth the money?", "Adakah melancong berbaloi dengan wang yang dibelanjakan?", "هل يستحق السفر المال الذي يُنفق عليه؟"],
+  ["Would you rather travel inside your country or go abroad?", "Adakah anda lebih suka melancong dalam negara atau ke luar negara?", "هل تفضّل السفر داخل بلدك أم إلى الخارج؟"],
+  ["What is the most important thing to pack for a trip?", "Apakah perkara paling penting untuk dibawa semasa bercuti?", "ما أهم شيء يجب أن تحزمه في حقيبة السفر؟"],
+  ["Is it better to plan a trip carefully or to be spontaneous?", "Adakah lebih baik merancang perjalanan dengan teliti atau bertindak spontan?", "هل من الأفضل التخطيط للرحلة بعناية أم التصرف بعفوية؟"],
+  ["Does too much tourism harm a place?", "Adakah pelancongan yang berlebihan memudaratkan sesebuah tempat?", "هل تضر السياحة المفرطة بالمكان؟"],
+  ["Is it better to travel by train, by car or by plane?", "Adakah lebih baik mengembara dengan kereta api, kereta atau kapal terbang?", "هل من الأفضل السفر بالقطار أم بالسيارة أم بالطائرة؟"],
+  ["What can we learn by living in another country?", "Apakah yang boleh kita pelajari daripada tinggal di negara lain?", "ماذا يمكننا أن نتعلم من العيش في بلد آخر؟"],
+  ["Is it important to learn the local language when you travel?", "Adakah penting mempelajari bahasa tempatan apabila anda mengembara?", "هل من المهم تعلّم اللغة المحلية عند السفر؟"],
+  ["Would you prefer a quiet holiday or an adventurous one?", "Adakah anda lebih suka percutian yang tenang atau yang penuh pengembaraan?", "هل تفضّل إجازة هادئة أم إجازة مليئة بالمغامرة؟"],
+  // Time & habits
+  ["Is it better to wake up early or to stay up late?", "Adakah lebih baik bangun awal atau berjaga lewat malam?", "هل من الأفضل الاستيقاظ مبكرًا أم السهر لوقت متأخر؟"],
+  ["How can a person build a good habit?", "Bagaimanakah seseorang boleh membina tabiat yang baik?", "كيف يمكن للإنسان أن يبني عادة جيدة؟"],
+  ["Is multitasking really a good skill?", "Adakah membuat banyak tugas serentak benar-benar kemahiran yang baik?", "هل تعدد المهام مهارة جيدة حقًا؟"],
+  ["Are people too busy these days?", "Adakah orang terlalu sibuk pada zaman ini?", "هل الناس مشغولون أكثر من اللازم هذه الأيام؟"],
+  ["Is it better to plan every day or to go with the flow?", "Adakah lebih baik merancang setiap hari atau mengikut arus?", "هل من الأفضل التخطيط لكل يوم أم ترك الأمور تسير بعفوية؟"],
+  ["What is the best way to use the first hour of the day?", "Apakah cara terbaik menggunakan jam pertama pada sesuatu hari?", "ما أفضل طريقة لاستغلال أول ساعة في اليوم؟"],
+  ["Is being on time a sign of respect?", "Adakah menepati masa tanda hormat?", "هل الالتزام بالمواعيد علامة على الاحترام؟"],
+  ["Is it good to have a strict daily routine?", "Adakah baik mempunyai rutin harian yang ketat?", "هل من الجيد أن يكون لديك روتين يومي صارم؟"],
+  ["Do small daily actions matter more than big occasional efforts?", "Adakah tindakan kecil setiap hari lebih penting daripada usaha besar yang jarang dibuat?", "هل الأعمال الصغيرة اليومية أهم من الجهود الكبيرة المتقطعة؟"],
+  ["How do you deal with procrastination?", "Bagaimanakah anda menangani sikap suka bertangguh?", "كيف تتعامل مع التسويف؟"],
+  // Values & character
+  ["Is honesty always the best policy?", "Adakah kejujuran sentiasa dasar terbaik?", "هل الصدق هو أفضل سياسة دائمًا؟"],
+  ["Why is patience such an important quality?", "Mengapakah kesabaran merupakan sifat yang begitu penting?", "لماذا يُعدّ الصبر صفة مهمة إلى هذا الحد؟"],
+  ["Should we forgive people who have wronged us?", "Patutkah kita memaafkan orang yang telah berbuat salah kepada kita?", "هل ينبغي أن نسامح من أساء إلينا؟"],
+  ["Does gratitude make people happier?", "Adakah rasa syukur menjadikan orang lebih bahagia?", "هل يجعل الشكر الناس أكثر سعادة؟"],
+  ["Is success about money, or about something else?", "Adakah kejayaan tentang wang, atau sesuatu yang lain?", "هل النجاح يعني المال أم شيئًا آخر؟"],
+  ["Is it better to be kind or to be right?", "Adakah lebih baik bersikap baik atau bersikap betul?", "هل الأفضل أن تكون لطيفًا أم أن تكون على حق؟"],
+  ["Can a person really change their character?", "Bolehkah seseorang benar-benar mengubah perwatakannya?", "هل يستطيع الإنسان أن يغيّر شخصيته حقًا؟"],
+  ["Should we give charity even when we have little?", "Patutkah kita bersedekah walaupun kita sendiri mempunyai sedikit?", "هل ينبغي أن نتصدّق حتى عندما نملك القليل؟"],
+  ["Is fear of failure a good or a bad thing?", "Adakah takut gagal perkara yang baik atau buruk?", "هل الخوف من الفشل شيء جيد أم سيئ؟"],
+  ["What does a happy life look like to you?", "Bagaimanakah rupa kehidupan yang bahagia pada pandangan anda?", "كيف تبدو الحياة السعيدة في نظرك؟"],
+  // Media, sports & hobbies
+  ["Is reading books still important in the age of videos?", "Adakah membaca buku masih penting pada zaman video?", "هل ما زالت قراءة الكتب مهمة في عصر مقاطع الفيديو؟"],
+  ["Do sports teach children important life lessons?", "Adakah sukan mengajar kanak-kanak pelajaran hidup yang penting?", "هل تعلّم الرياضة الأطفال دروسًا مهمة في الحياة؟"],
+  ["Is it better to have one serious hobby or many small ones?", "Adakah lebih baik mempunyai satu hobi serius atau banyak hobi kecil?", "هل من الأفضل أن يكون لديك هواية جادة واحدة أم عدة هوايات صغيرة؟"],
+  ["Are video games harmful, or can they be useful?", "Adakah permainan video memudaratkan atau boleh berguna?", "هل الألعاب الإلكترونية ضارة أم يمكن أن تكون مفيدة؟"],
+  ["Do you prefer watching a film at home or at the cinema?", "Adakah anda lebih suka menonton filem di rumah atau di pawagam?", "هل تفضّل مشاهدة فيلم في المنزل أم في السينما؟"],
+  ["Which is more trustworthy for news: television or the internet?", "Manakah lebih boleh dipercayai untuk berita: televisyen atau internet?", "أيهما أكثر موثوقية للأخبار: التلفزيون أم الإنترنت؟"],
+  ["Is listening to podcasts a good way to learn?", "Adakah mendengar podcast cara yang baik untuk belajar?", "هل الاستماع إلى البودكاست طريقة جيدة للتعلّم؟"],
+  ["Should everyone learn to play a musical instrument?", "Patutkah semua orang belajar memainkan alat muzik?", "هل ينبغي أن يتعلم الجميع العزف على آلة موسيقية؟"],
+  ["Is watching team sports better than playing them yourself?", "Adakah menonton sukan berpasukan lebih baik daripada bermain sendiri?", "هل مشاهدة الرياضات الجماعية أفضل من ممارستها بنفسك؟"],
+  ["Is it better to spend free time alone or with other people?", "Adakah lebih baik menghabiskan masa lapang bersendirian atau bersama orang lain?", "هل من الأفضل قضاء وقت الفراغ وحدك أم مع الآخرين؟"]
+].map(([en, ms, ar]) => ({ en, ms, ar }));
+
+// Shuffled deck: every topic is dealt once before any repeats, and a fresh
+// shuffle never opens with the topic you just had.
+let vpDeck = [], vpTopicIdx = null;
+function vpNextTopic(){
+  if(!vpDeck.length){
+    vpDeck = VP_OPINION_TOPICS.map((_, i) => i);
+    for(let i = vpDeck.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [vpDeck[i], vpDeck[j]] = [vpDeck[j], vpDeck[i]];
+    }
+    if(vpDeck.length > 1 && vpDeck[vpDeck.length - 1] === vpTopicIdx) vpDeck.unshift(vpDeck.pop());
+  }
+  vpTopicIdx = vpDeck.pop();
+}
+
+// The prompt on screen, as {ar, en, ms}.
+function vpPromptSet(key){
+  if(key === 'opinion'){
+    if(vpTopicIdx === null) vpNextTopic();
+    return VP_OPINION_TOPICS[vpTopicIdx];
+  }
+  return VP_PROMPTS[key];
+}
+
+// A translation you chose to practise ("Say this next"). It is kept here
+// because the model panel is cleared while recording and re-drawn afterwards;
+// this puts the script back so you can compare it with what you just said.
+let vpScript = null;
 
 function vpTopicFor(lang){
   const key = document.getElementById('vpPrompt').value;
+  if(key === 'opinion' && vpTopicIdx !== null) return VP_OPINION_TOPICS[vpTopicIdx][lang];
   if(VP_TOPICS[key]) return VP_TOPICS[key][lang];
   // Free speech / retell: fall back to the first words you actually said.
   const said = shortenForSearch(vpLastTranscript && vpLastTranscript.text, 8);
-  return said || (lang === 'ar' ? 'محادثة يومية' : 'everyday conversation');
+  return said || VP_LANGS[lang].fallbackTopic;
 }
 
 // Shown as soon as a recording attempt finishes — including when nothing
@@ -3278,14 +3488,18 @@ function vpTopicFor(lang){
 // something to listen to. Search-and-paste means no AI quota is involved.
 function vpRenderModelPanel(lang){
   const panel = document.getElementById('vpModelPanel');
-  const isAr = lang === 'ar';
+  const L = VP_LANGS[lang];
+  const scriptText = (vpScript && vpScript.lang === lang) ? vpScript.text : '';
+  const heading = scriptText
+    ? 'Your script — hear it, read it aloud, then say it again without looking'
+    : 'Stuck or mumbling? Hear a model answer on this topic';
   panel.innerHTML = `
     <div class="due-card">
       <div class="phrase-texts">
-        <div class="due-meta" style="font-weight:600;">Stuck or mumbling? Hear a model answer on this topic</div>
+        <div class="due-meta" style="font-weight:600;">${heading}</div>
         <div class="field" style="margin:6px 0;">
           <label>Topic to search (edit if it's off)</label>
-          <input type="text" id="vpTopicInput" ${isAr?'dir="rtl"':''} value="${escapeHtml(vpTopicFor(lang))}">
+          <input type="text" id="vpTopicInput" ${L.rtl?'dir="rtl"':''} value="${escapeHtml(vpTopicFor(lang))}">
         </div>
         <div class="card-actions" style="flex-wrap:wrap;">
           <button class="ghost" id="vpModelGoogleBtn" type="button">Google: 60-second model text ↗</button>
@@ -3293,7 +3507,7 @@ function vpRenderModelPanel(lang){
         </div>
         <div class="field" style="margin-top:12px;">
           <label>Paste the text you found, then hear it read aloud</label>
-          <textarea id="vpModelText" ${isAr?'dir="rtl"':''} style="min-height:90px; width:100%;" placeholder="${isAr?'الصق النص هنا…':'Paste the model text here…'}"></textarea>
+          <textarea id="vpModelText" ${L.rtl?'dir="rtl"':''} style="min-height:90px; width:100%;" placeholder="${escapeHtml(L.placeholder)}">${escapeHtml(scriptText)}</textarea>
         </div>
         <div class="card-actions" style="flex-wrap:wrap;">
           <button class="icon wide" id="vpModelPlayBtn" type="button">▶ Hear it</button>
@@ -3305,13 +3519,11 @@ function vpRenderModelPanel(lang){
   const topic = () => document.getElementById('vpTopicInput').value.trim();
   document.getElementById('vpModelGoogleBtn').addEventListener('click', ()=>{
     const t = topic(); if(!t) return;
-    openExternal(googleSearchUrl(isAr
-      ? t + ' نص للتحدث حوالي دقيقة مثال'
-      : t + ' speaking sample text about 60 seconds'));
+    openExternal(googleSearchUrl(L.googleQ(t)));
   });
   document.getElementById('vpModelYoutubeBtn').addEventListener('click', ()=>{
     const t = topic(); if(!t) return;
-    openExternal(youtubeSearchUrl(isAr ? t + ' استماع عربي' : t + ' English listening practice'));
+    openExternal(youtubeSearchUrl(L.youtubeQ(t)));
   });
   document.getElementById('vpModelPlayBtn').addEventListener('click', ()=>{
     speakLong(document.getElementById('vpModelText').value.trim(), lang);
@@ -3319,16 +3531,32 @@ function vpRenderModelPanel(lang){
   document.getElementById('vpModelStopBtn').addEventListener('click', stopSpeaking);
 }
 
+// Shows the prompt in the language you are speaking, with the other two
+// underneath so you can see (and hear) the same question in all three.
 function vpUpdatePrompt(){
   const key = document.getElementById('vpPrompt').value;
   const lang = document.getElementById('vpLang').value;
   const el = document.getElementById('vpPromptText');
   if(!key){ el.textContent = ''; return; }
-  const p = VP_PROMPTS[key];
-  el.innerHTML = `<strong>Prompt:</strong> <span ${lang==='ar'?'dir="rtl"':''}>${escapeHtml(p[lang])}</span>`;
+  const p = vpPromptSet(key);
+  const others = ['en', 'ms', 'ar'].filter(l => l !== lang);
+  el.innerHTML = `
+    <div><strong>Prompt:</strong> <span ${VP_LANGS[lang].rtl?'dir="rtl"':''} style="font-size:14px; color:var(--ink);">${escapeHtml(p[lang])}</span></div>
+    ${others.map(l => `
+      <div class="due-meta" ${VP_LANGS[l].rtl?'dir="rtl"':''} style="margin-top:4px;">
+        <span class="pill lang">${l.toUpperCase()}</span> ${escapeHtml(p[l])}
+        <button class="icon" data-speak-raw="${escapeHtml(p[l])}" data-speak-lang="${l}" type="button" title="Hear it in ${VP_LANGS[l].label}">▶</button>
+      </div>`).join('')}
+    ${key === 'opinion' ? `
+      <div class="card-actions" style="margin-top:8px; align-items:center;">
+        <button class="ghost" id="vpNewTopicBtn" type="button">🔀 Another topic</button>
+        <span class="due-meta">${VP_OPINION_TOPICS.length} topics in rotation</span>
+      </div>` : ''}`;
+  const nb = document.getElementById('vpNewTopicBtn');
+  if(nb) nb.addEventListener('click', ()=>{ vpNextTopic(); vpScript = null; vpUpdatePrompt(); });
 }
-document.getElementById('vpPrompt').addEventListener('change', vpUpdatePrompt);
-document.getElementById('vpLang').addEventListener('change', vpUpdatePrompt);
+document.getElementById('vpPrompt').addEventListener('change', ()=>{ vpScript = null; vpUpdatePrompt(); });
+document.getElementById('vpLang').addEventListener('change', ()=>{ vpScript = null; vpUpdatePrompt(); });
 
 function vpSetStatus(msg, isErr){
   const el = document.getElementById('vpStatus');
@@ -3358,6 +3586,8 @@ async function vpStart(){
     };
     vpRecorder.start();
     stopSpeaking();
+    const scriptBox = document.getElementById('vpModelText');
+    if(scriptBox && vpScript) vpScript.text = scriptBox.value; // keep any edits you made
     document.getElementById('vpModelPanel').innerHTML = '';
     vpStartedAt = Date.now();
     document.getElementById('vpRecordBtn').textContent = '■ Stop & transcribe';
@@ -3413,6 +3643,7 @@ async function vpTranscribe(blob){
       return;
     }
     vpLastTranscript = { text: data.text, lang };
+    countTask('voicePractice'); // one finished recording = one turn (empty / failed ones don't count)
     vpRenderTranscript();
     vpRenderModelPanel(lang);
     vpSetStatus('');
@@ -3424,22 +3655,137 @@ async function vpTranscribe(blob){
   // blob goes out of scope here — audio is never persisted anywhere
 }
 
+// ---- Translation (any of Arabic / English / Malay to any other) ----
+// Goes through callGemini, so it gets the same key rotation, cooldowns and
+// Groq fallback as every other AI feature in the app.
+async function translateBetween(text, fromCode, toCode){
+  const from = VP_LANGS[fromCode].ai, to = VP_LANGS[toCode].ai;
+  const extra = toCode === 'ar'
+    ? ' Include full tashkeel (diacritics) so it can be read aloud correctly.'
+    : toCode === 'ms' ? ' Use standard Malaysian Malay (Bahasa Malaysia), not Indonesian.' : '';
+  const system = `Translate the given ${from} text into natural, clear ${to}, keeping the speaker's meaning and first-person voice.${extra} If it is a spoken transcript, quietly drop filler words and false starts. Respond with ONLY the ${to} translation - no explanation, no quotation marks, no notes.`;
+  const { text: out, fallback, model } = await callGemini(text, { system, useSearch: false });
+  return { text: (out || '').trim(), via: fallback ? { label: model } : null };
+}
+
+function vpTranslateErrorHtml(err, fromCode, toCode, text){
+  const url = `https://translate.google.com/?sl=${fromCode}&tl=${toCode}&text=${encodeURIComponent((text || '').slice(0, 1500))}&op=translate`;
+  const link = `<a href="${url}" target="_blank" rel="noopener">Google Translate ↗</a>`;
+  if(err && err.code === 'missing-api-key') return `<div class="status-msg err">Add a free Gemini API key in Sheet settings to translate here. Meanwhile: ${link}</div>`;
+  if(isQuotaError(err)) return `<div class="status-msg err">Every AI option is used up or unavailable right now. Use ${link} in the meantime.</div>`;
+  return `<div class="status-msg err">Could not translate: ${escapeHtml((err && err.message) || 'unknown error')}. Use ${link} in the meantime.</div>`;
+}
+
+// Translates `getText()` from one language to another and shows the result
+// as a card. Cards are keyed by their path (e.g. "src>en>ar"), so pressing
+// the same button again refreshes that card instead of stacking duplicates.
+async function vpTranslate({ parentKey, fromLang, getText, toLang, btn }){
+  const text = (getText() || '').trim();
+  if(!text) return;
+  const status = document.getElementById('vpTransStatus');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Translating…';
+  if(status) status.innerHTML = '';
+  try{
+    const r = await translateBetween(text, fromLang, toLang);
+    if(!r.text) throw new Error('The AI returned an empty translation — try again.');
+    vpShowTranslation(parentKey + '>' + toLang, toLang, fromLang, r);
+  }catch(err){
+    if(status) status.innerHTML = vpTranslateErrorHtml(err, fromLang, toLang, text);
+  }
+  btn.disabled = false; btn.textContent = orig;
+}
+
+function vpShowTranslation(key, lang, fromLang, r){
+  const host = document.getElementById('vpTranslations');
+  if(!host) return; // a new recording replaced this transcript while we waited
+  const L = VP_LANGS[lang];
+  let card = Array.from(host.children).find(c => c.dataset.vpKey === key);
+  const isNew = !card;
+  if(isNew){
+    card = document.createElement('div');
+    card.dataset.vpKey = key;
+    card.style.cssText = 'margin-top:12px; padding-left:10px; border-left:3px solid var(--teal);';
+    host.appendChild(card);
+  }
+  const onward = Object.keys(VP_LANGS).filter(l => l !== lang);
+  const noMsVoice = lang === 'ms' && !ttsVoiceFor('ms');
+  card.innerHTML = `
+    <div class="due-meta" style="font-weight:600;"><span class="pill lang">${L.label}</span> translated from ${VP_LANGS[fromLang].label} — you can edit it</div>
+    <textarea class="vp-tr-text" ${L.rtl?'dir="rtl"':''} style="min-height:70px; width:100%; margin-top:6px;">${escapeHtml(r.text)}</textarea>
+    <div class="card-actions" style="margin-top:6px; flex-wrap:wrap;">
+      <button class="icon wide" data-act="hear" type="button">▶ Hear it</button>
+      <button class="ghost" data-act="stop" type="button">■ Stop</button>
+      <button class="icon wide" data-act="copy" type="button">⧉ Copy</button>
+      <button class="ghost" data-act="say" type="button" title="Load this into the script box, switch to ${L.label}, and record yourself saying it">🎙 Say this next</button>
+    </div>
+    <div class="card-actions" style="margin-top:6px; flex-wrap:wrap; align-items:center;">
+      <span class="due-meta">Translate this onward:</span>
+      ${onward.map(l => `<button class="ghost" data-act="onward" data-to="${l}" type="button">→ ${VP_LANGS[l].label}</button>`).join('')}
+    </div>
+    ${r.via ? aiViaNote(r.via) : ''}
+    ${noMsVoice ? '<div class="count-note" style="margin-top:6px;">This browser has no Malay (or Indonesian) voice installed, so ▶ may sound off. Installing a Malay voice in your device\'s speech settings fixes it.</div>' : ''}`;
+  if(isNew){
+    // One listener for the card's lifetime; it always reads the textarea's
+    // current value, so edits are picked up by Hear / Copy / onward.
+    card.addEventListener('click', ev => {
+      const b = ev.target.closest('button[data-act]');
+      if(!b) return;
+      const ta = card.querySelector('.vp-tr-text');
+      const act = b.dataset.act;
+      if(act === 'hear') speakLong(ta.value.trim(), lang);
+      else if(act === 'stop') stopSpeaking();
+      else if(act === 'copy') copyText(ta.value, b);
+      else if(act === 'say') vpUseAsScript(lang, ta.value.trim());
+      else if(act === 'onward') vpTranslate({ parentKey: key, fromLang: lang, getText: () => ta.value, toLang: b.dataset.to, btn: b });
+    });
+  }
+}
+
+// "Say this next": switch to the translation's language and load it into the
+// script box, so a translation you could not have produced yourself becomes
+// material to hear, repeat, and then say from memory.
+function vpUseAsScript(lang, text){
+  if(!text) return;
+  vpScript = { lang, text };
+  document.getElementById('vpLang').value = lang;
+  vpUpdatePrompt();
+  vpRenderModelPanel(lang);
+  vpSetStatus(`Hear it a few times and read it aloud, then record yourself saying it in ${VP_LANGS[lang].label}. The script comes back after you record so you can compare.`);
+  document.getElementById('vpModelPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function vpRenderTranscript(){
   const t = vpLastTranscript;
-  const isAr = t.lang === 'ar';
+  const L = VP_LANGS[t.lang];
+  const isMs = t.lang === 'ms';
+  const targets = Object.keys(VP_LANGS).filter(l => l !== t.lang);
+  // Critique, Grammar check and the phrase bank are English/Arabic tools, so
+  // a Malay transcript gets translation instead of those buttons.
   document.getElementById('vpResult').innerHTML = `
     <div class="due-card">
       <div class="phrase-texts">
         <div class="due-meta" style="font-weight:600;">Raw transcript — check this matches what you actually said</div>
-        <textarea id="vpTranscriptBox" ${isAr?'dir="rtl"':''} style="min-height:90px; width:100%;">${escapeHtml(t.text)}</textarea>
-        <div class="count-note">Whisper can mishear, especially on dialect or background noise. Fix it here first — otherwise the AI will confidently "correct" a sentence you never said.</div>
+        <textarea id="vpTranscriptBox" ${L.rtl?'dir="rtl"':''} style="min-height:90px; width:100%;">${escapeHtml(t.text)}</textarea>
+        <div class="count-note">${isMs
+          ? 'Whisper can mishear, especially with mixed Malay/English or background noise. Fix it here first — the translations follow exactly what is in this box.'
+          : 'Whisper can mishear, especially on dialect or background noise. Fix it here first — otherwise the AI will confidently "correct" a sentence you never said.'}</div>
       </div>
       <div class="card-actions" style="margin-top:8px; flex-wrap:wrap;">
-        <button class="primary" id="vpCritiqueBtn">Critique this</button>
+        ${isMs ? '' : '<button class="primary" id="vpCritiqueBtn">Critique this</button>'}
         <button class="icon wide" id="vpCopyBtn" title="Copy transcript">⧉ Copy</button>
-        <button class="ghost" id="vpSendToGcBtn">Send to Grammar check</button>
-        <button class="ghost" id="vpGoogleBtn" type="button" title="Search Google for this text — works without AI">Search Google ↗</button>
+        ${isMs ? '' : '<button class="ghost" id="vpSendToGcBtn">Send to Grammar check</button>'}
+        ${isMs ? '' : '<button class="ghost" id="vpGoogleBtn" type="button" title="Search Google for this text — works without AI">Search Google ↗</button>'}
         <button class="ghost" id="vpDiscardBtn">Discard</button>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="due-meta" style="font-weight:600;">Translate this</div>
+        <div class="card-actions" style="margin-top:6px; flex-wrap:wrap;">
+          ${targets.map(l => `<button class="${isMs ? 'primary' : 'ghost'}" data-vp-src-tr="${l}" type="button">→ ${VP_LANGS[l].label}</button>`).join('')}
+        </div>
+        <div class="count-note" style="margin-top:6px;">Each translation can be translated onward into the third language, or loaded as a script to say aloud next.</div>
+        <div id="vpTransStatus"></div>
+        <div id="vpTranslations"></div>
       </div>
       <div id="vpCritique" style="margin-top:12px;"></div>
     </div>`;
@@ -3448,17 +3794,23 @@ function vpRenderTranscript(){
     vpLastTranscript = null;
     document.getElementById('vpResult').innerHTML = '';
   });
-  document.getElementById('vpSendToGcBtn').addEventListener('click', ()=>{
+  document.querySelectorAll('[data-vp-src-tr]').forEach(b => b.addEventListener('click', ()=>{
+    vpTranslate({ parentKey: 'src', fromLang: t.lang, getText: () => document.getElementById('vpTranscriptBox').value, toLang: b.dataset.vpSrcTr, btn: b });
+  }));
+  const sendBtn = document.getElementById('vpSendToGcBtn');
+  if(sendBtn) sendBtn.addEventListener('click', ()=>{
     document.getElementById('gcInput').value = document.getElementById('vpTranscriptBox').value;
-    document.getElementById('gcLang').value = isAr ? 'Arabic' : 'English';
+    document.getElementById('gcLang').value = L.ai;
     document.getElementById('gcInput').scrollIntoView({ behavior:'smooth', block:'center' });
   });
-  document.getElementById('vpGoogleBtn').addEventListener('click', ()=>{
+  const googleBtn = document.getElementById('vpGoogleBtn');
+  if(googleBtn) googleBtn.addEventListener('click', ()=>{
     const txt = shortenForSearch(document.getElementById('vpTranscriptBox').value, 30);
     if(!txt) return;
-    openExternal(googleSearchUrl((isAr ? 'Arabic' : 'English') + ' grammar check: ' + txt));
+    openExternal(googleSearchUrl(L.ai + ' grammar check: ' + txt));
   });
-  document.getElementById('vpCritiqueBtn').addEventListener('click', vpCritique);
+  const critiqueBtn = document.getElementById('vpCritiqueBtn');
+  if(critiqueBtn) critiqueBtn.addEventListener('click', vpCritique);
 }
 
 async function vpCritique(){
@@ -3497,6 +3849,7 @@ async function vpCritique(){
         category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false
       });
       await saveBank(); renderBank(); renderStarred();
+      countTask('addPhrase');
       ev.target.textContent = 'Saved ✓'; ev.target.disabled = true;
     });
     document.getElementById('vpKeepGrammarBtn').addEventListener('click', (ev)=>{
@@ -3575,16 +3928,19 @@ function bumpDailyDoseCompleted(){
 // phrases" becomes a clean whole number of PER_PHRASE_MINUTES units (3
 // phrases ≈ 6 min) instead of leaving a stray fractional minute on the
 // badge — that's the "adjust accordingly" part. Every time you actually
-// finish one instance of that task (a completed Voice Practice critique, a
-// Grammar check run, a phrase saved to the bank via either add form) its
+// finish one instance of that task (a Voice Practice recording that gets
+// transcribed, a Grammar check that completes, a phrase saved to the bank via
+// either add form or "Keep corrected as phrase") its
 // counter goes up by 1 and the slot's remaining time drops by
 // PER_PHRASE_MINUTES, floored at 0. Tracked per calendar day, same
 // lsGet/lsSet storage pattern as getDailyDoseState/bumpDailyDoseCompleted
-// above — see the bumpTaskProgress() call sites (vpCritique, the Grammar
-// check button, addBankBtn/quickAddBankBtn) for where each counts.
+// above — see the countTask() call sites (vpTranscribe for Voice practice, the
+// Check my grammar button for Write & check, addBankBtn / quickAddBankBtn /
+// vpKeepPhraseBtn for Add new phrases) for where each counts. Restoring from
+// the Sheet or a backup, and the first-run sample phrases, deliberately do not.
 const DAILY_TASK_DEFS = {
-  voicePractice: { title: 'Voice practice', target: 5, note: 'Two or three 60–90s turns in Voice Practice. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure. Each finished critique counts as one turn.' },
-  writeCheck: { title: 'Write & check', target: 5, note: 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising. Each check you run counts as one.' },
+  voicePractice: { title: 'Voice practice', target: 5, note: 'Two or three 60–90s turns in Voice Practice. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure. Each recording that gets transcribed counts as one turn — critiquing it is optional.' },
+  writeCheck: { title: 'Write & check', target: 5, note: 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising. Each Check my grammar that completes counts as one.' },
   addPhrase: { title: 'Add new phrases', target: 3, note: () => `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear. Each phrase saved to the bank counts as one.` }
 };
 function getTaskProgress(key){
@@ -3601,6 +3957,11 @@ function bumpTaskProgress(key, by){
   s.completed += (by || 1);
   lsSet('dailyTask_' + key, s);
   return s;
+}
+// Call this when one instance of a task has genuinely finished. Wrapped so a
+// storage hiccup can never turn a successful recording/check into an error.
+function countTask(key, by){
+  try{ bumpTaskProgress(key, by); }catch(e){ console.error('Could not record task progress:', e); }
 }
 
 function renderDailyPlan(){
@@ -3933,6 +4294,10 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
         alert('Could not translate: ' + (err.message || 'unknown error'));
       }
     });
+    // The check ran and its result is on screen: count it toward today's plan
+    // and log it (feeds the streak / Sheet log like Voice practice does).
+    countTask('writeCheck');
+    addLogEntry(input.slice(0, 120), lang === 'Arabic' ? 'ar' : 'en', 'Grammar check').catch(e => console.error('Could not log grammar check:', e));
     document.getElementById('gcSaveBtn').addEventListener('click', ()=>{
       document.getElementById('gTitle').value = input.slice(0, 40) + (input.length > 40 ? '…' : '');
       document.getElementById('gLang').value = lang;
