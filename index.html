@@ -3201,6 +3201,42 @@ function bumpDailyDoseCompleted(){
   return s;
 }
 
+// ---------- Daily plan: task countdowns for the other required slots ----------
+// Same 2-min-per-completed-item idea as the review dose above, applied to
+// the other three required slots: Voice practice, Write & check, and Add
+// new phrases. Each slot has a daily target measured in *completed tasks*
+// rather than raw minutes, so an odd-minute budget like "5 min for Add new
+// phrases" becomes a clean whole number of PER_PHRASE_MINUTES units (3
+// phrases ≈ 6 min) instead of leaving a stray fractional minute on the
+// badge — that's the "adjust accordingly" part. Every time you actually
+// finish one instance of that task (a completed Voice Practice critique, a
+// Grammar check run, a phrase saved to the bank via either add form) its
+// counter goes up by 1 and the slot's remaining time drops by
+// PER_PHRASE_MINUTES, floored at 0. Tracked per calendar day, same
+// lsGet/lsSet storage pattern as getDailyDoseState/bumpDailyDoseCompleted
+// above — see the bumpTaskProgress() call sites (vpCritique, the Grammar
+// check button, addBankBtn/quickAddBankBtn) for where each counts.
+const DAILY_TASK_DEFS = {
+  voicePractice: { title: 'Voice practice', target: 5, note: 'Two or three 60–90s turns in Voice Practice. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure. Each finished critique counts as one turn.' },
+  writeCheck: { title: 'Write & check', target: 5, note: 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising. Each check you run counts as one.' },
+  addPhrase: { title: 'Add new phrases', target: 3, note: () => `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear. Each phrase saved to the bank counts as one.` }
+};
+function getTaskProgress(key){
+  const today = todayStr();
+  let s = lsGet('dailyTask_' + key, null);
+  if(!s || s.date !== today){
+    s = { date: today, completed: 0 };
+    lsSet('dailyTask_' + key, s);
+  }
+  return s;
+}
+function bumpTaskProgress(key, by){
+  const s = getTaskProgress(key);
+  s.completed += (by || 1);
+  lsSet('dailyTask_' + key, s);
+  return s;
+}
+
 function renderDailyPlan(){
   const el = document.getElementById('dailyPlan');
   if(!el) return;
@@ -3225,15 +3261,32 @@ function renderDailyPlan(){
       ? `Today's dose of ${dose.target} done${dose.completed > dose.target ? ' (plus ' + (dose.completed - dose.target) + ' extra)' : ''} — nice. ${dueCount > 0 ? dueCount + ' more still sit in the full Review queue whenever you want a longer session.' : ''}`
       : `${dose.completed} of ${dose.target} done today. ${dueCount} phrase${dueCount===1?'':'s'} currently due in total — the rest carries forward; Review still has the full queue for a longer catch-up session.`;
 
-  const requiredLines = [
-    ['10 min', 'Voice practice', 'Two or three 60–90s turns in Grammar Hub. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure.'],
-    ['10 min', 'Write & check', 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising.'],
-    ['5 min', 'Add new phrases', `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear.`]
-  ];
+  // Each of the other three required slots counts down the same way as
+  // the review dose above: a fixed daily target (in completed tasks), a
+  // running completed count, and remaining time = (target - min(completed,
+  // target)) * PER_PHRASE_MINUTES, floored at 0. Completions past the
+  // target are reported as "extra" rather than pushed into negative time.
+  const taskStates = Object.keys(DAILY_TASK_DEFS).map(key=>{
+    const def = DAILY_TASK_DEFS[key];
+    const progress = getTaskProgress(key);
+    const cappedCompleted = Math.min(progress.completed, def.target);
+    const taskRemaining = Math.max((def.target - cappedCompleted) * PER_PHRASE_MINUTES, 0);
+    const taskDone = cappedCompleted >= def.target;
+    const extra = Math.max(progress.completed - def.target, 0);
+    return {
+      title: def.title,
+      target: def.target,
+      completed: progress.completed,
+      extra,
+      remaining: taskRemaining,
+      done: taskDone,
+      note: typeof def.note === 'function' ? def.note() : def.note
+    };
+  });
   const optionalLines = [
     ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked — do this only when you actually want to, not as a daily requirement.']
   ];
-  const requiredMinutes = requiredLines.reduce((sum,[t])=> sum + parseInt(t,10), 0);
+  const requiredMinutes = taskStates.reduce((sum, t)=> sum + t.remaining, 0);
   const totalMinutes = remainingMinutes + requiredMinutes;
 
   const reviewRow = `
@@ -3243,10 +3296,10 @@ function renderDailyPlan(){
     </div>
     ${!doseDone && dueCount > 0 ? `<div style="margin:4px 0 10px 0;"><button class="ghost" id="dailyPlanPracticeBtn">${dose.completed > 0 ? 'Continue' : 'Start'} this dose in Practice & Log →</button></div>` : ''}`;
 
-  const requiredRows = requiredLines.map(([t,title,desc])=>`
+  const requiredRows = taskStates.map(t=>`
     <div class="log-row" style="align-items:flex-start;">
-      <span><strong>${escapeHtml(title)}</strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
-      <span class="badge pending">${escapeHtml(t)}</span>
+      <span><strong>${escapeHtml(t.title)}</strong><br><span class="due-meta">${t.completed} of ${t.target} done today${t.extra ? ' (plus ' + t.extra + ' extra)' : ''} — ${escapeHtml(t.note)}</span></span>
+      <span class="badge ${t.done ? 'verified' : 'pending'}">${t.done ? 'DONE' : t.remaining + ' MIN'}</span>
     </div>`).join('');
   const optionalRows = optionalLines.map(([t,title,desc])=>`
     <div class="log-row" style="align-items:flex-start;">
