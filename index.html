@@ -245,6 +245,8 @@ button.recording{ background:#9B2C2C !important; border-color:#9B2C2C !important
 }
 .card-actions{ display:flex; gap:6px; flex-shrink:0; }
 .empty{ color:var(--ink-soft); font-size:13px; font-style:italic; padding:8px 0; }
+.star-select-row{ flex-shrink:0; }
+.star-select-wrap{ display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-size:11.5px; color:var(--ink-soft); white-space:nowrap; }
 
 .log-row{
   display:flex;
@@ -492,7 +494,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-starred">
     <div class="panel">
       <h2>★ Starred</h2>
-      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin.</div>
+      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin. Filter by how long something's been starred, then select several and unstar them together.</div>
       <div class="field-row" style="margin-top:10px;">
         <div class="field">
           <label>Search</label>
@@ -515,6 +517,20 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="en">English</option>
           </select>
         </div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="max-width:170px;">
+          <label>Starred at least (days)</label>
+          <input type="number" id="starredMinDays" min="0" placeholder="e.g. 30">
+        </div>
+        <div class="field" style="max-width:170px;">
+          <label>Starred at most (days)</label>
+          <input type="number" id="starredMaxDays" min="0" placeholder="e.g. 90">
+        </div>
+      </div>
+      <div class="field-row" id="starredBulkBar" style="display:none; align-items:center; gap:12px;">
+        <label class="star-select-wrap" style="font-size:13px;"><input type="checkbox" id="starredSelectAll"> Select all visible</label>
+        <button class="ghost" id="starredUnstarSelectedBtn" disabled>☆ Unstar selected</button>
       </div>
       <div class="count-note" id="starredCountNote"></div>
       <div id="starredList"></div>
@@ -1438,6 +1454,14 @@ function daysStarredLabel(starredAt){
   if(days === 1) return 'Starred 1 day ago';
   return 'Starred ' + days + ' days ago';
 }
+// Numeric counterpart to daysStarredLabel, for the Starred tab's period
+// filter. Returns null when there's no starredAt to compute from (older
+// stars from before this was tracked) — those are excluded by any min/max
+// day filter rather than being guessed at.
+function daysStarred(starredAt){
+  if(!starredAt) return null;
+  return Math.max(0, Math.floor((Date.now() - new Date(starredAt).getTime()) / 86400000));
+}
 // Counterpart to mdToHtml for every path that ISN'T display — text-to-speech,
 // clipboard, and anything sent to the AI. Without this, a bolded phrase
 // would literally be spoken/copied/sent as "**word**", asterisks and all.
@@ -1539,7 +1563,8 @@ function phraseCardHtml(p, opts){
     </div>`;
 }
 
-let starredFilter = { query: '', type: '', lang: '' };
+let starredFilter = { query: '', type: '', lang: '', minDays: '', maxDays: '' };
+let starredSelected = new Set(); // composite "type:id" keys, for bulk unstar
 
 // Collects every starred item across the three things that can be starred
 // (phrases, grammar entries, Qur'an entries) into one normalized list, so
@@ -1548,25 +1573,28 @@ function collectStarredItems(){
   const items = [];
   state.bank.filter(p=>p.starred).forEach(p=>{
     items.push({
-      type: 'phrase', label: 'Phrase', ref: p,
+      type: 'phrase', label: 'Phrase', ref: p, key: 'phrase:' + p.id,
       // a bank phrase carries both languages, so it matches either filter
       langs: [p.en ? 'en' : null, p.ar ? 'ar' : null].filter(Boolean),
-      haystack: [p.en, p.ar, p.category].join(' ')
+      haystack: [p.en, p.ar, p.category].join(' '),
+      days: daysStarred(p.starredAt)
     });
   });
   state.grammar.filter(g=>g.starred).forEach(g=>{
     items.push({
-      type: 'grammar', label: 'Grammar', ref: g,
+      type: 'grammar', label: 'Grammar', ref: g, key: 'grammar:' + g.id,
       langs: [g.language === 'Arabic' ? 'ar' : 'en'],
       haystack: [g.title, g.category, g.rule_summary, g.user_notes, (g.tags||[]).join(' '),
-        (g.examples||[]).map(ex=>`${ex.target||''} ${ex.translation||''}`).join(' ')].join(' ')
+        (g.examples||[]).map(ex=>`${ex.target||''} ${ex.translation||''}`).join(' ')].join(' '),
+      days: daysStarred(g.starredAt)
     });
   });
   state.quran.filter(q=>q.starred).forEach(q=>{
     items.push({
-      type: 'quran', label: 'Qur\'an', ref: q,
+      type: 'quran', label: 'Qur\'an', ref: q, key: 'quran:' + q.id,
       langs: ['ar'],
-      haystack: [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic, q.note].join(' ')
+      haystack: [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic, q.note].join(' '),
+      days: daysStarred(q.starredAt)
     });
   });
   return items;
@@ -1574,10 +1602,11 @@ function collectStarredItems(){
 
 function starredCardHtml(item){
   const g = item.ref, q = item.ref;
+  const selectRow = `<div class="star-select-row"><label class="star-select-wrap"><input type="checkbox" class="starred-select" data-star-key="${escapeHtml(item.key)}"${starredSelected.has(item.key) ? ' checked' : ''}> Select</label></div>`;
   if(item.type === 'grammar'){
     const isAr = g.language === 'Arabic';
     const firstEx = (g.examples || [])[0];
-    return `
+    return selectRow + `
       <div class="phrase-texts">
         <div class="tag">Grammar${g.category ? ' · ' + escapeHtml(g.category) : ''}</div>
         <div class="phrase-en" ${isAr ? 'dir="rtl"' : ''} style="font-weight:600;">${mdToHtml(g.title || '')}</div>
@@ -1593,7 +1622,7 @@ function starredCardHtml(item){
       </div>`;
   }
   if(item.type === 'quran'){
-    return `
+    return selectRow + `
       <div class="phrase-texts">
         <div class="tag">Qur'an${q.reference ? ' · ' + escapeHtml(q.reference) : ''}</div>
         <div class="phrase-ar" dir="rtl">${mdToHtml(q.arabic || '')}</div>
@@ -1607,30 +1636,52 @@ function starredCardHtml(item){
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
   }
-  return phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true });
+  return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true });
 }
 
 function renderStarred(){
   const list = document.getElementById('starredList');
   const countNote = document.getElementById('starredCountNote');
+  const bulkBar = document.getElementById('starredBulkBar');
   if(!list) return; // view not in DOM yet on first call ordering
   const all = collectStarredItems();
+  // Drop selections for items that are no longer starred (unstarred
+  // elsewhere, deleted, etc.) so a stale key can't linger in the set.
+  const liveKeys = new Set(all.map(i=>i.key));
+  starredSelected.forEach(k=>{ if(!liveKeys.has(k)) starredSelected.delete(k); });
+
   const q = starredFilter.query.toLowerCase();
+  const min = starredFilter.minDays === '' ? null : parseInt(starredFilter.minDays, 10);
+  const max = starredFilter.maxDays === '' ? null : parseInt(starredFilter.maxDays, 10);
   const matches = all.filter(item=>{
     if(starredFilter.type && item.type !== starredFilter.type) return false;
     if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
     if(q && !item.haystack.toLowerCase().includes(q)) return false;
+    if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
+    if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
     return true;
   });
 
   if(all.length === 0){
     countNote.textContent = '';
+    if(bulkBar) bulkBar.style.display = 'none';
     list.innerHTML = '<div class="empty">Nothing starred yet — tap ☆ on a phrase, grammar entry, or Qur\'an entry to pin it here.</div>';
     return;
   }
   const byType = t => all.filter(i=>i.type===t).length;
   countNote.textContent = matches.length + ' of ' + all.length + ' starred '
     + '(' + byType('phrase') + ' phrases, ' + byType('grammar') + ' grammar, ' + byType('quran') + ' Qur\'an)';
+  if(bulkBar){
+    bulkBar.style.display = matches.length ? 'flex' : 'none';
+    const selectAllBox = document.getElementById('starredSelectAll');
+    if(selectAllBox) selectAllBox.checked = matches.length > 0 && matches.every(m=>starredSelected.has(m.key));
+    const countedSelected = matches.filter(m=>starredSelected.has(m.key)).length;
+    const unstarBtn = document.getElementById('starredUnstarSelectedBtn');
+    if(unstarBtn){
+      unstarBtn.textContent = '☆ Unstar selected' + (countedSelected ? ' (' + countedSelected + ')' : '');
+      unstarBtn.disabled = countedSelected === 0;
+    }
+  }
   if(matches.length === 0){
     list.innerHTML = '<div class="empty">Nothing starred matches those filters.</div>';
     return;
@@ -1644,9 +1695,65 @@ function renderStarred(){
   });
 }
 
+document.addEventListener('change', (e)=>{
+  const key = e.target.dataset.starKey;
+  if(key !== undefined){
+    if(e.target.checked) starredSelected.add(key);
+    else starredSelected.delete(key);
+    renderStarred();
+  }
+});
+
 document.getElementById('starredSearch').addEventListener('input', e=>{ starredFilter.query = e.target.value.trim(); renderStarred(); });
 document.getElementById('starredTypeFilter').addEventListener('change', e=>{ starredFilter.type = e.target.value; renderStarred(); });
 document.getElementById('starredLangFilter').addEventListener('change', e=>{ starredFilter.lang = e.target.value; renderStarred(); });
+document.getElementById('starredMinDays').addEventListener('input', e=>{ starredFilter.minDays = e.target.value; renderStarred(); });
+document.getElementById('starredMaxDays').addEventListener('input', e=>{ starredFilter.maxDays = e.target.value; renderStarred(); });
+
+document.getElementById('starredSelectAll').addEventListener('change', e=>{
+  const all = collectStarredItems();
+  const q = starredFilter.query.toLowerCase();
+  const min = starredFilter.minDays === '' ? null : parseInt(starredFilter.minDays, 10);
+  const max = starredFilter.maxDays === '' ? null : parseInt(starredFilter.maxDays, 10);
+  const visible = all.filter(item=>{
+    if(starredFilter.type && item.type !== starredFilter.type) return false;
+    if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
+    if(q && !item.haystack.toLowerCase().includes(q)) return false;
+    if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
+    if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
+    return true;
+  });
+  if(e.target.checked) visible.forEach(v=>starredSelected.add(v.key));
+  else visible.forEach(v=>starredSelected.delete(v.key));
+  renderStarred();
+});
+
+document.getElementById('starredUnstarSelectedBtn').addEventListener('click', async ()=>{
+  if(!starredSelected.size) return;
+  if(!confirm('Unstar ' + starredSelected.size + ' selected item' + (starredSelected.size===1?'':'s') + '? This just removes the star — it does not delete anything.')) return;
+  let touchedBank = false, touchedGrammar = false, touchedQuran = false;
+  starredSelected.forEach(key=>{
+    const [type, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':')+1)];
+    if(type === 'phrase'){
+      const p = state.bank.find(x=>x.id === id);
+      if(p){ p.starred = false; p.starredAt = null; touchedBank = true; }
+    } else if(type === 'grammar'){
+      const g = state.grammar.find(x=>x.id === id);
+      if(g){ g.starred = false; g.starredAt = null; touchedGrammar = true; }
+    } else if(type === 'quran'){
+      const qq = state.quran.find(x=>x.id === id);
+      if(qq){ qq.starred = false; qq.starredAt = null; qq.synced = false; touchedQuran = true; }
+    }
+  });
+  starredSelected.clear();
+  if(touchedBank) await saveBank();
+  if(touchedGrammar) await saveGrammar();
+  if(touchedQuran) await saveQuran();
+  renderStarred();
+  if(touchedBank){ renderBank(); renderGcStarResults(); if(practiceSet && practiceSet.length) renderPracticeList(practiceSet); }
+  if(touchedGrammar) renderGrammarList();
+  if(touchedQuran) renderQuran();
+});
 
 function renderBank(){
   updateCategoryDropdowns();
@@ -2179,7 +2286,7 @@ async function coreBackupBank(){
           station: p.srs.station, reps: p.srs.reps,
           nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
           hotLayerDone: (p.hotLayerDone || []).join(';'),
-          starred: p.starred ? 'Yes' : ''
+          starred: p.starred ? 'Yes' : '', starredAt: p.starredAt || ''
         };
       }) })
     });
@@ -2206,7 +2313,7 @@ async function coreBackupGrammar(){
         tags: (g.tags || []).join(', '),
         notes: g.user_notes || '',
         dateCreated: g.date_created || '',
-        starred: g.starred ? 'Yes' : ''
+        starred: g.starred ? 'Yes' : '', starredAt: g.starredAt || ''
       })) })
     });
     throwIfRejected(await res.json());
@@ -2242,7 +2349,7 @@ async function coreSyncQuran(confirmUnverified){
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '' })
+        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '', starredAt: q.starredAt || '' })
       });
       throwIfRejected(await res.json());
       q.synced = true;
@@ -2275,6 +2382,7 @@ async function coreRestoreBank(){
       dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
       hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
       starred: p.starred === 'Yes' || p.starred === true,
+      starredAt: p.starredAt || null,
       srs: {
         station: parseInt(p.station, 10) || 1,
         reps: parseInt(p.reps, 10) || 0,
@@ -2309,7 +2417,8 @@ async function coreRestoreGrammar(){
       tags: String(g.tags || '').split(',').map(t=>t.trim()).filter(Boolean),
       user_notes: g.notes || '',
       date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr(),
-      starred: g.starred === 'Yes' || g.starred === true
+      starred: g.starred === 'Yes' || g.starred === true,
+      starredAt: g.starredAt || null
     }));
     await saveGrammar();
     renderGrammarList(); renderStarred();
@@ -2337,6 +2446,7 @@ async function coreRestoreQuran(){
       verifiedAt: q.verifiedAt || null,
       dateAdded: q.dateAdded || today,
       starred: q.starred === 'Yes' || q.starred === true,
+      starredAt: q.starredAt || null,
       synced: true
     }));
     await saveQuran();
