@@ -2240,44 +2240,27 @@ function renderSession(){
   });
 }
 
-// ---------- Header bold-segment totals ----------
-// Counts each complete **bold** segment logged over all time, split by language —
-// each pair of ** markers counts as one segment, even when it contains multiple words.
-// For example, **nama saya** counts as 1, while **nama** **saya** counts as 2.
-// Uses extractBoldSegments to identify complete bold phrases.
-function extractBoldSegments(text) {
-  if (!text) return [];
-
-  return [...text.matchAll(/\*\*(.+?)\*\*/g)]
-    .map(match => match[1].trim())
-    .filter(Boolean);
-}
-
-function countBoldWordsByLang() {
+// ---------- Header bold-word totals ----------
+// Counts **bold**-marked segments logged over all time, split by language —
+// each bolded segment is one word/phrase you deliberately marked as new
+// vocabulary, so a log entry with two bolded segments (e.g. "I need to
+// **renew** my **passport**") counts as 2, not 1. Uses extractBoldSegments
+// (same helper the Grammar check chips use) rather than a raw whitespace
+// split, so a multi-word bolded phrase like "**as soon as possible**" still
+// counts as a single segment, matching how it was actually marked.
+function countBoldWordsByLang(){
   const totals = { en: 0, ar: 0 };
-
-  state.log.forEach(l => {
-    if (totals[l.lang] === undefined) return;
-
-    // Each complete bold segment counts as 1,
-    // regardless of how many words it contains.
+  state.log.forEach(l=>{
+    if(totals[l.lang] === undefined) return;
     totals[l.lang] += extractBoldSegments(l.phrase).length;
   });
-
   return totals;
 }
-
-function renderHeaderStats() {
+function renderHeaderStats(){
   const el = document.getElementById('headerStats');
-  if (!el) return;
-
+  if(!el) return;
   const totals = countBoldWordsByLang();
-
-  el.innerHTML = `
-    <span class="hs-num">${totals.en}</span> EN bold segments
-    <span class="hs-sep">·</span>
-    <span class="hs-num">${totals.ar}</span> AR bold segments
-  `;
+  el.innerHTML = `<span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words`;
 }
 
 // ---------- Google Sheet sync ----------
