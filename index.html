@@ -1532,12 +1532,31 @@ function getCategories(){
   return [...new Set(state.bank.map(p=>p.category).filter(Boolean))].sort();
 }
 
+// category -> number of phrases in the Bank carrying that category, used to
+// show e.g. "Business | 6" in the Phrase Bank's own category dropdown so
+// you can see how big each category is without opening it.
+function getCategoryCounts(){
+  const counts = {};
+  state.bank.forEach(p=>{
+    if(!p.category) return;
+    counts[p.category] = (counts[p.category] || 0) + 1;
+  });
+  return counts;
+}
+
 function updateCategoryDropdowns(){
   const cats = getCategories();
+  const counts = getCategoryCounts();
   ['bankCategoryFilter','practiceCategoryFilter','reviewCategoryFilter'].forEach(id=>{
     const sel = document.getElementById(id);
     const current = sel.value;
-    sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    // Only the Phrase Bank's own filter shows per-category counts — it's
+    // the one place browsing by category size is actually useful; the
+    // practice/review pickers stay plain so they don't get crowded.
+    const withCounts = id === 'bankCategoryFilter';
+    sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>
+      `<option value="${escapeHtml(c)}">${escapeHtml(c)}${withCounts ? ' | ' + counts[c] : ''}</option>`
+    ).join('');
     if(cats.includes(current)) sel.value = current;
   });
 }
@@ -1776,6 +1795,7 @@ document.getElementById('starredUnstarSelectedBtn').addEventListener('click', as
 
 function renderBank(){
   updateCategoryDropdowns();
+  renderHeaderStats();
   const list = document.getElementById('bankList');
   const countNote = document.getElementById('bankCountNote');
   const loadMoreRow = document.getElementById('bankLoadMoreRow');
@@ -2241,18 +2261,21 @@ function renderSession(){
 }
 
 // ---------- Header bold-word totals ----------
-// Counts **bold**-marked segments logged over all time, split by language —
-// each bolded segment is one word/phrase you deliberately marked as new
-// vocabulary, so a log entry with two bolded segments (e.g. "I need to
-// **renew** my **passport**") counts as 2, not 1. Uses extractBoldSegments
+// Counts **bold**-marked segments across the Phrase Bank — your main
+// storage — split by language, NOT the Log (the Log is just a running
+// practice history and can contain the same phrase logged multiple times,
+// which would double-count). Each bank entry can carry its own bolded
+// segment(s) in its English side, its Arabic side, or both, so a phrase
+// like en:"I need to **renew** my **passport**" / ar:"أحتاج **لتجديد**
+// جواز سفري" contributes 2 to EN and 1 to AR. Uses extractBoldSegments
 // (same helper the Grammar check chips use) rather than a raw whitespace
 // split, so a multi-word bolded phrase like "**as soon as possible**" still
 // counts as a single segment, matching how it was actually marked.
 function countBoldWordsByLang(){
   const totals = { en: 0, ar: 0 };
-  state.log.forEach(l=>{
-    if(totals[l.lang] === undefined) return;
-    totals[l.lang] += extractBoldSegments(l.phrase).length;
+  state.bank.forEach(p=>{
+    totals.en += extractBoldSegments(p.en).length;
+    totals.ar += extractBoldSegments(p.ar).length;
   });
   return totals;
 }
