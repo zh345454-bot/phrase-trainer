@@ -287,6 +287,16 @@ details.quick-add summary{ cursor:pointer; font-size:12.5px; color:var(--teal); 
 .due-card{ padding:14px 0; border-bottom:1px solid var(--line); }
 .due-card:last-child{ border-bottom:none; }
 .due-meta{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+.group-header{
+  font-family:'Newsreader',serif;
+  font-size:16px;
+  font-weight:600;
+  color:var(--teal);
+  border-bottom:2px solid var(--brass);
+  padding:10px 2px 4px;
+  margin-top:14px;
+}
+.group-header:first-child{ margin-top:0; }
 .grammar-notes{ list-style:none; margin:10px 0 0; padding:0; }
 .grammar-notes li{ padding:8px 0; border-top:1px solid var(--line); font-size:13.5px; }
 .grammar-notes li:first-child{ border-top:none; }
@@ -805,6 +815,14 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="starred">Starred only</option>
           </select>
         </div>
+        <div class="field" style="max-width:200px;">
+          <label>Group by</label>
+          <select id="quranGroupBy">
+            <option value="">Recent first (no grouping)</option>
+            <option value="surah">Surah</option>
+            <option value="juz">Juz</option>
+          </select>
+        </div>
       </div>
       <div class="count-note" id="quranCountNote"></div>
       <div id="quranList"></div>
@@ -1186,6 +1204,7 @@ function ensureSrs(p){
 function rateReview(p, rating){
   ensureSrs(p);
   const today = todayStr();
+  const wasDue = p.srs.nextReview <= today;
   let station = p.srs.station;
   if(rating >= 4){
     p.srs.reps += 1;
@@ -1208,6 +1227,11 @@ function rateReview(p, rating){
     p.srs.reps = 0;
     p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
   }
+  // Counts toward today's dose regardless of station or which rating you
+  // gave — finishing the review is what the dose tracks, not mastering it
+  // on the first pass. Only counts if it was actually due, so quick-
+  // reviewing a non-due phrase from Practice & Log doesn't inflate it.
+  if(wasDue) bumpDailyDoseCompleted();
 }
 function getDueReviews(){
   const today = todayStr();
@@ -1533,14 +1557,14 @@ function starredCardHtml(item){
     return `
       <div class="phrase-texts">
         <div class="tag">Grammar${g.category ? ' · ' + escapeHtml(g.category) : ''}</div>
-        <div class="phrase-en" ${isAr ? 'dir="rtl"' : ''} style="font-weight:600;">${escapeHtml(g.title || '')}</div>
-        ${g.rule_summary ? `<div class="due-meta">${escapeHtml(g.rule_summary)}</div>` : ''}
-        ${firstEx && firstEx.target ? `<div class="${isAr ? 'phrase-ar' : 'phrase-en'}" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(firstEx.target)}</div>` : ''}
-        ${firstEx && firstEx.translation ? `<div class="due-meta">${escapeHtml(firstEx.translation)}</div>` : ''}
+        <div class="phrase-en" ${isAr ? 'dir="rtl"' : ''} style="font-weight:600;">${mdToHtml(g.title || '')}</div>
+        ${g.rule_summary ? `<div class="due-meta">${mdToHtml(g.rule_summary)}</div>` : ''}
+        ${firstEx && firstEx.target ? `<div class="${isAr ? 'phrase-ar' : 'phrase-en'}" ${isAr ? 'dir="rtl"' : ''}>${mdToHtml(firstEx.target)}</div>` : ''}
+        ${firstEx && firstEx.translation ? `<div class="due-meta">${mdToHtml(firstEx.translation)}</div>` : ''}
       </div>
       <div class="card-actions">
-        ${firstEx && firstEx.target ? `<button class="icon" data-speak-raw="${escapeHtml(firstEx.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
-        <button class="icon wide" data-copy-raw="${escapeHtml(firstEx.target)}" title="Copy">⧉ Copy</button>` : ''}
+        ${firstEx && firstEx.target ? `<button class="icon" data-speak-raw="${escapeHtml(stripBold(firstEx.target))}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(stripBold(firstEx.target))}" title="Copy">⧉ Copy</button>` : ''}
         <button class="icon starred" data-star-grammar="${g.id}" title="Remove star">★</button>
       </div>`;
   }
@@ -1548,12 +1572,12 @@ function starredCardHtml(item){
     return `
       <div class="phrase-texts">
         <div class="tag">Qur'an${q.reference ? ' · ' + escapeHtml(q.reference) : ''}</div>
-        <div class="phrase-ar" dir="rtl">${escapeHtml(q.arabic || '')}</div>
-        ${q.translation ? `<div class="due-meta" style="font-weight:600;">${escapeHtml(q.tafsirSource || '')}</div><div class="phrase-en">${escapeHtml(q.translation)}</div>` : ''}
+        <div class="phrase-ar" dir="rtl">${mdToHtml(q.arabic || '')}</div>
+        ${q.translation ? `<div class="due-meta" style="font-weight:600;">${escapeHtml(q.tafsirSource || '')}</div><div class="phrase-en">${mdToHtml(q.translation)}</div>` : ''}
       </div>
       <div class="card-actions">
-        <button class="icon" data-speak-raw="${escapeHtml(q.arabic || '')}" data-speak-lang="ar" title="Speak verse">AR</button>
-        <button class="icon wide" data-copy-raw="${escapeHtml(q.arabic || '')}" title="Copy verse">⧉ AR</button>
+        <button class="icon" data-speak-raw="${escapeHtml(stripBold(q.arabic || ''))}" data-speak-lang="ar" title="Speak verse">AR</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(stripBold(q.arabic || ''))}" title="Copy verse">⧉ AR</button>
         <span class="badge ${q.verified ? 'verified' : 'unverified'}">${q.verified ? '✓ Verified' : 'Not verified'}</span>
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
@@ -2785,29 +2809,58 @@ document.getElementById('vpRecordBtn').addEventListener('click', ()=>{
 // phrase to the bank (that's seconds, not recall practice).
 const PER_PHRASE_MINUTES = 2;
 
+function countDuePhrases(){
+  state.bank.forEach(ensureSrs);
+  const today = todayStr();
+  return state.bank.filter(p=>p.srs.nextReview <= today).length;
+}
+
+// ---------- Daily dose progress ----------
+// The due-count alone can't drive a countdown: reviewing a phrase pushes
+// its nextReview forward, but with a big backlog min(dueCount,10) just
+// stays pinned at 10 no matter how many you actually finish today. So the
+// target is locked once, the first time it's needed each day, and
+// completions are tracked separately against that fixed target — that's
+// what actually counts down as you work through it.
+function getDailyDoseState(){
+  const today = todayStr();
+  let s = lsGet('dailyDose', null);
+  if(!s || s.date !== today){
+    s = { date: today, target: Math.min(countDuePhrases(), 10), completed: 0 };
+    lsSet('dailyDose', s);
+  }
+  return s;
+}
+function bumpDailyDoseCompleted(){
+  const s = getDailyDoseState();
+  s.completed += 1;
+  lsSet('dailyDose', s);
+  return s;
+}
+
 function renderDailyPlan(){
   const el = document.getElementById('dailyPlan');
   if(!el) return;
-  state.bank.forEach(ensureSrs);
-  const today = todayStr();
-  const dueCount = state.bank.filter(p=>p.srs.nextReview <= today).length;
+  const dueCount = countDuePhrases();
   const streak = getStreakInfo(state.log);
 
-  // Cap today's suggested dose at 10 — Practice & Log's smallest preset —
-  // rather than the full backlog. 34 materials × 2 phrases can mean ~68
-  // due at once; asking for all of it in "one slot" is exactly what made
-  // the old flat "5 min" label dishonest. The rest carries forward and is
-  // still reachable in full via Review whenever you want a longer
-  // catch-up session — this slot is a bounded daily dose, not the whole
-  // queue.
-  const reviewDose = Math.min(dueCount, 10);
-  const reviewMinutes = reviewDose * PER_PHRASE_MINUTES;
+  // Today's dose target is locked once (see getDailyDoseState) — capped at
+  // 10, Practice & Log's smallest preset, rather than the full backlog.
+  // 34 materials × 2 phrases can mean ~68 due at once; asking for all of
+  // it in "one slot" is what made the old flat "5 min" label dishonest.
+  // completed only counts phrases that were genuinely due when reviewed,
+  // regardless of which station they're at — finishing the review is what
+  // counts, not which station it happened to be at.
+  const dose = getDailyDoseState();
+  const remaining = Math.max(dose.target - dose.completed, 0);
+  const remainingMinutes = remaining * PER_PHRASE_MINUTES;
+  const doseDone = dose.target > 0 && dose.completed >= dose.target;
 
-  const reviewDesc = dueCount === 0
-    ? 'Nothing due right now — good time to add new material or spend the slot on drills instead.'
-    : dueCount > reviewDose
-      ? `${dueCount} phrases are due in total; today's realistic dose is ${reviewDose} (~${reviewMinutes} min). The remaining ${dueCount - reviewDose} carry forward — Review still has the full queue whenever you want a longer catch-up session.`
-      : `${dueCount} phrase${dueCount===1?'':'s'} due — small enough to clear in one go today.`;
+  const reviewDesc = dose.target === 0
+    ? 'Nothing was due when today\'s dose was set — good time to add new material or spend the slot on drills instead.'
+    : doseDone
+      ? `Today's dose of ${dose.target} done${dose.completed > dose.target ? ' (plus ' + (dose.completed - dose.target) + ' extra)' : ''} — nice. ${dueCount > 0 ? dueCount + ' more still sit in the full Review queue whenever you want a longer session.' : ''}`
+      : `${dose.completed} of ${dose.target} done today. ${dueCount} phrase${dueCount===1?'':'s'} currently due in total — the rest carries forward; Review still has the full queue for a longer catch-up session.`;
 
   const otherLines = [
     ['10 min', 'Voice practice', 'Two or three 60–90s turns in Grammar Hub. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure.'],
@@ -2818,21 +2871,21 @@ function renderDailyPlan(){
     ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked.']
   ];
   const otherMinutes = otherLines.reduce((sum,[t])=> sum + parseInt(t,10), 0);
-  const totalMinutes = reviewMinutes + otherMinutes;
+  const totalMinutes = remainingMinutes + otherMinutes;
 
   const reviewRow = `
     <div class="log-row" style="align-items:flex-start;">
       <span><strong>Practice what's due</strong><br><span class="due-meta">${escapeHtml(reviewDesc)}</span></span>
-      <span class="badge pending">${reviewMinutes} min</span>
+      <span class="badge ${doseDone ? 'verified' : 'pending'}">${doseDone ? 'DONE' : remainingMinutes + ' MIN'}</span>
     </div>
-    ${dueCount > 0 ? `<div style="margin:4px 0 10px 0;"><button class="ghost" id="dailyPlanPracticeBtn">Start this dose in Practice & Log →</button></div>` : ''}`;
+    ${!doseDone && dueCount > 0 ? `<div style="margin:4px 0 10px 0;"><button class="ghost" id="dailyPlanPracticeBtn">${dose.completed > 0 ? 'Continue' : 'Start'} this dose in Practice & Log →</button></div>` : ''}`;
 
   el.innerHTML = reviewRow + otherLines.map(([t,title,desc])=>`
     <div class="log-row" style="align-items:flex-start;">
       <span><strong>${escapeHtml(title)}</strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
       <span class="badge pending">${escapeHtml(t)}</span>
     </div>`).join('')
-    + `<div class="count-note" style="margin-top:10px;">~${totalMinutes} min total today. Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — this daily total beats one long weekend session, because forgetting happens on the days between.</div>`;
+    + `<div class="count-note" style="margin-top:10px;">~${totalMinutes} min left today. Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — this daily total beats one long weekend session, because forgetting happens on the days between.</div>`;
 
   const goBtn = document.getElementById('dailyPlanPracticeBtn');
   if(goBtn){
@@ -3015,7 +3068,8 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
     resultBox.innerHTML = `
       <div class="due-card">
         <div class="phrase-texts" id="gcResultTexts">
-          <div class="${lang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${lang==='Arabic'?'rtl':'ltr'}">${escapeHtml(result.corrected||'')}</div>
+          <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="gcBoldBtn" type="button">Bold</button></div>
+          <textarea id="gcCorrectedBox" class="${lang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${lang==='Arabic'?'rtl':'ltr'}" style="min-height:60px; width:100%;">${escapeHtml(result.corrected||'')}</textarea>
         </div>
         <div class="card-actions" style="margin-top:8px;">
           <button class="icon" id="gcSpeakBtn">${lang==='Arabic'?'AR':'EN'}</button>
@@ -3025,25 +3079,28 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
         </div>
       </div>
       ${notesHtml}`;
+    wireBoldButton('gcBoldBtn', 'gcCorrectedBox');
     document.getElementById('gcSpeakBtn').addEventListener('click', ()=>{
-      speak(result.corrected, lang === 'Arabic' ? 'ar' : 'en');
+      speak(stripBold(document.getElementById('gcCorrectedBox').value), lang === 'Arabic' ? 'ar' : 'en');
     });
     document.getElementById('gcCopyBtn').addEventListener('click', (ev)=>{
-      copyText(result.corrected || '', ev.target);
+      copyText(stripBold(document.getElementById('gcCorrectedBox').value), ev.target);
     });
     document.getElementById('gcTranslateBtn').addEventListener('click', async ()=>{
       const tBtn = document.getElementById('gcTranslateBtn');
       tBtn.disabled = true;
       tBtn.textContent = 'Translating…';
       try{
-        const translation = await translateGrammarText(result.corrected, lang);
+        const sourceText = stripBold(document.getElementById('gcCorrectedBox').value);
+        const translation = await translateGrammarText(sourceText, lang);
         freshGrammarResult.translation = translation;
-        const out = document.createElement('div');
-        out.className = otherLang === 'Arabic' ? 'phrase-ar' : 'phrase-en';
-        if(otherLang === 'Arabic') out.dir = 'rtl';
-        out.style.marginTop = '6px';
-        out.textContent = translation;
-        document.getElementById('gcResultTexts').appendChild(out);
+        const wrap = document.createElement('div');
+        wrap.style.marginTop = '10px';
+        wrap.innerHTML = `
+          <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="gcTransBoldBtn" type="button">Bold</button></div>
+          <textarea id="gcTranslationBox" class="${otherLang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${otherLang==='Arabic'?'rtl':'ltr'}" style="min-height:60px; width:100%;">${escapeHtml(translation)}</textarea>`;
+        document.getElementById('gcResultTexts').appendChild(wrap);
+        wireBoldButton('gcTransBoldBtn', 'gcTranslationBox');
         tBtn.remove();
       }catch(err){
         tBtn.disabled = false;
@@ -3056,12 +3113,13 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
       document.getElementById('gLang').value = lang;
       document.getElementById('gCategory').value = normalizeCategorySuggestion(result.category || '');
       document.getElementById('gRuleSummary').value = (result.notes||[]).map(n => n.explanation).join(' ');
-      // Second field is the AI translation into the other language if you
-      // fetched one via "→ {otherLang}" above — never the raw original text,
-      // which for Arabic input used to get reused here untashkeeled and
-      // mislabeled as a "translation" when it was really just your own
-      // unvowelled input repeated back.
-      document.getElementById('gExamples').value = `${result.corrected} | ${freshGrammarResult.translation || ''}`;
+      // Read LIVE values from the textareas, not the original result object —
+      // the user may have bold-edited the text since it was first generated,
+      // and those ** markers need to carry through to what gets saved.
+      const correctedVal = document.getElementById('gcCorrectedBox').value.trim();
+      const translationBox = document.getElementById('gcTranslationBox');
+      const translationVal = translationBox ? translationBox.value.trim() : '';
+      document.getElementById('gExamples').value = `${correctedVal} | ${translationVal}`;
       document.getElementById('gTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }catch(err){
@@ -3161,26 +3219,26 @@ function renderGrammarList(){
       const targetText = isAr && !showTashkeel ? stripTashkeel(ex.target) : ex.target;
       return `
         <div class="example-row">
-          <div class="example-target" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(targetText)}</div>
-          <div class="example-translation" id="ex-translation-${g.id}-${i}">${ex.translation ? escapeHtml(ex.translation) : `<button class="ghost" data-translate-example="${g.id}" data-ex-index="${i}" title="Add a translation now — useful if quota was exhausted when this was first saved">+ Add translation</button>`}</div>
+          <div class="example-target" ${isAr ? 'dir="rtl"' : ''}>${mdToHtml(targetText)}</div>
+          <div class="example-translation" id="ex-translation-${g.id}-${i}">${ex.translation ? mdToHtml(ex.translation) : `<button class="ghost" data-translate-example="${g.id}" data-ex-index="${i}" title="Add a translation now — useful if quota was exhausted when this was first saved">+ Add translation</button>`}</div>
           <div class="example-actions">
-            <button class="icon" data-speak-raw="${escapeHtml(ex.target)}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
-            <button class="icon wide" data-copy-raw="${escapeHtml(ex.target)}" title="Copy">⧉ Copy</button>
+            <button class="icon" data-speak-raw="${escapeHtml(stripBold(ex.target))}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
+            <button class="icon wide" data-copy-raw="${escapeHtml(stripBold(ex.target))}" title="Copy">⧉ Copy</button>
             ${isAr ? `<button class="ghost" data-analyze-id="${g.id}" data-analyze-ex="${i}">Analyze</button>` : ''}
           </div>
           <div class="analysis-box" id="analysis-${g.id}-${i}" style="display:none;"></div>
         </div>`;
     }).join('');
     card.innerHTML = `
-      <div class="grammar-title" ${isAr ? 'dir="rtl"' : ''}>${escapeHtml(g.title)}</div>
+      <div class="grammar-title" ${isAr ? 'dir="rtl"' : ''}>${mdToHtml(g.title)}</div>
       <div class="pill-row">
         <span class="pill lang">${escapeHtml(g.language)}</span>
         ${g.category ? `<span class="pill">${escapeHtml(g.category)}</span>` : ''}
         ${(g.tags||[]).map(t=>`<span class="pill">${escapeHtml(t)}</span>`).join('')}
       </div>
-      <div class="rule-summary">${escapeHtml(g.rule_summary || '')}</div>
+      <div class="rule-summary">${mdToHtml(g.rule_summary || '')}</div>
       ${examplesHtml}
-      ${g.user_notes ? `<div class="notes-line">${escapeHtml(g.user_notes)}</div>` : ''}
+      ${g.user_notes ? `<div class="notes-line">${mdToHtml(g.user_notes)}</div>` : ''}
       <div class="grammar-actions">
         <button class="icon${g.starred ? ' starred' : ''}" data-star-grammar="${g.id}" title="${g.starred ? 'Remove star' : 'Star'}">${g.starred ? '★' : '☆'}</button>
         <button class="ghost" data-ask-entry="${g.id}">Ask AI about this rule</button>
@@ -3259,7 +3317,7 @@ document.addEventListener('click', async (e)=>{
   if(analyzeId !== undefined){
     const g = state.grammar.find(x=>x.id === analyzeId);
     const exIdx = parseInt(e.target.dataset.analyzeEx, 10);
-    if(g && g.examples[exIdx]) runAnalysis(g.examples[exIdx].target, 'analysis-'+analyzeId+'-'+exIdx, e.target);
+    if(g && g.examples[exIdx]) runAnalysis(stripBold(g.examples[exIdx].target), 'analysis-'+analyzeId+'-'+exIdx, e.target);
     return;
   }
   const translateExId = e.target.dataset.translateExample;
@@ -3271,7 +3329,7 @@ document.addEventListener('click', async (e)=>{
     btn.disabled = true;
     btn.textContent = 'Translating…';
     try{
-      const translation = await translateGrammarText(g.examples[exIdx].target, g.language);
+      const translation = await translateGrammarText(stripBold(g.examples[exIdx].target), g.language);
       g.examples[exIdx].translation = translation;
       await saveGrammar();
       renderGrammarList();
@@ -3400,6 +3458,86 @@ function parseVerseRef(refText){
     if(sura) return { sura, ayah: Number(nameMatch[2]) };
   }
   return null;
+}
+
+// Display names for group headers, 1-indexed (index 0 unused) — same
+// number-to-surah mapping as SURAH_NAMES above, just spelled out for
+// reading rather than for fuzzy-matching input.
+const SURAH_DISPLAY_NAMES = [null,
+  "Al-Fatihah","Al-Baqarah","Ali 'Imran","An-Nisa","Al-Ma'idah","Al-An'am","Al-A'raf","Al-Anfal",
+  "At-Tawbah","Yunus","Hud","Yusuf","Ar-Ra'd","Ibrahim","Al-Hijr","An-Nahl",
+  "Al-Isra","Al-Kahf","Maryam","Taha","Al-Anbya","Al-Hajj","Al-Mu'minun","An-Nur",
+  "Al-Furqan","Ash-Shu'ara","An-Naml","Al-Qasas","Al-'Ankabut","Ar-Rum","Luqman",
+  "As-Sajdah","Al-Ahzab","Saba","Fatir","Ya-Sin","As-Saffat","Sad","Az-Zumar",
+  "Ghafir","Fussilat","Ash-Shura","Az-Zukhruf","Ad-Dukhan","Al-Jathiyah",
+  "Al-Ahqaf","Muhammad","Al-Fath","Al-Hujurat","Qaf","Adh-Dhariyat","At-Tur",
+  "An-Najm","Al-Qamar","Ar-Rahman","Al-Waqi'ah","Al-Hadid","Al-Mujadilah","Al-Hashr",
+  "Al-Mumtahanah","As-Saff","Al-Jumu'ah","Al-Munafiqun","At-Taghabun","At-Talaq",
+  "At-Tahrim","Al-Mulk","Al-Qalam","Al-Haqqah","Al-Ma'arij","Nuh","Al-Jinn",
+  "Al-Muzzammil","Al-Muddaththir","Al-Qiyamah","Al-Insan","Al-Mursalat","An-Naba",
+  "An-Nazi'at","'Abasa","At-Takwir","Al-Infitar","Al-Mutaffifin","Al-Inshiqaq",
+  "Al-Buruj","At-Tariq","Al-A'la","Al-Ghashiyah","Al-Fajr","Al-Balad","Ash-Shams",
+  "Al-Layl","Ad-Duha","Ash-Sharh","At-Tin","Al-'Alaq","Al-Qadr","Al-Bayyinah",
+  "Az-Zalzalah","Al-'Adiyat","Al-Qari'ah","At-Takathur","Al-'Asr","Al-Humazah",
+  "Al-Fil","Quraysh","Al-Ma'un","Al-Kawthar","Al-Kafirun","An-Nasr","Al-Masad",
+  "Al-Ikhlas","Al-Falaq","An-Nas"
+];
+
+// Standard 30-juz division of the mushaf, given as each juz's starting
+// {sura, ayah}. Verified against the well-known Juz 30 start (78:1,
+// An-Naba) before building this out — the table is otherwise fixed,
+// canonical data with no variation across editions.
+const JUZ_STARTS = [
+  {juz:1,sura:1,ayah:1}, {juz:2,sura:2,ayah:142}, {juz:3,sura:2,ayah:253}, {juz:4,sura:3,ayah:93},
+  {juz:5,sura:4,ayah:24}, {juz:6,sura:4,ayah:148}, {juz:7,sura:5,ayah:82}, {juz:8,sura:6,ayah:111},
+  {juz:9,sura:7,ayah:88}, {juz:10,sura:8,ayah:41}, {juz:11,sura:9,ayah:93}, {juz:12,sura:11,ayah:6},
+  {juz:13,sura:12,ayah:53}, {juz:14,sura:15,ayah:1}, {juz:15,sura:17,ayah:1}, {juz:16,sura:18,ayah:75},
+  {juz:17,sura:21,ayah:1}, {juz:18,sura:23,ayah:1}, {juz:19,sura:25,ayah:21}, {juz:20,sura:27,ayah:56},
+  {juz:21,sura:29,ayah:46}, {juz:22,sura:33,ayah:31}, {juz:23,sura:36,ayah:28}, {juz:24,sura:39,ayah:32},
+  {juz:25,sura:41,ayah:47}, {juz:26,sura:46,ayah:1}, {juz:27,sura:51,ayah:31}, {juz:28,sura:58,ayah:1},
+  {juz:29,sura:67,ayah:1}, {juz:30,sura:78,ayah:1}
+];
+function compareSuraAyah(a, b){
+  return a.sura !== b.sura ? a.sura - b.sura : a.ayah - b.ayah;
+}
+function getJuzForVerse(sura, ayah){
+  const v = { sura, ayah };
+  let found = 1;
+  for(const start of JUZ_STARTS){
+    if(compareSuraAyah(start, v) <= 0) found = start.juz; else break;
+  }
+  return found;
+}
+
+// Groups Quran log entries by surah or juz, sorted early-to-last in
+// canonical Qur'an order. Entries whose reference doesn't parse (free-text
+// that isn't a recognizable sura:ayah) land in one final "Unsorted" group
+// rather than being silently dropped or guessed at.
+function groupQuranEntries(entries, groupBy){
+  const withRef = [], noRef = [];
+  entries.forEach(q=>{
+    const ref = parseVerseRef(q.reference);
+    if(ref) withRef.push({ q, ref }); else noRef.push({ q, ref: null });
+  });
+  withRef.sort((a,b)=> compareSuraAyah(a.ref, b.ref));
+  const groups = [];
+  const bucketIndex = {};
+  withRef.forEach(({q, ref})=>{
+    const key = groupBy === 'juz' ? getJuzForVerse(ref.sura, ref.ayah) : ref.sura;
+    if(!(key in bucketIndex)){
+      bucketIndex[key] = groups.length;
+      groups.push({
+        key,
+        label: groupBy === 'juz' ? ('Juz ' + key) : (key + '. ' + (SURAH_DISPLAY_NAMES[key] || 'Surah ' + key)),
+        entries: []
+      });
+    }
+    groups[bucketIndex[key]].entries.push(q);
+  });
+  if(noRef.length){
+    groups.push({ key: 'unsorted', label: 'Unsorted — no recognizable reference', entries: noRef.map(x=>x.q) });
+  }
+  return groups;
 }
 
 function tafsirBlockHtml(label, arabicText, englishText, opts){
@@ -3548,7 +3686,7 @@ document.addEventListener('click', async (e)=>{
   }
 });
 
-let quranFilter = { query: '', status: '' };
+let quranFilter = { query: '', status: '', groupBy: '' };
 function matchesQuranFilter(q, f){
   if(f.status === 'verified' && !q.verified) return false;
   if(f.status === 'unverified' && q.verified) return false;
@@ -3559,26 +3697,10 @@ function matchesQuranFilter(q, f){
   return hay.toLowerCase().includes(query) || hay.includes(f.query);
 }
 
-function renderQuran(){
-  const list = document.getElementById('quranList');
-  const countNote = document.getElementById('quranCountNote');
-  if(!list) return;
-  if(state.quran.length === 0){
-    list.innerHTML = '<div class="empty">No Qur\'an entries yet — translate a verse above, then save it here.</div>';
-    countNote.textContent = '';
-    return;
-  }
-  const matches = state.quran.filter(q => matchesQuranFilter(q, quranFilter));
-  countNote.textContent = matches.length + ' of ' + state.quran.length + ' entries';
-  if(matches.length === 0){
-    list.innerHTML = '<div class="empty">No entries match that search.</div>';
-    return;
-  }
-  list.innerHTML = '';
-  matches.forEach(q=>{
-    const card = document.createElement('div');
-    card.className = 'due-card';
-    card.innerHTML = `
+function buildQuranCard(q){
+  const card = document.createElement('div');
+  card.className = 'due-card';
+  card.innerHTML = `
       <div class="phrase-texts">
         ${q.reference ? `<div class="tag">${escapeHtml(q.reference)}</div>` : ''}
         <div class="due-meta" style="font-weight:600;">Verse</div>
@@ -3599,8 +3721,37 @@ function renderQuran(){
         <button class="ghost" data-quran-edit="${q.id}" title="Edit text, incl. bold">✎ Edit</button>
         <button class="icon" data-quran-del="${q.id}" title="Delete">✕</button>
       </div>`;
-    list.appendChild(card);
-  });
+  return card;
+}
+
+function renderQuran(){
+  const list = document.getElementById('quranList');
+  const countNote = document.getElementById('quranCountNote');
+  if(!list) return;
+  if(state.quran.length === 0){
+    list.innerHTML = '<div class="empty">No Qur\'an entries yet — translate a verse above, then save it here.</div>';
+    countNote.textContent = '';
+    return;
+  }
+  const matches = state.quran.filter(q => matchesQuranFilter(q, quranFilter));
+  countNote.textContent = matches.length + ' of ' + state.quran.length + ' entries';
+  if(matches.length === 0){
+    list.innerHTML = '<div class="empty">No entries match that search.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  if(quranFilter.groupBy){
+    const groups = groupQuranEntries(matches, quranFilter.groupBy);
+    groups.forEach(group=>{
+      const header = document.createElement('div');
+      header.className = 'group-header';
+      header.textContent = group.label + ' (' + group.entries.length + ')';
+      list.appendChild(header);
+      group.entries.forEach(q => list.appendChild(buildQuranCard(q)));
+    });
+  } else {
+    matches.forEach(q => list.appendChild(buildQuranCard(q)));
+  }
 }
 
 document.getElementById('quranSearch').addEventListener('input', (e)=>{
@@ -3609,6 +3760,10 @@ document.getElementById('quranSearch').addEventListener('input', (e)=>{
 });
 document.getElementById('quranStatusFilter').addEventListener('change', (e)=>{
   quranFilter.status = e.target.value;
+  renderQuran();
+});
+document.getElementById('quranGroupBy').addEventListener('change', (e)=>{
+  quranFilter.groupBy = e.target.value;
   renderQuran();
 });
 
@@ -3634,6 +3789,11 @@ document.addEventListener('click', async (e)=>{
       renderQuran();
       renderStarred();
     }
+    return;
+  }
+  const quranEditId = e.target.dataset.quranEdit;
+  if(quranEditId){
+    openEditQuran(quranEditId);
     return;
   }
   const quranDelId = e.target.dataset.quranDel;
@@ -3818,11 +3978,12 @@ function openFlashcardModal(entry){
   container.innerHTML = '';
   (entry.examples||[]).forEach((ex, i)=>{
     if(!ex.target) return;
-    const fb = makeFillBlank(ex.target);
-    const ro = makeReorder(ex.target);
+    const cleanTarget = stripBold(ex.target);
+    const fb = makeFillBlank(cleanTarget);
+    const ro = makeReorder(cleanTarget);
     const wrap = document.createElement('div');
     wrap.className = 'flash-card';
-    let html = `<div class="notes-line" style="margin-bottom:6px;">${escapeHtml(ex.translation||'')}</div>`;
+    let html = `<div class="notes-line" style="margin-bottom:6px;">${mdToHtml(ex.translation||'')}</div>`;
     if(fb){
       html += `
         <div class="flash-sentence" ${isAr?'dir="rtl"':''}>${escapeHtml(fb.display)}</div>
