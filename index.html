@@ -701,11 +701,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       </div>
       <div class="status-msg" id="vpStatus"></div>
       <div id="vpResult" style="margin-top:14px;"></div>
+      <div id="vpModelPanel" style="margin-top:14px;"></div>
     </div>
 
     <div class="panel">
       <h2>Grammar check</h2>
-      <p class="count-note" style="margin-bottom:10px;">Write a sentence or short paragraph and get it corrected, with an explanation for each fix — powered by the same Gemini key as Ask AI (uses your daily quota).</p>
+      <p class="count-note" style="margin-bottom:10px;">Write a sentence or short paragraph and get it corrected, with an explanation for each fix — powered by the same Gemini key as Ask AI (uses your daily quota). <strong>Search Google</strong> below works even when the AI is out of quota.</p>
       <div class="gc-builder">
         <div class="gc-builder-col">
           <label>Bolded words in starred phrases</label>
@@ -727,7 +728,10 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         <label>Your writing</label>
         <textarea id="gcInput" placeholder="اكتب جملة أو فقرة هنا للتصحيح..." style="min-height:90px;"></textarea>
       </div>
-      <button class="primary" id="gcCheckBtn">Check my grammar</button>
+      <div class="card-actions" style="flex-wrap:wrap;">
+        <button class="primary" id="gcCheckBtn">Check my grammar</button>
+        <button class="ghost" id="gcGoogleBtn" type="button" title="Open a Google search for what you wrote — works without AI">Search Google ↗</button>
+      </div>
       <div id="gcResult" style="margin-top:14px;"></div>
     </div>
 
@@ -1075,6 +1079,62 @@ function speak(text, lang){
   if(match) utter.voice = match;
   utter.rate = 0.92;
   window.speechSynthesis.speak(utter);
+}
+
+// Reads a long passage (e.g. a 60-second model text) by queueing it sentence
+// by sentence. Many browser TTS engines silently cut off a single long
+// utterance after ~15 seconds, so one big speak() call can stop mid-text.
+function speakLong(text, lang){
+  if(!text) return;
+  if(!('speechSynthesis' in window)){
+    alert('This browser does not support speech synthesis.');
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const chunks = [];
+  text.split(/\n+/).forEach(line=>{
+    (line.match(/[^.!?؟۔…]+[.!?؟۔…]*/g) || []).forEach(sentence=>{
+      let rest = sentence.trim();
+      while(rest.length > 220){
+        let cut = rest.lastIndexOf(' ', 220);
+        if(cut < 80) cut = 220;
+        chunks.push(rest.slice(0, cut).trim());
+        rest = rest.slice(cut).trim();
+      }
+      if(rest) chunks.push(rest);
+    });
+  });
+  const voices = window.speechSynthesis.getVoices();
+  const match = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(lang));
+  chunks.forEach(chunk=>{
+    const utter = new SpeechSynthesisUtterance(chunk);
+    utter.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
+    if(match) utter.voice = match;
+    utter.rate = 0.92;
+    window.speechSynthesis.speak(utter);
+  });
+}
+function stopSpeaking(){
+  if('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+// ---------- Google search links (no AI, no quota) ----------
+// Plain outbound links, same idea as "View on Quran.com" / "Cross-check on
+// Dorar.net": they never touch any AI quota, so they keep working when the
+// AI is unavailable. Queries are built at click time from whatever is in
+// the box right now, so edits are always picked up.
+function googleSearchUrl(query){
+  return 'https://www.google.com/search?q=' + encodeURIComponent(query);
+}
+function youtubeSearchUrl(query){
+  return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query);
+}
+function openExternal(url){
+  window.open(url, '_blank', 'noopener');
+}
+// Long transcripts make poor search queries; keep the first ~30 words.
+function shortenForSearch(text, maxWords){
+  return (text || '').trim().split(/\s+/).filter(Boolean).slice(0, maxWords || 30).join(' ');
 }
 
 // ---------- Arabic pronunciation helper ----------
@@ -2969,6 +3029,67 @@ const VP_PROMPTS = {
   retell: { ar: 'اختر عبارة محفوظة بنجمة وأعد صياغتها بكلماتك.', en: 'Pick a starred phrase and retell it in your own words.' }
 };
 
+// Short search-friendly topic for each built-in prompt (the full prompt
+// sentences above make poor Google queries).
+const VP_TOPICS = {
+  describe: { ar: 'وصف يومي في الصباح والمساء', en: 'describe your day morning and evening' },
+  opinion: { ar: 'رأيي في العمل من البيت', en: 'opinion on working from home' }
+};
+
+function vpTopicFor(lang){
+  const key = document.getElementById('vpPrompt').value;
+  if(VP_TOPICS[key]) return VP_TOPICS[key][lang];
+  // Free speech / retell: fall back to the first words you actually said.
+  const said = shortenForSearch(vpLastTranscript && vpLastTranscript.text, 8);
+  return said || (lang === 'ar' ? 'محادثة يومية' : 'everyday conversation');
+}
+
+// Shown as soon as a recording attempt finishes — including when nothing
+// was heard or transcription failed, since that is exactly when you need
+// something to listen to. Search-and-paste means no AI quota is involved.
+function vpRenderModelPanel(lang){
+  const panel = document.getElementById('vpModelPanel');
+  const isAr = lang === 'ar';
+  panel.innerHTML = `
+    <div class="due-card">
+      <div class="phrase-texts">
+        <div class="due-meta" style="font-weight:600;">Stuck or mumbling? Hear a model answer on this topic</div>
+        <div class="field" style="margin:6px 0;">
+          <label>Topic to search (edit if it's off)</label>
+          <input type="text" id="vpTopicInput" ${isAr?'dir="rtl"':''} value="${escapeHtml(vpTopicFor(lang))}">
+        </div>
+        <div class="card-actions" style="flex-wrap:wrap;">
+          <button class="ghost" id="vpModelGoogleBtn" type="button">Google: 60-second model text ↗</button>
+          <button class="ghost" id="vpModelYoutubeBtn" type="button">YouTube: listen ↗</button>
+        </div>
+        <div class="field" style="margin-top:12px;">
+          <label>Paste the text you found, then hear it read aloud</label>
+          <textarea id="vpModelText" ${isAr?'dir="rtl"':''} style="min-height:90px; width:100%;" placeholder="${isAr?'الصق النص هنا…':'Paste the model text here…'}"></textarea>
+        </div>
+        <div class="card-actions" style="flex-wrap:wrap;">
+          <button class="icon wide" id="vpModelPlayBtn" type="button">▶ Hear it</button>
+          <button class="ghost" id="vpModelStopBtn" type="button">■ Stop</button>
+        </div>
+        <div class="count-note" style="margin-top:6px;">Google opens in a new tab. Pick a short text, copy it, paste it above, and it plays with your browser's voice. Arabic without diacritics may be pronounced imperfectly.</div>
+      </div>
+    </div>`;
+  const topic = () => document.getElementById('vpTopicInput').value.trim();
+  document.getElementById('vpModelGoogleBtn').addEventListener('click', ()=>{
+    const t = topic(); if(!t) return;
+    openExternal(googleSearchUrl(isAr
+      ? t + ' نص للتحدث حوالي دقيقة مثال'
+      : t + ' speaking sample text about 60 seconds'));
+  });
+  document.getElementById('vpModelYoutubeBtn').addEventListener('click', ()=>{
+    const t = topic(); if(!t) return;
+    openExternal(youtubeSearchUrl(isAr ? t + ' استماع عربي' : t + ' English listening practice'));
+  });
+  document.getElementById('vpModelPlayBtn').addEventListener('click', ()=>{
+    speakLong(document.getElementById('vpModelText').value.trim(), lang);
+  });
+  document.getElementById('vpModelStopBtn').addEventListener('click', stopSpeaking);
+}
+
 function vpUpdatePrompt(){
   const key = document.getElementById('vpPrompt').value;
   const lang = document.getElementById('vpLang').value;
@@ -3007,6 +3128,8 @@ async function vpStart(){
       await vpTranscribe(blob);
     };
     vpRecorder.start();
+    stopSpeaking();
+    document.getElementById('vpModelPanel').innerHTML = '';
     vpStartedAt = Date.now();
     document.getElementById('vpRecordBtn').textContent = '■ Stop & transcribe';
     document.getElementById('vpRecordBtn').classList.add('recording');
@@ -3054,12 +3177,19 @@ async function vpTranscribe(blob){
     });
     const data = await res.json();
     if(data.status !== 'ok') throw new Error(data.message || 'Transcription failed.');
-    if(!data.text){ vpSetStatus('Nothing was heard in that recording — try again, closer to the mic.', true); return; }
+    if(!data.text){
+      vpSetStatus('Nothing was heard in that recording — try again, closer to the mic.', true);
+      vpRenderModelPanel(lang);
+      btn.disabled = false;
+      return;
+    }
     vpLastTranscript = { text: data.text, lang };
     vpRenderTranscript();
+    vpRenderModelPanel(lang);
     vpSetStatus('');
   }catch(err){
     vpSetStatus(err.message || 'Transcription failed.', true);
+    vpRenderModelPanel(document.getElementById('vpLang').value);
   }
   btn.disabled = false;
   // blob goes out of scope here — audio is never persisted anywhere
@@ -3075,10 +3205,11 @@ function vpRenderTranscript(){
         <textarea id="vpTranscriptBox" ${isAr?'dir="rtl"':''} style="min-height:90px; width:100%;">${escapeHtml(t.text)}</textarea>
         <div class="count-note">Whisper can mishear, especially on dialect or background noise. Fix it here first — otherwise the AI will confidently "correct" a sentence you never said.</div>
       </div>
-      <div class="card-actions" style="margin-top:8px;">
+      <div class="card-actions" style="margin-top:8px; flex-wrap:wrap;">
         <button class="primary" id="vpCritiqueBtn">Critique this</button>
         <button class="icon wide" id="vpCopyBtn" title="Copy transcript">⧉ Copy</button>
         <button class="ghost" id="vpSendToGcBtn">Send to Grammar check</button>
+        <button class="ghost" id="vpGoogleBtn" type="button" title="Search Google for this text — works without AI">Search Google ↗</button>
         <button class="ghost" id="vpDiscardBtn">Discard</button>
       </div>
       <div id="vpCritique" style="margin-top:12px;"></div>
@@ -3092,6 +3223,11 @@ function vpRenderTranscript(){
     document.getElementById('gcInput').value = document.getElementById('vpTranscriptBox').value;
     document.getElementById('gcLang').value = isAr ? 'Arabic' : 'English';
     document.getElementById('gcInput').scrollIntoView({ behavior:'smooth', block:'center' });
+  });
+  document.getElementById('vpGoogleBtn').addEventListener('click', ()=>{
+    const txt = shortenForSearch(document.getElementById('vpTranscriptBox').value, 30);
+    if(!txt) return;
+    openExternal(googleSearchUrl((isAr ? 'Arabic' : 'English') + ' grammar check: ' + txt));
   });
   document.getElementById('vpCritiqueBtn').addEventListener('click', vpCritique);
 }
@@ -3149,8 +3285,8 @@ async function vpCritique(){
     box.innerHTML = err && err.code === 'missing-api-key'
       ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
       : isQuota
-        ? '<div class="status-msg err">Gemini\'s free daily quota is used up — the transcript above is still yours to keep.</div>'
-        : `<div class="status-msg err">Could not analyse that: ${escapeHtml(err.message||'unknown error')}</div>`;
+        ? '<div class="status-msg err">Gemini\'s free daily quota is used up — the transcript above is still yours to keep. Use <strong>Search Google ↗</strong> above in the meantime.</div>'
+        : `<div class="status-msg err">Could not analyse that: ${escapeHtml(err.message||'unknown error')}. Use <strong>Search Google ↗</strong> above in the meantime.</div>`;
   }
   btn.disabled = false;
 }
@@ -3497,6 +3633,14 @@ document.addEventListener('click', (e)=>{
   }
 });
 
+document.getElementById('gcGoogleBtn').addEventListener('click', ()=>{
+  const input = document.getElementById('gcInput');
+  const txt = shortenForSearch(input.value, 30);
+  if(!txt){ input.focus(); return; }
+  const lang = document.getElementById('gcLang').value;
+  openExternal(googleSearchUrl(lang + ' grammar check: ' + txt));
+});
+
 document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   const input = document.getElementById('gcInput').value.trim();
   const lang = document.getElementById('gcLang').value;
@@ -3578,7 +3722,7 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
       ? '<div class="status-msg err">Add a free Gemini API key in Sheet settings to use this.</div>'
       : isQuota
         ? `<div class="status-msg err">Gemini's free daily quota is used up for today — try again tomorrow, or check <a href="https://www.google.com/search?q=${encodeURIComponent((lang==='Arabic'?'Arabic':'English')+' grammar check: '+input)}" target="_blank" rel="noopener">Google</a> in the meantime.</div>`
-        : `<div class="status-msg err">Could not check that right now: ${escapeHtml(err.message || 'unknown error')}</div>`;
+        : `<div class="status-msg err">Could not check that right now: ${escapeHtml(err.message || 'unknown error')}. Use <strong>Search Google ↗</strong> above in the meantime.</div>`;
   }
   btn.disabled = false;
 });
