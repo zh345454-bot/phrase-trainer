@@ -629,20 +629,8 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-drills">
     <div class="panel">
       <h2>Today's plan</h2>
-      <div class="count-note" style="margin-bottom:10px;">A realistic daily structure — about 45 minutes. The ordering matters more than the exact minutes: production and active recall first, passive review last.</div>
+      <div class="count-note" style="margin-bottom:10px;">A realistic daily structure. The ordering matters more than the exact minutes: production and active recall first, passive review last.</div>
       <div id="dailyPlan"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Tashkeel drill</h2>
-      <div class="count-note" style="margin-bottom:10px;">Bare text is shown; type it back <em>with</em> full diacritics. Targets i'rab directly — the thing your grammar checker flags most. Uses only phrases whose vowelled form is already cached, so it costs no AI quota.</div>
-      <div id="tashkeelDrill"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Dictation drill</h2>
-      <div class="count-note" style="margin-bottom:10px;">The app speaks a phrase; type what you hear. Trains listening — nothing else here exercises it. Entirely free: browser speech, no API.</div>
-      <div id="dictationDrill"></div>
     </div>
   </section>
 
@@ -1325,6 +1313,7 @@ document.addEventListener('click', async (e)=>{
       await saveBank();
       await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Review · rated ' + rateVal + '/5' + (p.category ? ' · ' + p.category : ''));
       renderReview();
+      renderDailyPlan();
     }
     return;
   }
@@ -1418,6 +1407,16 @@ function escapeHtml(s){
 function mdToHtml(s){
   return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 }
+// Days since something was starred — used in the Starred hub so a phrase
+// that's been sitting starred a long time is visible as a candidate to
+// swap out for something else, rather than silently accumulating forever.
+function daysStarredLabel(starredAt){
+  if(!starredAt) return 'Starred · date unknown (starred before this feature was added)';
+  const days = Math.max(0, Math.floor((Date.now() - new Date(starredAt).getTime()) / 86400000));
+  if(days === 0) return 'Starred today';
+  if(days === 1) return 'Starred 1 day ago';
+  return 'Starred ' + days + ' days ago';
+}
 // Counterpart to mdToHtml for every path that ISN'T display — text-to-speech,
 // clipboard, and anything sent to the AI. Without this, a bolded phrase
 // would literally be spoken/copied/sent as "**word**", asterisks and all.
@@ -1493,12 +1492,15 @@ function phraseCardHtml(p, opts){
   }
   const reviewedToday = p.quickReviewedOn === todayStr();
   const showEdit = opts && opts.showEdit;
+  const showStarredDays = opts && opts.showStarredDays && p.starred;
+  const starredLine = showStarredDays ? `<div class="due-meta">${escapeHtml(daysStarredLabel(p.starredAt))}</div>` : '';
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${mdToHtml(p.en)}</div>
       ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
       ${metaLine}
+      ${starredLine}
     </div>
     <div class="card-actions">
       ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}" title="Speak English">EN</button>` : ''}
@@ -1561,6 +1563,7 @@ function starredCardHtml(item){
         ${g.rule_summary ? `<div class="due-meta">${mdToHtml(g.rule_summary)}</div>` : ''}
         ${firstEx && firstEx.target ? `<div class="${isAr ? 'phrase-ar' : 'phrase-en'}" ${isAr ? 'dir="rtl"' : ''}>${mdToHtml(firstEx.target)}</div>` : ''}
         ${firstEx && firstEx.translation ? `<div class="due-meta">${mdToHtml(firstEx.translation)}</div>` : ''}
+        <div class="due-meta">${escapeHtml(daysStarredLabel(g.starredAt))}</div>
       </div>
       <div class="card-actions">
         ${firstEx && firstEx.target ? `<button class="icon" data-speak-raw="${escapeHtml(stripBold(firstEx.target))}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
@@ -1574,6 +1577,7 @@ function starredCardHtml(item){
         <div class="tag">Qur'an${q.reference ? ' · ' + escapeHtml(q.reference) : ''}</div>
         <div class="phrase-ar" dir="rtl">${mdToHtml(q.arabic || '')}</div>
         ${q.translation ? `<div class="due-meta" style="font-weight:600;">${escapeHtml(q.tafsirSource || '')}</div><div class="phrase-en">${mdToHtml(q.translation)}</div>` : ''}
+        <div class="due-meta">${escapeHtml(daysStarredLabel(q.starredAt))}</div>
       </div>
       <div class="card-actions">
         <button class="icon" data-speak-raw="${escapeHtml(stripBold(q.arabic || ''))}" data-speak-lang="ar" title="Speak verse">AR</button>
@@ -1582,7 +1586,7 @@ function starredCardHtml(item){
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
   }
-  return phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true });
+  return phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true });
 }
 
 function renderStarred(){
@@ -1758,6 +1762,7 @@ document.addEventListener('click', async (e)=>{
     const p = state.bank.find(x=>x.id === starId);
     if(p){
       p.starred = !p.starred;
+      p.starredAt = p.starred ? new Date().toISOString() : null;
       await saveBank();
       renderBank();
       renderStarred();
@@ -1826,6 +1831,7 @@ document.addEventListener('click', async (e)=>{
       document.getElementById('quickReviewModal').classList.remove('open');
       if(document.getElementById('view-practice').classList.contains('active')) renderPracticeList(practiceSet);
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
+      renderDailyPlan();
     }
     return;
   }
@@ -2041,6 +2047,11 @@ function getGeminiUsageToday(){
   const usage = lsGet('geminiUsage', { date: today, count: 0 });
   return usage.date === today ? usage.count : 0;
 }
+
+// ---------- Daily review-dose progress ----------
+// (Tracking already lives in getDailyDoseState()/bumpDailyDoseCompleted()
+// below, called from inside rateReview() itself — see there for how
+// per-phrase, due-gated progress is counted.)
 
 async function addLogEntry(text, lang, category){
   state.log.unshift({ id: uid(), date: todayStr(), time: timeStr(), lang, category, phrase: text, synced: false });
@@ -2862,16 +2873,16 @@ function renderDailyPlan(){
       ? `Today's dose of ${dose.target} done${dose.completed > dose.target ? ' (plus ' + (dose.completed - dose.target) + ' extra)' : ''} — nice. ${dueCount > 0 ? dueCount + ' more still sit in the full Review queue whenever you want a longer session.' : ''}`
       : `${dose.completed} of ${dose.target} done today. ${dueCount} phrase${dueCount===1?'':'s'} currently due in total — the rest carries forward; Review still has the full queue for a longer catch-up session.`;
 
-  const otherLines = [
+  const requiredLines = [
     ['10 min', 'Voice practice', 'Two or three 60–90s turns in Grammar Hub. Speaking is the bottleneck skill: it is the only one that forces retrieval under time pressure.'],
     ['10 min', 'Write & check', 'Write 3–5 sentences using phrases you reviewed today, then run Grammar check. Producing beats recognising.'],
-    ['5 min', 'Tashkeel drill', 'Below. Short and daily beats long and occasional for case endings.'],
-    ['5 min', 'Dictation drill', 'Below. Closes the listening gap.'],
-    ['5 min', 'Add new phrases', `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear.`],
-    ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked.']
+    ['5 min', 'Add new phrases', `Cap new material at ~${state.settings.newPerDayCap || 15}/day. More intake without review just grows a backlog you will not clear.`]
   ];
-  const otherMinutes = otherLines.reduce((sum,[t])=> sum + parseInt(t,10), 0);
-  const totalMinutes = remainingMinutes + otherMinutes;
+  const optionalLines = [
+    ['5 min', 'Qur\'an entry', 'One verse, both tafsir, verified. Slow and verified beats fast and unchecked — do this only when you actually want to, not as a daily requirement.']
+  ];
+  const requiredMinutes = requiredLines.reduce((sum,[t])=> sum + parseInt(t,10), 0);
+  const totalMinutes = remainingMinutes + requiredMinutes;
 
   const reviewRow = `
     <div class="log-row" style="align-items:flex-start;">
@@ -2880,12 +2891,19 @@ function renderDailyPlan(){
     </div>
     ${!doseDone && dueCount > 0 ? `<div style="margin:4px 0 10px 0;"><button class="ghost" id="dailyPlanPracticeBtn">${dose.completed > 0 ? 'Continue' : 'Start'} this dose in Practice & Log →</button></div>` : ''}`;
 
-  el.innerHTML = reviewRow + otherLines.map(([t,title,desc])=>`
+  const requiredRows = requiredLines.map(([t,title,desc])=>`
     <div class="log-row" style="align-items:flex-start;">
       <span><strong>${escapeHtml(title)}</strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
       <span class="badge pending">${escapeHtml(t)}</span>
-    </div>`).join('')
-    + `<div class="count-note" style="margin-top:10px;">~${totalMinutes} min left today. Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — this daily total beats one long weekend session, because forgetting happens on the days between.</div>`;
+    </div>`).join('');
+  const optionalRows = optionalLines.map(([t,title,desc])=>`
+    <div class="log-row" style="align-items:flex-start;">
+      <span><strong>${escapeHtml(title)} <span class="tag">Optional</span></strong><br><span class="due-meta">${escapeHtml(desc)}</span></span>
+      <span class="badge pending">${escapeHtml(t)}</span>
+    </div>`).join('');
+
+  el.innerHTML = reviewRow + requiredRows + optionalRows
+    + `<div class="count-note" style="margin-top:10px;">~${totalMinutes} min left today (not counting the optional Qur'an entry). Current streak: ${streak.current} day${streak.current===1?'':'s'}. Consistency outperforms intensity — this daily total beats one long weekend session, because forgetting happens on the days between.</div>`;
 
   const goBtn = document.getElementById('dailyPlanPracticeBtn');
   if(goBtn){
@@ -2902,120 +2920,8 @@ function renderDailyPlan(){
 
 // Compares two strings token by token so the user sees exactly which word
 // was wrong, rather than a bare right/wrong verdict.
-function diffTokens(expected, actual){
-  const e = expected.trim().split(/\s+/), a = actual.trim().split(/\s+/);
-  const out = [];
-  const max = Math.max(e.length, a.length);
-  let correct = 0;
-  for(let i=0;i<max;i++){
-    if(e[i] && a[i] && e[i] === a[i]){ out.push(`<span class="diff-ok">${escapeHtml(a[i])}</span>`); correct++; }
-    else if(a[i] && e[i]) out.push(`<span class="diff-bad">${escapeHtml(a[i])}</span> <span class="diff-miss">${escapeHtml(e[i])}</span>`);
-    else if(a[i]) out.push(`<span class="diff-bad">${escapeHtml(a[i])}</span>`);
-    else out.push(`<span class="diff-miss">${escapeHtml(e[i])}</span>`);
-  }
-  return { html: out.join(' '), score: max ? Math.round(correct/max*100) : 0 };
-}
-
-let tashkeelCurrent = null;
-function renderTashkeelDrill(){
-  const el = document.getElementById('tashkeelDrill');
-  if(!el) return;
-  const pool = state.bank.filter(p => p.arVoweled && hasTashkeel(p.arVoweled));
-  if(pool.length === 0){
-    el.innerHTML = '<div class="empty">No vowelled phrases cached yet. Tap the AR speak button on a few Arabic phrases first — that caches the diacritics this drill uses.</div>';
-    return;
-  }
-  tashkeelCurrent = pool[Math.floor(Math.random()*pool.length)];
-  el.innerHTML = `
-    <div class="drill-box">
-      <div class="due-meta">Add the full tashkeel:</div>
-      <div class="drill-target" dir="rtl">${escapeHtml(stripTashkeel(tashkeelCurrent.arVoweled))}</div>
-      ${tashkeelCurrent.en ? `<div class="due-meta">${mdToHtml(tashkeelCurrent.en)}</div>` : ''}
-      <div class="field" style="margin-top:10px;">
-        <input type="text" id="tashkeelAnswer" dir="rtl" placeholder="اكتب بالتشكيل الكامل">
-      </div>
-      <div class="card-actions">
-        <button class="primary" id="tashkeelCheckBtn">Check</button>
-        <button class="ghost" id="tashkeelSkipBtn">Skip / next</button>
-      </div>
-      <div id="tashkeelFeedback" style="margin-top:10px;"></div>
-    </div>`;
-  document.getElementById('tashkeelCheckBtn').addEventListener('click', ()=>{
-    const ans = document.getElementById('tashkeelAnswer').value.trim();
-    if(!ans) return;
-    const d = diffTokens(tashkeelCurrent.arVoweled.trim(), ans);
-    document.getElementById('tashkeelFeedback').innerHTML = `
-      <div class="due-meta">Your answer vs. expected (${d.score}% exact):</div>
-      <div class="drill-target" dir="rtl">${d.html}</div>
-      <div class="due-meta" style="margin-top:6px;">Expected: <span dir="rtl">${escapeHtml(tashkeelCurrent.arVoweled)}</span></div>
-      <button class="ghost" id="tashkeelNextBtn" style="margin-top:8px;">Next phrase</button>`;
-    document.getElementById('tashkeelNextBtn').addEventListener('click', renderTashkeelDrill);
-    addLogEntry(tashkeelCurrent.ar || '', 'ar', 'Tashkeel drill · ' + d.score + '%');
-  });
-  document.getElementById('tashkeelSkipBtn').addEventListener('click', renderTashkeelDrill);
-}
-
-let dictationCurrent = null;
-function renderDictationDrill(){
-  const el = document.getElementById('dictationDrill');
-  if(!el) return;
-  const pool = state.bank.filter(p => p.ar || p.en);
-  if(pool.length === 0){
-    el.innerHTML = '<div class="empty">Add some phrases to your bank first.</div>';
-    return;
-  }
-  dictationCurrent = pool[Math.floor(Math.random()*pool.length)];
-  const useAr = !!dictationCurrent.ar;
-  const target = stripBold(useAr ? (dictationCurrent.arVoweled || dictationCurrent.ar) : dictationCurrent.en);
-  el.innerHTML = `
-    <div class="drill-box">
-      <div class="due-meta">Listen, then type what you hear (${useAr ? 'Arabic' : 'English'}):</div>
-      <div class="card-actions" style="margin-top:6px;">
-        <button class="primary" id="dictPlayBtn">▶ Play</button>
-        <button class="ghost" id="dictSlowBtn">▶ Play slowly</button>
-      </div>
-      <div class="field" style="margin-top:10px;">
-        <input type="text" id="dictAnswer" ${useAr?'dir="rtl"':''} placeholder="Type what you hear">
-      </div>
-      <div class="card-actions">
-        <button class="primary" id="dictCheckBtn">Check</button>
-        <button class="ghost" id="dictSkipBtn">Skip / next</button>
-      </div>
-      <div id="dictFeedback" style="margin-top:10px;"></div>
-    </div>`;
-  const play = (rate)=>{
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(target);
-    u.lang = useAr ? 'ar-SA' : 'en-US';
-    const v = window.speechSynthesis.getVoices().find(x=>x.lang && x.lang.toLowerCase().startsWith(useAr?'ar':'en'));
-    if(v) u.voice = v;
-    u.rate = rate;
-    window.speechSynthesis.speak(u);
-  };
-  document.getElementById('dictPlayBtn').addEventListener('click', ()=>play(0.92));
-  document.getElementById('dictSlowBtn').addEventListener('click', ()=>play(0.6));
-  document.getElementById('dictCheckBtn').addEventListener('click', ()=>{
-    const ans = document.getElementById('dictAnswer').value.trim();
-    if(!ans) return;
-    // Compare without diacritics: this drill tests hearing, not vowelling
-    const expected = useAr ? stripTashkeel(target) : target;
-    const given = useAr ? stripTashkeel(ans) : ans;
-    const d = diffTokens(expected.trim(), given.trim());
-    document.getElementById('dictFeedback').innerHTML = `
-      <div class="due-meta">${d.score}% of words matched:</div>
-      <div class="${useAr?'drill-target':''}" ${useAr?'dir="rtl"':''}>${d.html}</div>
-      <div class="due-meta" style="margin-top:6px;">Expected: <span ${useAr?'dir="rtl"':''}>${escapeHtml(expected)}</span></div>
-      <button class="ghost" id="dictNextBtn" style="margin-top:8px;">Next phrase</button>`;
-    document.getElementById('dictNextBtn').addEventListener('click', renderDictationDrill);
-    addLogEntry(expected.slice(0,120), useAr?'ar':'en', 'Dictation drill · ' + d.score + '%');
-  });
-  document.getElementById('dictSkipBtn').addEventListener('click', renderDictationDrill);
-}
-
 function renderDrills(){
   renderDailyPlan();
-  renderTashkeelDrill();
-  renderDictationDrill();
 }
 
 async function checkGrammar(text, lang){
@@ -3300,6 +3206,7 @@ document.addEventListener('click', async (e)=>{
     const g = state.grammar.find(x=>x.id === starGid);
     if(g){
       g.starred = !g.starred;
+      g.starredAt = g.starred ? new Date().toISOString() : null;
       await saveGrammar();
       renderGrammarList();
       renderStarred();
@@ -3784,6 +3691,7 @@ document.addEventListener('click', async (e)=>{
     const q = state.quran.find(x=>x.id === quranStarId);
     if(q){
       q.starred = !q.starred;
+      q.starredAt = q.starred ? new Date().toISOString() : null;
       if(q.synced) q.synced = false; // content changed since the last sheet sync
       await saveQuran();
       renderQuran();
