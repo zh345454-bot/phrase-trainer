@@ -77,6 +77,21 @@ header.top .sub{
 .gear-btn.primary-action:hover{ background:var(--ink); border-color:var(--ink); }
 .gear-btn.primary-action:disabled{ opacity:0.6; cursor:default; }
 
+.header-stats{
+  flex-basis:100%;
+  text-align:right;
+  font-size:11.5px;
+  letter-spacing:0.03em;
+  color:var(--ink-soft);
+  margin-top:2px;
+}
+.header-stats .hs-num{ color:var(--brass-deep); font-weight:700; }
+.header-stats .hs-sep{ margin:0 7px; color:var(--line); }
+@media (max-width: 700px){
+  .header-stats{ font-size:10.5px; }
+  .header-stats .hs-sep{ margin:0 5px; }
+}
+
 nav.tabs{
   display:flex;
   gap:2px;
@@ -403,9 +418,10 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="sub">Daily English &amp; Arabic speaking practice, logged to your Google Sheet</div>
     </div>
     <button class="gear-btn primary-action" id="syncAllBtn">⟳ Sync all</button>
-    <button class="gear-btn" id="fullRestoreBtn" title="Pull phrase bank, grammar notebook and Qur'an log from the Sheet — for catching this device up after working on another one">⟲ Full restore</button>
+    <button class="gear-btn" id="fullRestoreBtn" title="Pull phrase bank, grammar notebook, Qur'an log and today's drill progress from the Sheet — for catching this device up after working on another one">⟲ Full restore</button>
     <button class="gear-btn" id="aiBtn">Ask AI</button>
     <button class="gear-btn" id="settingsBtn">Sheet &amp; AI settings</button>
+    <div class="header-stats" id="headerStats"></div>
   </header>
   <div class="status-msg" id="syncAllStatus" style="display:none; margin-bottom:12px;"></div>
 
@@ -1256,7 +1272,10 @@ function rateReview(p, rating){
   // gave — finishing the review is what the dose tracks, not mastering it
   // on the first pass. Only counts if it was actually due, so quick-
   // reviewing a non-due phrase from Practice & Log doesn't inflate it.
-  if(wasDue) bumpDailyDoseCompleted();
+  if(wasDue){
+    bumpDailyDoseCompleted();
+    bumpDrillSyncInBackground();
+  }
 }
 function getDueReviews(){
   const today = todayStr();
@@ -2205,6 +2224,7 @@ function renderSession(){
       streakNote.textContent = 'Log a phrase to start your streak.';
     }
   }
+  renderHeaderStats();
   if(todays.length === 0){
     container.innerHTML = '<div class="empty">No entries logged yet today.</div>';
     return;
@@ -2218,6 +2238,29 @@ function renderSession(){
       <span class="badge ${l.synced ? 'synced' : 'pending'}">${l.synced ? 'Synced' : 'Pending'}</span>`;
     container.appendChild(row);
   });
+}
+
+// ---------- Header bold-word totals ----------
+// Counts **bold**-marked segments logged over all time, split by language —
+// each bolded segment is one word/phrase you deliberately marked as new
+// vocabulary, so a log entry with two bolded segments (e.g. "I need to
+// **renew** my **passport**") counts as 2, not 1. Uses extractBoldSegments
+// (same helper the Grammar check chips use) rather than a raw whitespace
+// split, so a multi-word bolded phrase like "**as soon as possible**" still
+// counts as a single segment, matching how it was actually marked.
+function countBoldWordsByLang(){
+  const totals = { en: 0, ar: 0 };
+  state.log.forEach(l=>{
+    if(totals[l.lang] === undefined) return;
+    totals[l.lang] += extractBoldSegments(l.phrase).length;
+  });
+  return totals;
+}
+function renderHeaderStats(){
+  const el = document.getElementById('headerStats');
+  if(!el) return;
+  const totals = countBoldWordsByLang();
+  el.innerHTML = `<span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words`;
 }
 
 // ---------- Google Sheet sync ----------
@@ -2267,6 +2310,63 @@ async function coreSyncLog(){
   renderSession();
   if(failed === 0) return { ok: true, message: 'Practice log: ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + ' synced.' };
   return { ok: false, message: 'Practice log: ' + failed + ' entr' + (failed===1?'y':'ies') + ' failed' + (lastErr ? ' (' + lastErr + ')' : '') + '.' };
+}
+
+// ---------- Drill progress sync (daily dose) ----------
+// Pushes just today's { target, completed } as ONE row, upserted by date —
+// deliberately not an appended log — so switching between laptop and phone
+// mid-day can pick up where the other device left off without the sheet
+// growing a row per review the way the practice Log does.
+async function coreSyncDrills(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  const dose = getDailyDoseState();
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'drill_sync', date: dose.date, target: dose.target, completed: dose.completed })
+    });
+    throwIfRejected(await res.json());
+    return { ok: true, message: 'Drill progress: today\'s dose (' + dose.completed + '/' + dose.target + ') synced.' };
+  }catch(err){
+    return { ok: false, message: 'Drill progress: ' + (err && err.message ? err.message : 'sync failed.') };
+  }
+}
+// Fire-and-forget wrapper for use right after a review completes — the
+// review flow itself shouldn't wait on a network round trip, and a failed
+// background sync just means the next completion (or "Sync all") retries it.
+function bumpDrillSyncInBackground(){
+  if(!state.settings.webAppUrl) return;
+  coreSyncDrills().catch(()=>{});
+}
+
+// Pulls today's row (if any) from the Drills sheet and merges it into the
+// local dailyDose so progress made on another device today shows up here
+// too. Takes the higher completed count rather than blindly overwriting —
+// so returning to a device you'd already made some progress on today
+// never loses that progress.
+async function coreRestoreDrills(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'drill', date: todayStr() }));
+    const remote = await res.json();
+    if(remote && remote.date){
+      const local = getDailyDoseState();
+      const merged = {
+        date: local.date,
+        target: Math.max(local.target, Number(remote.target) || 0),
+        completed: Math.max(local.completed, Number(remote.completed) || 0)
+      };
+      lsSet('dailyDose', merged);
+      renderDrills();
+      return { ok: true, message: 'Drill progress: caught up to ' + merged.completed + '/' + merged.target + ' for today.' };
+    }
+    return { ok: true, skipped: true, message: 'Drill progress: nothing synced for today yet.' };
+  }catch(err){
+    return { ok: false, message: 'Drill progress: ' + (err && err.message ? err.message : 'restore failed.') };
+  }
 }
 
 async function coreBackupBank(){
@@ -2499,6 +2599,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreBackupGrammar());
   statusEl.textContent = 'Syncing Qur\'an log...';
   results.push(await coreSyncQuran(true));
+  statusEl.textContent = 'Syncing drill progress...';
+  results.push(await coreSyncDrills());
 
   const anyFailed = results.some(r=>!r.ok);
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>All synced.</strong><br>')
@@ -2544,6 +2646,8 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   results.push(await coreRestoreGrammar());
   statusEl.textContent = 'Restoring Qur\'an log...';
   results.push(await coreRestoreQuran());
+  statusEl.textContent = 'Catching up drill progress...';
+  results.push(await coreRestoreDrills());
 
   const anyFailed = results.some(r=>!r.ok);
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>Fully restored.</strong><br>')
@@ -4315,6 +4419,12 @@ if('serviceWorker' in navigator){
   renderQuran();
   renderGcStarResults();
   renderGcDateResults();
+
+  // Silently catch up today's drill progress from another device, if any —
+  // best-effort and non-blocking, so a slow/offline sheet never delays the
+  // rest of the app loading. coreRestoreDrills() re-renders Drills itself
+  // once (if) it resolves.
+  if(state.settings.webAppUrl) coreRestoreDrills().catch(()=>{});
 
   if(!state.bank.length){
     state.bank = [
