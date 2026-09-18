@@ -357,6 +357,13 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .flash-sentence[dir=rtl]{ font-family:'Amiri',serif; font-size:18px; }
 .word-chip{ display:inline-block; border:1px solid var(--teal); color:var(--teal); background:var(--teal-soft); padding:5px 10px; margin:3px; cursor:pointer; font-size:13px; }
 .word-chip.used{ opacity:0.35; cursor:default; }
+.gc-builder{ display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+.gc-builder-col{ flex:1; min-width:220px; }
+.gc-builder-col label{ font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft); display:block; margin-bottom:4px; }
+.gc-chip-list{ display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; max-height:170px; overflow-y:auto; border:1px solid var(--line); background:#fff; padding:6px; }
+.gc-chip{ display:inline-block; border:1px solid var(--brass); color:var(--brass-deep); background:#fff; padding:4px 9px; cursor:pointer; font-size:12.5px; line-height:1.4; }
+.gc-chip:hover{ background:var(--brass); color:#fff; }
+.gc-chip[dir=rtl]{ font-family:'Amiri',serif; font-size:14px; }
 .built-row{ min-height:34px; border:1px dashed var(--line); padding:6px; margin:8px 0; }
 
 .modal-backdrop{
@@ -394,6 +401,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="sub">Daily English &amp; Arabic speaking practice, logged to your Google Sheet</div>
     </div>
     <button class="gear-btn primary-action" id="syncAllBtn">⟳ Sync all</button>
+    <button class="gear-btn" id="fullRestoreBtn" title="Pull phrase bank, grammar notebook and Qur'an log from the Sheet — for catching this device up after working on another one">⟲ Full restore</button>
     <button class="gear-btn" id="aiBtn">Ask AI</button>
     <button class="gear-btn" id="settingsBtn">Sheet &amp; AI settings</button>
   </header>
@@ -666,6 +674,19 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel">
       <h2>Grammar check</h2>
       <p class="count-note" style="margin-bottom:10px;">Write a sentence or short paragraph and get it corrected, with an explanation for each fix — powered by the same Gemini key as Ask AI (uses your daily quota).</p>
+      <div class="gc-builder">
+        <div class="gc-builder-col">
+          <label>Bolded words in starred phrases</label>
+          <input type="text" id="gcStarSearch" placeholder="Search your bolded words...">
+          <div class="gc-chip-list" id="gcStarResults"></div>
+        </div>
+        <div class="gc-builder-col">
+          <label>Bolded words from a date</label>
+          <input type="date" id="gcDateSearch">
+          <div class="gc-chip-list" id="gcDateResults"></div>
+        </div>
+      </div>
+      <div class="count-note" style="margin-bottom:10px;">Only the words/phrases you've bolded show up as chips — tap one to drop it into your writing below, then keep tapping to build your own phrase.</div>
       <div class="field" style="margin-bottom:10px;">
         <label>Language</label>
         <select id="gcLang"><option value="Arabic">Arabic</option><option value="English">English</option></select>
@@ -1067,7 +1088,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.getElementById('view-'+btn.dataset.view).classList.add('active');
     btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     if(btn.dataset.view === 'review') renderReview();
-    if(btn.dataset.view === 'grammar') renderGrammarList();
+    if(btn.dataset.view === 'grammar'){ renderGrammarList(); renderGcStarResults(); renderGcDateResults(); }
     if(btn.dataset.view === 'starred') renderStarred();
     if(btn.dataset.view === 'drills') renderDrills();
     if(btn.dataset.view === 'quran') renderQuran();
@@ -1668,7 +1689,7 @@ function renderPracticeList(items){
   items.forEach(p=>{
     const pCard = document.createElement('div');
     pCard.className = 'phrase-card';
-    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true });
+    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true, showEdit: true });
     practiceList.appendChild(pCard);
   });
 }
@@ -1766,6 +1787,7 @@ document.addEventListener('click', async (e)=>{
       await saveBank();
       renderBank();
       renderStarred();
+      renderGcStarResults();
       if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
     }
@@ -1788,6 +1810,7 @@ document.addEventListener('click', async (e)=>{
     await saveBank();
     renderBank();
     renderStarred();
+    renderGcStarResults();
     return;
   }
   const logLang = e.target.dataset.log;
@@ -1861,6 +1884,7 @@ document.getElementById('saveEditPhrase').addEventListener('click', async ()=>{
   p.category = document.getElementById('editPhraseCat').value.trim();
   await saveBank();
   renderBank(); renderStarred();
+  renderGcStarResults();
   if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
   document.getElementById('editPhraseModal').classList.remove('open');
 });
@@ -2230,6 +2254,99 @@ async function coreSyncQuran(confirmUnverified){
   return { ok: false, message: 'Qur\'an log: ' + failed + ' entr' + (failed===1?'y':'ies') + ' failed' + (lastErr ? ' (' + lastErr + ')' : '') + '.' };
 }
 
+// Pull-down counterparts to the three backup functions above. No confirm()
+// inside these — each caller (the per-tab restore button, or Full restore)
+// decides its own confirmation wording, so the core logic isn't duplicated
+// three times but the warning stays specific to what's calling it.
+async function coreRestoreBank(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'bank' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    const today = todayStr();
+    state.bank = data.map(p => ({
+      id: p.id || uid(),
+      en: p.en || '', ar: p.ar || '', category: p.category || '',
+      arVoweled: p.arVoweled || '',
+      practiceCount: parseInt(p.practiceCount, 10) || 0,
+      lastPracticed: p.lastPracticed || null,
+      dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
+      hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
+      starred: p.starred === 'Yes' || p.starred === true,
+      srs: {
+        station: parseInt(p.station, 10) || 1,
+        reps: parseInt(p.reps, 10) || 0,
+        nextReview: p.nextReview ? String(p.nextReview).slice(0,10) : today,
+        dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
+        hotLayerDone: []
+      }
+    }));
+    await saveBank();
+    renderBank(); renderStarred(); renderGcStarResults();
+    return { ok: true, message: 'Phrase bank: restored ' + state.bank.length + ' phrases.' };
+  }catch(err){
+    return { ok: false, message: 'Phrase bank: restore failed' + (err && err.message ? ' (' + err.message + ')' : '') + '.' };
+  }
+}
+
+async function coreRestoreGrammar(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'grammar' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    state.grammar = data.map(g => ({
+      id: g.id || uid(),
+      title: g.title || '', language: g.language || 'Arabic', category: g.category || '',
+      rule_summary: g.ruleSummary || '',
+      examples: String(g.examples || '').split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{
+        const parts = line.split('|').map(s=>s.trim());
+        return { target: parts[0] || '', translation: parts[1] || '' };
+      }),
+      tags: String(g.tags || '').split(',').map(t=>t.trim()).filter(Boolean),
+      user_notes: g.notes || '',
+      date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr(),
+      starred: g.starred === 'Yes' || g.starred === true
+    }));
+    await saveGrammar();
+    renderGrammarList(); renderStarred();
+    return { ok: true, message: 'Grammar notebook: restored ' + state.grammar.length + ' entries.' };
+  }catch(err){
+    return { ok: false, message: 'Grammar notebook: restore failed' + (err && err.message ? ' (' + err.message + ')' : '') + '.' };
+  }
+}
+
+async function coreRestoreQuran(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'quran' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    const today = todayStr();
+    state.quran = data.map(q => ({
+      id: q.id || uid(),
+      reference: q.reference || '', arabic: q.arabic || '', translation: q.translation || '',
+      tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '',
+      altTranslation: '', altTafsirSource: '', altTafsirArabic: '',
+      note: q.note || '',
+      verified: q.verified === 'Yes' || q.verified === true,
+      verifiedAt: q.verifiedAt || null,
+      dateAdded: q.dateAdded || today,
+      starred: q.starred === 'Yes' || q.starred === true,
+      synced: true
+    }));
+    await saveQuran();
+    renderQuran(); renderStarred();
+    return { ok: true, message: 'Qur\'an log: restored ' + state.quran.length + ' entr' + (state.quran.length===1?'y':'ies') + '.' };
+  }catch(err){
+    return { ok: false, message: 'Qur\'an log: restore failed' + (err && err.message ? ' (' + err.message + ')' : '') + '.' };
+  }
+}
+
 document.getElementById('syncBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('syncStatus');
   const btn = document.getElementById('syncBtn');
@@ -2255,7 +2372,9 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
     statusEl.className = 'status-msg err';
     return;
   }
+  const restoreBtn = document.getElementById('fullRestoreBtn');
   btn.disabled = true;
+  restoreBtn.disabled = true;
   const origLabel = btn.textContent;
   btn.textContent = '⟳ Syncing...';
   statusEl.textContent = 'Syncing everything to your Google Sheet...';
@@ -2276,9 +2395,53 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
     + results.map(r=>escapeHtml(r.message)).join('<br>');
   statusEl.className = anyFailed ? 'status-msg err' : 'status-msg';
   btn.disabled = false;
+  restoreBtn.disabled = false;
   btn.textContent = origLabel;
   renderBank();
   renderStarred();
+});
+
+// ---------- Full restore (header button) ----------
+// Pulls everything the Sheet has down to this device in one go: phrase
+// bank (with review progress), grammar notebook, Qur'an log. The practice
+// log itself has no restore path — it's an append-only stream, already
+// visible via "Pull" / History, so there's nothing to pull back down into
+// it. One combined confirm up front instead of three separate ones, since
+// agreeing to a full restore means agreeing to all three.
+document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('fullRestoreBtn');
+  const syncBtn = document.getElementById('syncAllBtn');
+  const statusEl = document.getElementById('syncAllStatus');
+  statusEl.style.display = 'block';
+  if(!state.settings.webAppUrl){
+    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  const counts = 'bank: ' + state.bank.length + ' phrases, grammar: ' + state.grammar.length + ' entries, Qur\'an: ' + state.quran.length + ' entries';
+  if(!confirm('This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
+  btn.disabled = true;
+  syncBtn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = '⟲ Restoring...';
+  statusEl.textContent = 'Restoring everything from your Google Sheet...';
+  statusEl.className = 'status-msg';
+
+  const results = [];
+  statusEl.textContent = 'Restoring phrase bank...';
+  results.push(await coreRestoreBank());
+  statusEl.textContent = 'Restoring grammar notebook...';
+  results.push(await coreRestoreGrammar());
+  statusEl.textContent = 'Restoring Qur\'an log...';
+  results.push(await coreRestoreQuran());
+
+  const anyFailed = results.some(r=>!r.ok);
+  statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>Fully restored.</strong><br>')
+    + results.map(r=>escapeHtml(r.message)).join('<br>');
+  statusEl.className = anyFailed ? 'status-msg err' : 'status-msg';
+  btn.disabled = false;
+  syncBtn.disabled = false;
+  btn.textContent = origLabel;
 });
 
 document.getElementById('pullBtn').addEventListener('click', async ()=>{
@@ -2350,6 +2513,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     if(Array.isArray(payload.quran)) state.quran = payload.quran;
     await saveBank(); await saveLog(); await saveGrammar(); await saveQuran();
     renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran();
+    renderGcStarResults(); renderGcDateResults();
     statusEl.textContent = 'Restored from file: ' + summary + '.';
     statusEl.className = 'status-msg';
   }catch(err){
@@ -2381,36 +2545,9 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
   if(state.bank.length > 0 && !confirm(lastBackupNote + 'Restoring replaces your current local bank (' + state.bank.length + ' phrases) with whatever is in the sheet right now, discarding any local changes since then — including from other devices that may not have backed up yet. Continue?')) return;
   statusEl.textContent = 'Restoring from sheet...';
   statusEl.className = 'status-msg';
-  try{
-    const res = await fetch(sheetGetUrl(url, { type: 'bank' }), { method: 'GET' });
-    const data = await res.json();
-    throwIfRejected(data);
-    const today = todayStr();
-    state.bank = data.map(p => ({
-      id: p.id || uid(),
-      en: p.en || '', ar: p.ar || '', category: p.category || '',
-      arVoweled: p.arVoweled || '',
-      practiceCount: parseInt(p.practiceCount, 10) || 0,
-      lastPracticed: p.lastPracticed || null,
-      dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
-      hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
-      starred: p.starred === 'Yes' || p.starred === true,
-      srs: {
-        station: parseInt(p.station, 10) || 1,
-        reps: parseInt(p.reps, 10) || 0,
-        nextReview: p.nextReview ? String(p.nextReview).slice(0,10) : today,
-        dateAdded: p.dateAdded ? String(p.dateAdded).slice(0,10) : today,
-        hotLayerDone: []
-      }
-    }));
-    await saveBank();
-    renderBank();
-    statusEl.textContent = 'Restored ' + state.bank.length + ' phrases (with review progress) from the sheet.';
-    statusEl.className = 'status-msg';
-  }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreRestoreBank();
+  statusEl.textContent = r.ok ? 'Restored ' + state.bank.length + ' phrases (with review progress) from the sheet.' : r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
 });
 
 // ---------- Grammar notebook backup / restore ----------
@@ -2437,31 +2574,9 @@ document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=
   if(state.grammar.length > 0 && !confirm('Restoring replaces your current local grammar notebook (' + state.grammar.length + ' entries) with whatever is in the sheet right now, discarding any local changes since your last backup. Continue?')) return;
   statusEl.textContent = 'Restoring from sheet...';
   statusEl.className = 'status-msg';
-  try{
-    const res = await fetch(sheetGetUrl(url, { type: 'grammar' }), { method: 'GET' });
-    const data = await res.json();
-    throwIfRejected(data);
-    state.grammar = data.map(g => ({
-      id: g.id || uid(),
-      title: g.title || '', language: g.language || 'Arabic', category: g.category || '',
-      rule_summary: g.ruleSummary || '',
-      examples: String(g.examples || '').split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{
-        const parts = line.split('|').map(s=>s.trim());
-        return { target: parts[0] || '', translation: parts[1] || '' };
-      }),
-      tags: String(g.tags || '').split(',').map(t=>t.trim()).filter(Boolean),
-      user_notes: g.notes || '',
-      date_created: g.dateCreated ? String(g.dateCreated).slice(0,10) : todayStr(),
-      starred: g.starred === 'Yes' || g.starred === true
-    }));
-    await saveGrammar();
-    renderGrammarList();
-    statusEl.textContent = 'Restored ' + state.grammar.length + ' grammar entries from the sheet.';
-    statusEl.className = 'status-msg';
-  }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreRestoreGrammar();
+  statusEl.textContent = r.ok ? 'Restored ' + state.grammar.length + ' grammar entries from the sheet.' : r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
 });
 
 function renderHistory(entries){
@@ -2953,6 +3068,144 @@ async function translateGrammarText(text, fromLang){
   const { text: out } = await callGemini(text, { system, useSearch: false });
   return out.trim();
 }
+
+// ---------- Grammar check: phrase builder (starred search + date search) ----------
+// Inserts text into the Grammar check textarea at the current cursor
+// position (or at the end if nothing's focused there yet), adding a
+// separating space only when one is actually needed — so tapping several
+// chips in a row builds up a phrase word by word.
+function gcInsertText(text){
+  if(!text) return;
+  const ta = document.getElementById('gcInput');
+  const start = (ta.selectionStart != null) ? ta.selectionStart : ta.value.length;
+  const end = (ta.selectionEnd != null) ? ta.selectionEnd : ta.value.length;
+  const val = ta.value;
+  const prevChar = val.slice(0, start).slice(-1);
+  const needsSpace = start > 0 && prevChar !== '' && prevChar !== ' ' && prevChar !== '\n';
+  const insertion = (needsSpace ? ' ' : '') + text;
+  ta.value = val.slice(0, start) + insertion + val.slice(end);
+  const newPos = start + insertion.length;
+  ta.focus();
+  ta.setSelectionRange(newPos, newPos);
+}
+
+// Pulls out just the **bold**-marked words/phrases from a piece of text,
+// in order, de-duplicated within that one call. This is how the grammar
+// check chips avoid showing whole phrases — only the bits you deliberately
+// bolded (via the Bold button on a phrase) come through as chips.
+function extractBoldSegments(text){
+  if(!text) return [];
+  const out = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let m;
+  while((m = re.exec(text)) !== null){
+    const seg = m[1].trim();
+    if(seg) out.push(seg);
+  }
+  return out;
+}
+
+function renderGcStarResults(){
+  const list = document.getElementById('gcStarResults');
+  if(!list) return;
+  const raw = (document.getElementById('gcStarSearch').value || '').trim();
+  const q = raw.toLowerCase();
+  const starred = state.bank.filter(p => p.starred);
+  if(!starred.length){
+    list.innerHTML = '<div class="empty">Star phrases in Phrase Bank to build from them here.</div>';
+    return;
+  }
+  // Only the bolded words/phrases within starred entries — not the whole
+  // phrase — so you assemble your own sentence from your own vocab rather
+  // than pasting in something you already wrote.
+  const segments = [];
+  const seen = new Set();
+  starred.forEach(p=>{
+    const haystack = ((p.en||'') + ' ' + (p.ar||'') + ' ' + (p.category||'')).toLowerCase();
+    [p.en, p.ar].forEach(field=>{
+      extractBoldSegments(field).forEach(seg=>{
+        const key = seg.toLowerCase();
+        if(seen.has(key)) return;
+        seen.add(key);
+        segments.push({ text: seg, category: p.category || '', haystack });
+      });
+    });
+  });
+  if(!segments.length){
+    list.innerHTML = '<div class="empty">No bolded words in your starred phrases yet. Open a starred entry in Phrase Bank, select the word or phrase you want here, and tap Bold.</div>';
+    return;
+  }
+  const matches = q ? segments.filter(s => s.text.toLowerCase().includes(q) || s.haystack.includes(q)) : segments;
+  if(!matches.length){
+    list.innerHTML = '<div class="empty">No bolded words match that search.</div>';
+    return;
+  }
+  list.innerHTML = matches.slice(0, 80).map(s=>{
+    const isAr = /[\u0600-\u06FF]/.test(s.text);
+    return `<span class="gc-chip" ${isAr ? 'dir="rtl"' : ''} data-gc-insert="${escapeHtml(s.text)}" title="${escapeHtml(s.category)}">${escapeHtml(s.text)}</span>`;
+  }).join('');
+}
+
+// Pulls the **bold**-marked words/phrases tied to one calendar date —
+// from phrases added to the bank that day, practice-log lines logged
+// that day, and grammar examples created that day — same bold-only rule
+// as the starred column above.
+function collectDateRelatedWords(dateStr){
+  const items = [];
+  const seen = new Set();
+  const add = (text, source) => {
+    extractBoldSegments(text).forEach(seg=>{
+      const key = seg.toLowerCase();
+      if(seen.has(key)) return;
+      seen.add(key);
+      items.push({ text: seg, source });
+    });
+  };
+  state.bank.forEach(p=>{
+    if((p.dateAdded||'').slice(0,10) === dateStr){
+      add(p.en, 'Bank');
+      add(p.ar, 'Bank');
+    }
+  });
+  state.log.forEach(l=>{
+    if(l.date === dateStr) add(l.phrase, 'Log');
+  });
+  state.grammar.forEach(g=>{
+    if((g.date_created||'') === dateStr){
+      add(g.title, 'Grammar');
+      (g.examples||[]).forEach(ex => add(ex.target, 'Grammar'));
+    }
+  });
+  return items;
+}
+
+function renderGcDateResults(){
+  const list = document.getElementById('gcDateResults');
+  if(!list) return;
+  const dateVal = document.getElementById('gcDateSearch').value;
+  if(!dateVal){
+    list.innerHTML = '<div class="empty">Pick a date to see bolded words and phrases from that day.</div>';
+    return;
+  }
+  const items = collectDateRelatedWords(dateVal);
+  if(!items.length){
+    list.innerHTML = '<div class="empty">No bolded words on that date — bold the key word or phrase in an entry from that day to have it show up here.</div>';
+    return;
+  }
+  list.innerHTML = items.slice(0, 80).map(it=>{
+    const isAr = /[\u0600-\u06FF]/.test(it.text);
+    return `<span class="gc-chip" ${isAr ? 'dir="rtl"' : ''} data-gc-insert="${escapeHtml(it.text)}" title="${escapeHtml(it.source)}">${escapeHtml(it.text)}</span>`;
+  }).join('');
+}
+
+document.getElementById('gcStarSearch').addEventListener('input', renderGcStarResults);
+document.getElementById('gcDateSearch').addEventListener('change', renderGcDateResults);
+document.addEventListener('click', (e)=>{
+  const insertText = e.target.dataset.gcInsert;
+  if(insertText !== undefined){
+    gcInsertText(insertText);
+  }
+});
 
 document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   const input = document.getElementById('gcInput').value.trim();
@@ -3733,31 +3986,9 @@ document.getElementById('quranRestoreBtn').addEventListener('click', async ()=>{
   if(state.quran.length > 0 && !confirm('This replaces your current Qur\'an log on this device (' + state.quran.length + ' entries) with whatever is in the sheet right now. Continue?')) return;
   statusEl.textContent = 'Restoring from sheet...';
   statusEl.className = 'status-msg';
-  try{
-    const res = await fetch(sheetGetUrl(url, { type: 'quran' }), { method: 'GET' });
-    const data = await res.json();
-    throwIfRejected(data);
-    const today = todayStr();
-    state.quran = data.map(q => ({
-      id: q.id || uid(),
-      reference: q.reference || '', arabic: q.arabic || '', translation: q.translation || '',
-      tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '',
-      altTranslation: '', altTafsirSource: '', altTafsirArabic: '',
-      note: q.note || '',
-      verified: q.verified === 'Yes' || q.verified === true,
-      verifiedAt: q.verifiedAt || null,
-      dateAdded: q.dateAdded || today,
-      starred: q.starred === 'Yes' || q.starred === true,
-      synced: true
-    }));
-    await saveQuran();
-    renderQuran();
-    statusEl.textContent = 'Restored ' + state.quran.length + ' Qur\'an entr' + (state.quran.length===1?'y':'ies') + ' from the sheet.';
-    statusEl.className = 'status-msg';
-  }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Restore failed. Check the Web App URL and deployment access.';
-    statusEl.className = 'status-msg err';
-  }
+  const r = await coreRestoreQuran();
+  statusEl.textContent = r.ok ? 'Restored ' + state.quran.length + ' Qur\'an entr' + (state.quran.length===1?'y':'ies') + ' from the sheet.' : r.message;
+  statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
 });
 
 document.getElementById('quranDownloadBtn').addEventListener('click', ()=>{
@@ -3972,6 +4203,8 @@ if('serviceWorker' in navigator){
   renderReview();
   renderGrammarList();
   renderQuran();
+  renderGcStarResults();
+  renderGcDateResults();
 
   if(!state.bank.length){
     state.bank = [
