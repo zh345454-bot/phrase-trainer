@@ -382,6 +382,13 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .gc-chip:hover{ background:var(--brass); color:#fff; }
 .gc-chip[dir=rtl]{ font-family:'Amiri',serif; font-size:14px; }
 .built-row{ min-height:34px; border:1px dashed var(--line); padding:6px; margin:8px 0; }
+.bold-row-wrap{ padding:10px 0; border-bottom:1px solid var(--line); }
+.bold-row-wrap:last-child{ border-bottom:none; }
+.bold-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.bold-chips{ display:flex; flex-wrap:wrap; gap:6px; flex:1; min-width:0; }
+.bold-chip{ display:inline-block; background:var(--teal-soft); color:var(--teal); border:1px solid var(--teal); padding:4px 10px; font-size:13.5px; font-weight:600; }
+.bold-chip[dir=rtl]{ font-family:'Amiri',serif; font-size:16px; }
+.bold-row-wrap .phrase-card{ margin-top:8px; border-bottom:none; padding-bottom:0; }
 
 .modal-backdrop{
   position:fixed; inset:0; background:rgba(23,38,42,0.55);
@@ -479,6 +486,15 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         <div class="field" style="max-width:220px;">
           <label>Category</label>
           <select id="bankCategoryFilter"><option value="">All categories</option></select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label>Bold words</label>
+          <select id="bankBoldFilter">
+            <option value="">All phrases</option>
+            <option value="any">Any bold word</option>
+            <option value="en">Bold in English</option>
+            <option value="ar">Bold in Arabic</option>
+          </select>
         </div>
       </div>
       <div class="count-note" id="bankCountNote"></div>
@@ -612,9 +628,20 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         <button class="primary" id="genPracticeBtn">Get phrases to practice</button>
       </div>
       <div class="status-msg" id="practiceModeNote"></div>
-      <div class="field" style="margin-bottom:12px; margin-top:8px;">
-        <label>Or search for a specific phrase</label>
-        <input type="text" id="practiceSearch" placeholder="Search English, Arabic, or category">
+      <div class="field-row" style="margin-bottom:12px; margin-top:8px;">
+        <div class="field">
+          <label>Or search for a specific phrase</label>
+          <input type="text" id="practiceSearch" placeholder="Search English, Arabic, or category">
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label>Bold words</label>
+          <select id="practiceBoldFilter">
+            <option value="">All phrases</option>
+            <option value="any">Any bold word</option>
+            <option value="en">Bold in English</option>
+            <option value="ar">Bold in Arabic</option>
+          </select>
+        </div>
       </div>
       <div id="practiceList"></div>
     </div>
@@ -1506,7 +1533,7 @@ document.addEventListener('click', async (e)=>{
   }
 });
 
-let bankFilter = { query: '', category: '' };
+let bankFilter = { query: '', category: '', bold: '' };
 let bankVisibleCount = 100;
 const BANK_PAGE_SIZE = 100;
 let practiceSet = []; // current list shown in the Practice tab
@@ -1640,8 +1667,15 @@ function wireBoldButton(boldBtnId, textareaId){
   });
 }
 
-function matchesFilter(p, query, category){
+function matchesFilter(p, query, category, boldFilter){
   if(category && p.category !== category) return false;
+  if(boldFilter){
+    const enBold = extractBoldSegments(p.en).length > 0;
+    const arBold = extractBoldSegments(p.ar).length > 0;
+    if(boldFilter === 'en' && !enBold) return false;
+    if(boldFilter === 'ar' && !arBold) return false;
+    if(boldFilter === 'any' && !enBold && !arBold) return false;
+  }
   if(!query) return true;
   const q = query.toLowerCase();
   return (p.en||'').toLowerCase().includes(q) || (p.ar||'').includes(query) || (p.category||'').toLowerCase().includes(q);
@@ -1907,10 +1941,44 @@ document.getElementById('starredUnstarSelectedBtn').addEventListener('click', as
   if(touchedGrammar) await saveGrammar();
   if(touchedQuran) await saveQuran();
   renderStarred();
-  if(touchedBank){ renderBank(); renderGcStarResults(); if(practiceSet && practiceSet.length) renderPracticeList(practiceSet); }
+  if(touchedBank){ renderBank(); renderGcStarResults(); if(practiceSet && practiceSet.length) renderPracticeCurrentView(); }
   if(touchedGrammar) renderGrammarList();
   if(touchedQuran) renderQuran();
 });
+
+// Phrase ids currently expanded to their full card in a "bold words only"
+// view — kept separate per section (Phrase Bank vs Practice & Log) so
+// expanding one doesn't affect the other.
+let bankExpandedIds = new Set();
+let practiceExpandedIds = new Set();
+
+// Compact row for a bold-filtered view: shows just the **bold** segment(s)
+// matching the active filter (not the whole phrase), plus a small toggle to
+// reveal the full phrase card — with whichever actions this section uses —
+// below it on demand. `opts.scope` keeps Bank and Practice expand state and
+// click handling separate even though they share this one renderer.
+function boldRowHtml(p, boldFilter, opts){
+  opts = opts || {};
+  const expandedIds = opts.expandedIds || bankExpandedIds;
+  const scope = opts.scope || 'bank';
+  const cardOpts = opts.cardOpts || { showDelete: true, showEdit: true };
+  const segs = [];
+  if(boldFilter === 'en' || boldFilter === 'any'){
+    extractBoldSegments(p.en).forEach(t => segs.push({ text: t, lang: 'en' }));
+  }
+  if(boldFilter === 'ar' || boldFilter === 'any'){
+    extractBoldSegments(p.ar).forEach(t => segs.push({ text: t, lang: 'ar' }));
+  }
+  const expanded = expandedIds.has(p.id);
+  const chipsHtml = segs.map(s => `<span class="bold-chip" ${s.lang==='ar'?'dir="rtl"':''}>${escapeHtml(s.text)}</span>`).join('');
+  return `
+    <div class="bold-row">
+      <div class="bold-chips">${chipsHtml}</div>
+      ${p.category ? `<span class="tag">${escapeHtml(p.category)}</span>` : ''}
+      <button class="ghost" data-toggle-bold="${p.id}" data-toggle-bold-scope="${scope}" type="button">${expanded ? '▲ Hide phrase' : '↗ View phrase'}</button>
+    </div>
+    ${expanded ? `<div class="phrase-card">${phraseCardHtml(p, cardOpts)}</div>` : ''}`;
+}
 
 function renderBank(){
   updateCategoryDropdowns();
@@ -1925,7 +1993,7 @@ function renderBank(){
     loadMoreRow.style.display = 'none';
     return;
   }
-  const matches = state.bank.filter(p => matchesFilter(p, bankFilter.query, bankFilter.category));
+  const matches = state.bank.filter(p => matchesFilter(p, bankFilter.query, bankFilter.category, bankFilter.bold));
   if(matches.length === 0){
     list.innerHTML = '<div class="empty">No phrases match that search.</div>';
     countNote.textContent = '0 of ' + state.bank.length + ' phrases';
@@ -1937,26 +2005,62 @@ function renderBank(){
   list.innerHTML = '';
   visible.forEach(p=>{
     const card = document.createElement('div');
-    card.className = 'phrase-card';
-    card.innerHTML = phraseCardHtml(p, { showDelete: true, showEdit: true });
+    if(bankFilter.bold){
+      card.className = 'bold-row-wrap';
+      card.innerHTML = boldRowHtml(p, bankFilter.bold, { expandedIds: bankExpandedIds, scope: 'bank', cardOpts: { showDelete: true, showEdit: true } });
+    } else {
+      card.className = 'phrase-card';
+      card.innerHTML = phraseCardHtml(p, { showDelete: true, showEdit: true });
+    }
     list.appendChild(card);
   });
   loadMoreRow.style.display = matches.length > visible.length ? 'block' : 'none';
 }
 
-function renderPracticeList(items){
+function renderPracticeList(items, boldFilter){
   const practiceList = document.getElementById('practiceList');
   if(!items || items.length === 0){
-    practiceList.innerHTML = '<div class="empty">No phrases to show yet — generate a practice set or search above.</div>';
+    practiceList.innerHTML = boldFilter
+      ? '<div class="empty">No bold words match this view yet.</div>'
+      : '<div class="empty">No phrases to show yet — generate a practice set or search above.</div>';
     return;
   }
   practiceList.innerHTML = '';
   items.forEach(p=>{
     const pCard = document.createElement('div');
-    pCard.className = 'phrase-card';
-    pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true, showEdit: true });
+    if(boldFilter){
+      pCard.className = 'bold-row-wrap';
+      pCard.innerHTML = boldRowHtml(p, boldFilter, {
+        expandedIds: practiceExpandedIds, scope: 'practice',
+        cardOpts: { showLog: true, showMeta: true, showQuickReview: true, showEdit: true }
+      });
+    } else {
+      pCard.className = 'phrase-card';
+      pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true, showEdit: true });
+    }
     practiceList.appendChild(pCard);
   });
+}
+
+// Recomputes what Practice & Log should show right now. With search text,
+// it's an ad-hoc lookup across the whole bank (still honouring the bold
+// filter, so it doubles as "find a specific bold phrase"). With no search
+// text, it shows the generated practice set itself — which "Get phrases to
+// practice" already restricts to bold-matching phrases when the bold filter
+// is set — filtered defensively here too, in case the dropdown was changed
+// since the set was last generated.
+function renderPracticeCurrentView(){
+  const searchBox = document.getElementById('practiceSearch');
+  const boldBox = document.getElementById('practiceBoldFilter');
+  const q = searchBox ? searchBox.value.trim() : '';
+  const bold = boldBox ? boldBox.value : '';
+  if(q){
+    const matches = state.bank.filter(p => matchesFilter(p, q, '', bold)).slice(0, 100);
+    renderPracticeList(matches, bold);
+  } else {
+    const items = bold ? practiceSet.filter(p => matchesFilter(p, '', '', bold)) : practiceSet;
+    renderPracticeList(items, bold);
+  }
 }
 
 document.getElementById('bankSearch').addEventListener('input', (e)=>{
@@ -1967,6 +2071,12 @@ document.getElementById('bankSearch').addEventListener('input', (e)=>{
 document.getElementById('bankCategoryFilter').addEventListener('change', (e)=>{
   bankFilter.category = e.target.value;
   bankVisibleCount = BANK_PAGE_SIZE;
+  renderBank();
+});
+document.getElementById('bankBoldFilter').addEventListener('change', (e)=>{
+  bankFilter.bold = e.target.value;
+  bankVisibleCount = BANK_PAGE_SIZE;
+  bankExpandedIds.clear();
   renderBank();
 });
 document.getElementById('reviewSearch').addEventListener('input', (e)=>{
@@ -2030,6 +2140,15 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
 });
 
 document.addEventListener('click', async (e)=>{
+  const toggleBoldId = e.target.dataset.toggleBold;
+  if(toggleBoldId){
+    const scope = e.target.dataset.toggleBoldScope || 'bank';
+    const expandedSet = scope === 'practice' ? practiceExpandedIds : bankExpandedIds;
+    if(expandedSet.has(toggleBoldId)) expandedSet.delete(toggleBoldId);
+    else expandedSet.add(toggleBoldId);
+    if(scope === 'practice') renderPracticeCurrentView(); else renderBank();
+    return;
+  }
   const speakId = e.target.dataset.speak;
   if(speakId){
     const p = state.bank.find(x=>x.id === e.target.dataset.id);
@@ -2055,7 +2174,7 @@ document.addEventListener('click', async (e)=>{
       renderBank();
       renderStarred();
       renderGcStarResults();
-      if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
+      if(practiceSet && practiceSet.length) renderPracticeCurrentView();
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
     }
     return;
@@ -2088,7 +2207,7 @@ document.addEventListener('click', async (e)=>{
       p.practiceCount = (p.practiceCount || 0) + 1;
       p.lastPracticed = todayStr();
       await saveBank();
-      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeList(practiceSet);
+      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeCurrentView();
     }
     return;
   }
@@ -2119,7 +2238,7 @@ document.addEventListener('click', async (e)=>{
       await saveBank();
       await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Quick review (from Practice) · rated ' + quickRateVal + '/5' + (p.category ? ' · ' + p.category : ''));
       document.getElementById('quickReviewModal').classList.remove('open');
-      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeList(practiceSet);
+      if(document.getElementById('view-practice').classList.contains('active')) renderPracticeCurrentView();
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
       renderDailyPlan();
     }
@@ -2152,7 +2271,7 @@ document.getElementById('saveEditPhrase').addEventListener('click', async ()=>{
   await saveBank();
   renderBank(); renderStarred();
   renderGcStarResults();
-  if(practiceSet && practiceSet.length) renderPracticeList(practiceSet);
+  if(practiceSet && practiceSet.length) renderPracticeCurrentView();
   document.getElementById('editPhraseModal').classList.remove('open');
 });
 
@@ -2206,11 +2325,13 @@ document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
   const category = document.getElementById('practiceCategoryFilter').value;
   const mode = document.getElementById('practiceMode').value;
   const count = parseInt(document.getElementById('practiceCount').value, 10);
+  const bold = document.getElementById('practiceBoldFilter').value;
   document.getElementById('practiceSearch').value = '';
+  practiceExpandedIds.clear();
 
   state.bank.forEach(ensureSrs);
   const today = todayStr();
-  const pool = state.bank.filter(p => !category || p.category === category);
+  const pool = state.bank.filter(p => matchesFilter(p, '', category, bold));
 
   const isNew  = p => (p.practiceCount || 0) === 0 && p.srs.reps === 0 && p.srs.station === 1;
   const isDue  = p => p.srs.nextReview <= today;
@@ -2257,15 +2378,19 @@ document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
 
   lastPracticeSetIds = new Set(selected.map(p=>p.id));
   practiceSet = selected;
-  renderPracticeList(practiceSet);
+  renderPracticeCurrentView();
 
   const noteEl = document.getElementById('practiceModeNote');
+  const boldLabel = bold === 'en' ? 'bold in English' : bold === 'ar' ? 'bold in Arabic' : bold === 'any' ? 'any bold word' : '';
   if(selected.length === 0){
-    noteEl.textContent = 'Nothing matched this focus — try a different one, widen the category, or raise the new/day cap.';
+    noteEl.textContent = boldLabel
+      ? `Nothing matched this focus with ${boldLabel} — try a different bold filter, focus, or widen the category.`
+      : 'Nothing matched this focus — try a different one, widen the category, or raise the new/day cap.';
   } else {
     const dueCount = pool.filter(isDue).length;
     const weakCount = pool.filter(isWeak).length;
-    noteEl.textContent = `${selected.length} phrase${selected.length===1?'':'s'} in this set · ${dueCount} due overall · ${weakCount} weak spot${weakCount===1?'':'s'} in bank · ${getNewIntroTodayCount()}/${state.settings.newPerDayCap||0} new phrases introduced today.`;
+    const poolLabel = boldLabel ? `matching pool (${boldLabel})` : 'bank';
+    noteEl.textContent = `${selected.length} phrase${selected.length===1?'':'s'} in this set · ${dueCount} due overall · ${weakCount} weak spot${weakCount===1?'':'s'} in ${poolLabel} · ${getNewIntroTodayCount()}/${state.settings.newPerDayCap||0} new phrases introduced today.`;
   }
 });
 document.getElementById('newPerDayCapInput').addEventListener('change', async (e)=>{
@@ -2274,11 +2399,13 @@ document.getElementById('newPerDayCapInput').addEventListener('change', async (e
   e.target.value = state.settings.newPerDayCap;
   await saveSettings();
 });
-document.getElementById('practiceSearch').addEventListener('input', (e)=>{
-  const q = e.target.value.trim();
-  if(!q){ renderPracticeList(practiceSet); return; }
-  const matches = state.bank.filter(p => matchesFilter(p, q, '')).slice(0, 100);
-  renderPracticeList(matches);
+document.getElementById('practiceSearch').addEventListener('input', ()=>{
+  practiceExpandedIds.clear();
+  renderPracticeCurrentView();
+});
+document.getElementById('practiceBoldFilter').addEventListener('change', ()=>{
+  practiceExpandedIds.clear();
+  renderPracticeCurrentView();
 });
 
 // ---------- Quick practice ----------
@@ -3263,6 +3390,10 @@ async function googleSearchFallback(query){
 // the browser garbage-collects it. That's strictly safer than storing and
 // deleting daily: there's nothing to leak and no cleanup job to fail.
 let vpRecorder = null, vpChunks = [], vpTimerInt = null, vpStartedAt = 0;
+// Holds whatever the person has picked, from this recording's transcript and
+// translations, to save into the bilingual phrase bank as one entry. Reset
+// whenever a fresh recording comes in or the transcript is discarded.
+let vpBankDraft = { en: '', ar: '' };
 let vpLastTranscript = null;
 
 // Language metadata for Voice practice. "ai" is the name handed to the AI
@@ -3643,6 +3774,7 @@ async function vpTranscribe(blob){
       return;
     }
     vpLastTranscript = { text: data.text, lang };
+    vpBankDraft = { en: '', ar: '' };
     countTask('voicePractice'); // one finished recording = one turn (empty / failed ones don't count)
     vpRenderTranscript();
     vpRenderModelPanel(lang);
@@ -3718,6 +3850,7 @@ function vpShowTranslation(key, lang, fromLang, r){
       <button class="ghost" data-act="stop" type="button">■ Stop</button>
       <button class="icon wide" data-act="copy" type="button">⧉ Copy</button>
       <button class="ghost" data-act="say" type="button" title="Load this into the script box, switch to ${L.label}, and record yourself saying it">🎙 Say this next</button>
+      ${(lang==='en'||lang==='ar') ? `<button class="ghost" data-act="use-${lang}" type="button" title="Use this text as the ${L.label} side of a phrase bank entry">Use as ${L.label} version →</button>` : ''}
     </div>
     <div class="card-actions" style="margin-top:6px; flex-wrap:wrap; align-items:center;">
       <span class="due-meta">Translate this onward:</span>
@@ -3738,6 +3871,8 @@ function vpShowTranslation(key, lang, fromLang, r){
       else if(act === 'copy') copyText(ta.value, b);
       else if(act === 'say') vpUseAsScript(lang, ta.value.trim());
       else if(act === 'onward') vpTranslate({ parentKey: key, fromLang: lang, getText: () => ta.value, toLang: b.dataset.to, btn: b });
+      else if(act === 'use-en') vpSetBankDraft('en', ta.value);
+      else if(act === 'use-ar') vpSetBankDraft('ar', ta.value);
     });
   }
 }
@@ -3753,6 +3888,66 @@ function vpUseAsScript(lang, text){
   vpRenderModelPanel(lang);
   vpSetStatus(`Hear it a few times and read it aloud, then record yourself saying it in ${VP_LANGS[lang].label}. The script comes back after you record so you can compare.`);
   document.getElementById('vpModelPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Sets one side (en/ar) of the pending phrase-bank draft from whatever text
+// the person just tagged — the raw transcript or any translation card — and
+// redraws the draft panel so both sides build up as separate actions.
+function vpSetBankDraft(lang, text){
+  const clean = (text || '').trim();
+  if(!clean) return;
+  vpBankDraft[lang] = clean;
+  vpRenderBankDraftPanel();
+}
+
+function vpClearBankDraft(){
+  vpBankDraft = { en: '', ar: '' };
+  vpRenderBankDraftPanel();
+}
+
+async function vpSaveBankDraft(){
+  const en = (vpBankDraft.en || '').trim();
+  const ar = (vpBankDraft.ar || '').trim();
+  if(!en && !ar) return;
+  if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
+  state.bank.unshift({ id: uid(), en, ar, category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false });
+  await saveBank();
+  renderBank(); renderStarred();
+  countTask('addPhrase');
+  vpBankDraft = { en: '', ar: '' };
+  vpRenderBankDraftPanel(true);
+}
+
+function vpRenderBankDraftPanel(justSaved){
+  const host = document.getElementById('vpBankDraftPanel');
+  if(!host) return; // a new recording replaced this transcript while we waited
+  const en = vpBankDraft.en, ar = vpBankDraft.ar;
+  const hasAny = en || ar;
+  const sideHtml = (label, val, rtl) => `
+    <div style="flex:1; min-width:180px;">
+      <div class="due-meta" style="font-weight:600;">${label}</div>
+      ${val
+        ? `<div class="${rtl?'phrase-ar':'phrase-en'}" ${rtl?'dir="rtl"':''} style="margin-top:2px;">${escapeHtml(val)}</div>`
+        : `<div class="count-note" style="margin-top:2px;">Not set yet — click "Use as ${label} version" above on the transcript or a translation.</div>`}
+    </div>`;
+  host.innerHTML = `
+    <div class="due-card" style="border-left:3px solid var(--brass);">
+      <div class="due-meta" style="font-weight:600;">📥 Phrase bank entry (from this recording)</div>
+      <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
+        ${sideHtml('English', en, false)}
+        ${sideHtml('Arabic', ar, true)}
+      </div>
+      <div class="card-actions" style="margin-top:10px; flex-wrap:wrap;">
+        <button class="primary" id="vpSaveBankDraftBtn" ${hasAny ? '' : 'disabled'}>Save to phrase bank</button>
+        <button class="ghost" id="vpClearBankDraftBtn" ${hasAny ? '' : 'disabled'}>Clear</button>
+      </div>
+      ${justSaved ? '<div class="count-note" style="margin-top:6px;">Saved ✓ — pick more text above to start another entry.</div>' : ''}
+      ${(!hasAny && !justSaved) ? '<div class="count-note" style="margin-top:6px;">One side is enough to save, but tag both the transcript and a translation to save a complete bilingual entry.</div>' : ''}
+    </div>`;
+  const saveBtn = document.getElementById('vpSaveBankDraftBtn');
+  if(saveBtn) saveBtn.addEventListener('click', vpSaveBankDraft);
+  const clearBtn = document.getElementById('vpClearBankDraftBtn');
+  if(clearBtn) clearBtn.addEventListener('click', vpClearBankDraft);
 }
 
 function vpRenderTranscript(){
@@ -3776,6 +3971,7 @@ function vpRenderTranscript(){
         <button class="icon wide" id="vpCopyBtn" title="Copy transcript">⧉ Copy</button>
         ${isMs ? '' : '<button class="ghost" id="vpSendToGcBtn">Send to Grammar check</button>'}
         ${isMs ? '' : '<button class="ghost" id="vpGoogleBtn" type="button" title="Search Google for this text — works without AI">Search Google ↗</button>'}
+        ${(t.lang==='en'||t.lang==='ar') ? `<button class="ghost" data-vp-use="${t.lang}" data-vp-use-source="transcript" type="button">Use as ${L.label} version →</button>` : ''}
         <button class="ghost" id="vpDiscardBtn">Discard</button>
       </div>
       <div style="margin-top:14px;">
@@ -3783,17 +3979,24 @@ function vpRenderTranscript(){
         <div class="card-actions" style="margin-top:6px; flex-wrap:wrap;">
           ${targets.map(l => `<button class="${isMs ? 'primary' : 'ghost'}" data-vp-src-tr="${l}" type="button">→ ${VP_LANGS[l].label}</button>`).join('')}
         </div>
-        <div class="count-note" style="margin-top:6px;">Each translation can be translated onward into the third language, or loaded as a script to say aloud next.</div>
+        <div class="count-note" style="margin-top:6px;">Each translation can be translated onward into the third language, or loaded as a script to say aloud next. ${isMs ? 'Translate into English and/or Arabic to build a phrase bank entry below.' : `Translate into ${VP_LANGS[targets.find(l=>l!=='ms')||targets[0]].label} to fill out both sides of a phrase bank entry below.`}</div>
         <div id="vpTransStatus"></div>
         <div id="vpTranslations"></div>
       </div>
+      <div id="vpBankDraftPanel" style="margin-top:14px;"></div>
       <div id="vpCritique" style="margin-top:12px;"></div>
     </div>`;
   document.getElementById('vpCopyBtn').addEventListener('click', (ev)=> copyText(document.getElementById('vpTranscriptBox').value, ev.target));
   document.getElementById('vpDiscardBtn').addEventListener('click', ()=>{
     vpLastTranscript = null;
+    vpBankDraft = { en: '', ar: '' };
     document.getElementById('vpResult').innerHTML = '';
   });
+  const vpUseBtn = document.querySelector('[data-vp-use][data-vp-use-source="transcript"]');
+  if(vpUseBtn) vpUseBtn.addEventListener('click', ()=>{
+    vpSetBankDraft(vpUseBtn.dataset.vpUse, document.getElementById('vpTranscriptBox').value);
+  });
+  vpRenderBankDraftPanel();
   document.querySelectorAll('[data-vp-src-tr]').forEach(b => b.addEventListener('click', ()=>{
     vpTranslate({ parentKey: 'src', fromLang: t.lang, getText: () => document.getElementById('vpTranscriptBox').value, toLang: b.dataset.vpSrcTr, btn: b });
   }));
