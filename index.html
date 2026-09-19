@@ -4283,6 +4283,70 @@ function normalizeCategorySuggestion(suggested){
 
 let freshGrammarResult = null;
 
+// Same "tag text, then save both sides together" pattern as Voice practice's
+// phrase-bank draft (see vpBankDraft) — here for Grammar check, where the
+// corrected box and its translation box are already exactly English/Arabic,
+// so there's no third language to worry about. Reset whenever a fresh check
+// runs, so a leftover draft from a previous check can't get mixed in.
+let gcBankDraft = { en: '', ar: '' };
+
+function gcSetBankDraft(lang, text){
+  const clean = (text || '').trim();
+  if(!clean) return;
+  gcBankDraft[lang] = clean;
+  gcRenderBankDraftPanel();
+}
+
+function gcClearBankDraft(){
+  gcBankDraft = { en: '', ar: '' };
+  gcRenderBankDraftPanel();
+}
+
+async function gcSaveBankDraft(){
+  const en = (gcBankDraft.en || '').trim();
+  const ar = (gcBankDraft.ar || '').trim();
+  if(!en && !ar) return;
+  if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
+  state.bank.unshift({ id: uid(), en, ar, category: 'Grammar check', practiceCount: 0, lastPracticed: null, starred: false });
+  await saveBank();
+  renderBank(); renderStarred();
+  countTask('addPhrase');
+  gcBankDraft = { en: '', ar: '' };
+  gcRenderBankDraftPanel(true);
+}
+
+function gcRenderBankDraftPanel(justSaved){
+  const host = document.getElementById('gcBankDraftPanel');
+  if(!host) return; // a new check replaced this result while we waited
+  const en = gcBankDraft.en, ar = gcBankDraft.ar;
+  const hasAny = en || ar;
+  const sideHtml = (label, val, rtl) => `
+    <div style="flex:1; min-width:180px;">
+      <div class="due-meta" style="font-weight:600;">${label}</div>
+      ${val
+        ? `<div class="${rtl?'phrase-ar':'phrase-en'}" ${rtl?'dir="rtl"':''} style="margin-top:2px;">${escapeHtml(val)}</div>`
+        : `<div class="count-note" style="margin-top:2px;">Not set yet — click "Use as ${label} version" above on the corrected text or its translation.</div>`}
+    </div>`;
+  host.innerHTML = `
+    <div class="due-card" style="border-left:3px solid var(--brass);">
+      <div class="due-meta" style="font-weight:600;">📥 Phrase bank entry (from this check)</div>
+      <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
+        ${sideHtml('English', en, false)}
+        ${sideHtml('Arabic', ar, true)}
+      </div>
+      <div class="card-actions" style="margin-top:10px; flex-wrap:wrap;">
+        <button class="primary" id="gcSaveBankDraftBtn" ${hasAny ? '' : 'disabled'}>Save to phrase bank</button>
+        <button class="ghost" id="gcClearBankDraftBtn" ${hasAny ? '' : 'disabled'}>Clear</button>
+      </div>
+      ${justSaved ? '<div class="count-note" style="margin-top:6px;">Saved ✓ — tag more text above to start another entry.</div>' : ''}
+      ${(!hasAny && !justSaved) ? '<div class="count-note" style="margin-top:6px;">One side is enough to save, but tag both the corrected text and its translation to save a complete bilingual entry.</div>' : ''}
+    </div>`;
+  const saveBtn = document.getElementById('gcSaveBankDraftBtn');
+  if(saveBtn) saveBtn.addEventListener('click', gcSaveBankDraft);
+  const clearBtn = document.getElementById('gcClearBankDraftBtn');
+  if(clearBtn) clearBtn.addEventListener('click', gcClearBankDraft);
+}
+
 async function translateGrammarText(text, fromLang){
   const toLang = fromLang === 'Arabic' ? 'English' : 'Arabic';
   const system = `Translate the given ${fromLang} text into natural, clear ${toLang}.${toLang === 'Arabic' ? ' Include full tashkeel (diacritics).' : ''} Respond with ONLY the ${toLang} translation - no explanation, no quotation marks, nothing else.`;
@@ -4448,6 +4512,8 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   try{
     const result = await checkGrammar(input, lang);
     freshGrammarResult = { corrected: result.corrected || '', translation: '' };
+    gcBankDraft = { en: '', ar: '' };
+    const langCode = lang === 'Arabic' ? 'ar' : 'en';
     const notesHtml = (result.notes && result.notes.length)
       ? '<ul class="grammar-notes">' + result.notes.map(n =>
           `<li><s>${escapeHtml(n.original||'')}</s> → <strong>${escapeHtml(n.fixed||'')}</strong><br><span class="due-meta">${escapeHtml(n.explanation||'')}</span></li>`
@@ -4459,13 +4525,15 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
           <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="gcBoldBtn" type="button">Bold</button></div>
           <textarea id="gcCorrectedBox" class="${lang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${lang==='Arabic'?'rtl':'ltr'}" style="min-height:60px; width:100%;">${escapeHtml(result.corrected||'')}</textarea>
         </div>
-        <div class="card-actions" style="margin-top:8px;">
+        <div class="card-actions" style="margin-top:8px; flex-wrap:wrap;">
           <button class="icon" id="gcSpeakBtn">${lang==='Arabic'?'AR':'EN'}</button>
           <button class="icon wide" id="gcCopyBtn" title="Copy corrected text">⧉ Copy</button>
           <button class="ghost" id="gcTranslateBtn" title="Translate this to ${otherLang}">→ ${otherLang}</button>
           <button class="ghost" id="gcSaveBtn">Save as grammar entry</button>
+          <button class="ghost" id="gcUseBtn" title="Use this text as the ${lang} side of a phrase bank entry">Use as ${lang} version →</button>
         </div>
       </div>
+      <div id="gcBankDraftPanel" style="margin-top:12px;"></div>
       ${notesHtml}
       ${result._via ? aiViaNote(result._via) : ''}`;
     wireBoldButton('gcBoldBtn', 'gcCorrectedBox');
@@ -4475,6 +4543,10 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
     document.getElementById('gcCopyBtn').addEventListener('click', (ev)=>{
       copyText(stripBold(document.getElementById('gcCorrectedBox').value), ev.target);
     });
+    document.getElementById('gcUseBtn').addEventListener('click', ()=>{
+      gcSetBankDraft(langCode, document.getElementById('gcCorrectedBox').value);
+    });
+    gcRenderBankDraftPanel();
     document.getElementById('gcTranslateBtn').addEventListener('click', async ()=>{
       const tBtn = document.getElementById('gcTranslateBtn');
       tBtn.disabled = true;
@@ -4486,10 +4558,16 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
         const wrap = document.createElement('div');
         wrap.style.marginTop = '10px';
         wrap.innerHTML = `
-          <div class="card-actions" style="margin-bottom:4px;"><button class="ghost" id="gcTransBoldBtn" type="button">Bold</button></div>
+          <div class="card-actions" style="margin-bottom:4px; flex-wrap:wrap;">
+            <button class="ghost" id="gcTransBoldBtn" type="button">Bold</button>
+            <button class="ghost" id="gcTransUseBtn" type="button" title="Use this text as the ${otherLang} side of a phrase bank entry">Use as ${otherLang} version →</button>
+          </div>
           <textarea id="gcTranslationBox" class="${otherLang==='Arabic' ? 'phrase-ar' : 'phrase-en'}" dir="${otherLang==='Arabic'?'rtl':'ltr'}" style="min-height:60px; width:100%;">${escapeHtml(translation)}</textarea>`;
         document.getElementById('gcResultTexts').appendChild(wrap);
         wireBoldButton('gcTransBoldBtn', 'gcTranslationBox');
+        document.getElementById('gcTransUseBtn').addEventListener('click', ()=>{
+          gcSetBankDraft(otherLang === 'Arabic' ? 'ar' : 'en', document.getElementById('gcTranslationBox').value);
+        });
         tBtn.remove();
       }catch(err){
         tBtn.disabled = false;
