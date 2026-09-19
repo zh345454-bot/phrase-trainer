@@ -899,7 +899,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="count-note" id="quranCountNote"></div>
       <div id="quranList"></div>
       <div class="card-actions" style="margin-top:12px;">
-        <button class="ghost" id="quranSyncBtn">Sync Qur'an log to Google Sheet</button>
+        <button class="ghost" id="quranSyncBtn">Backup Qur'an log to Sheet</button>
         <button class="ghost" id="quranRestoreBtn">Restore Qur'an log from Sheet</button>
         <button class="ghost" id="quranDownloadBtn">Download Qur'an log only</button>
       </div>
@@ -2522,10 +2522,19 @@ function getGeminiUsageBySlot(){
 
 async function addLogEntry(text, lang, category){
   const date = todayStr();
-  // No id here: log rows are matched by object reference when marking them
-  // synced (see coreSyncLog), never looked up by id, so it was dead weight
-  // on every single row.
-  state.log.unshift({ date, time: timeStr(), lang, category, phrase: text, synced: false });
+  // Upsert by (date, lang, category, phrase): logging the exact same thing
+  // again today — e.g. clicking "Log EN" more than once, or a double-tap —
+  // bumps this row's count instead of creating another diary row. The count
+  // column is what actually reflects "how many times", the row count no
+  // longer does.
+  const existing = state.log.find(l => l.date === date && l.lang === lang && l.category === category && l.phrase === text);
+  if(existing){
+    existing.count = (existing.count || 1) + 1;
+    existing.time = timeStr();
+    existing.synced = false; // count changed since it was last synced
+  } else {
+    state.log.unshift({ date, time: timeStr(), lang, category, phrase: text, count: 1, synced: false });
+  }
   if(!state.practicedDates.includes(date)) state.practicedDates.push(date);
   await saveLog();
   renderSession();
@@ -2556,7 +2565,7 @@ function renderSession(){
     const row = document.createElement('div');
     row.className = 'log-row';
     row.innerHTML = `
-      <span>${l.time} · ${l.lang.toUpperCase()} · ${escapeHtml(l.phrase)}${l.category ? ' <span class="tag">'+escapeHtml(l.category)+'</span>' : ''}</span>
+      <span>${l.time} · ${l.lang.toUpperCase()} · ${escapeHtml(l.phrase)}${l.count > 1 ? ' <span class="tag">×'+l.count+'</span>' : ''}${l.category ? ' <span class="tag">'+escapeHtml(l.category)+'</span>' : ''}</span>
       <span class="badge ${l.synced ? 'synced' : 'pending'}">${l.synced ? 'Synced' : 'Pending'}</span>`;
     container.appendChild(row);
   });
@@ -2622,7 +2631,7 @@ async function coreSyncLog(){
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ date: entry.date, time: entry.time, lang: entry.lang, category: entry.category, phrase: entry.phrase })
+        body: sheetPostBody({ date: entry.date, time: entry.time, lang: entry.lang, category: entry.category, phrase: entry.phrase, count: entry.count || 1 })
       });
       throwIfRejected(await res.json());
       entry.synced = true;
@@ -2752,7 +2761,14 @@ async function coreBackupGrammar(){
 // confirmUnverified: when true, prompts before sending entries you haven't
 // ticked "I've verified this" on. Kept for both paths — the whole point of
 // that gate is that it shouldn't be bypassable by using a different button.
-async function coreSyncQuran(confirmUnverified){
+// Mirrors coreBackupBank/coreBackupGrammar above (full overwrite each time)
+// rather than appending one row per entry forever — the Qur'an log used to
+// grow a sheet row per saved entry the same way the practice Log does; it
+// doesn't need to, since (like Bank/Grammar) it's a notebook you edit in
+// place, not a diary of one-off events. The per-entry "synced"/"pending"
+// flag stays, purely so the Qur'an list can still show you which entries
+// have local changes not yet backed up.
+async function coreBackupQuran(confirmUnverified){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   const pending = state.quran.filter(q=>!q.synced);
@@ -2761,30 +2777,33 @@ async function coreSyncQuran(confirmUnverified){
     const unverifiedPending = pending.filter(q=>!q.verified);
     if(unverifiedPending.length > 0){
       const proceed = confirm(
-        unverifiedPending.length + ' of ' + pending.length + ' Qur\'an entr' + (pending.length===1?'y is':'ies are') + ' pending sync ' +
+        unverifiedPending.length + ' of ' + pending.length + ' Qur\'an entr' + (pending.length===1?'y is':'ies are') + ' pending backup ' +
         "haven't been verified yet (you haven't tapped \"✓ I've verified this\" on them). " +
-        'They\'ll still sync with "Verified: No" in the sheet so you don\'t lose the entry — but the translation itself hasn\'t been double-checked. ' +
-        'Sync anyway? Cancel to go verify them first.'
+        'They\'ll still be backed up with "Verified: No" in the sheet so you don\'t lose the entry — but the translation itself hasn\'t been double-checked. ' +
+        'Back up anyway? Cancel to go verify them first.'
       );
       if(!proceed) return { ok: true, skipped: true, message: 'Qur\'an log: skipped (verify the flagged entries first).' };
     }
   }
-  let failed = 0, lastErr = '';
-  for(const q of pending){
-    try{
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: sheetPostBody({ type: 'quran_log', id: q.id, reference: q.reference, arabic: q.arabic, translation: q.translation, tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '', note: q.note, verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '', dateAdded: q.dateAdded, starred: q.starred ? 'Yes' : '', starredAt: q.starredAt || '' })
-      });
-      throwIfRejected(await res.json());
-      q.synced = true;
-    }catch(err){ failed++; lastErr = err.message || ''; }
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'quran_sync', entries: state.quran.map(q => ({
+        id: q.id, reference: q.reference || '', arabic: q.arabic || '', translation: q.translation || '',
+        tafsirSource: q.tafsirSource || '', tafsirArabic: q.tafsirArabic || '',
+        note: q.note || '', verified: q.verified ? 'Yes' : 'No', verifiedAt: q.verifiedAt || '',
+        dateAdded: q.dateAdded || '', starred: q.starred ? 'Yes' : '', starredAt: q.starredAt || ''
+      })) })
+    });
+    throwIfRejected(await res.json());
+    state.quran.forEach(q => { q.synced = true; });
+    await saveQuran();
+    renderQuran();
+    return { ok: true, message: 'Qur\'an log: ' + state.quran.length + ' entr' + (state.quran.length===1?'y':'ies') + ' backed up.' };
+  }catch(err){
+    return { ok: false, message: 'Qur\'an log: backup failed' + (err && err.message ? ' (' + err.message + ')' : '') + '.' };
   }
-  await saveQuran();
-  renderQuran();
-  if(failed === 0) return { ok: true, message: 'Qur\'an log: ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + ' synced.' };
-  return { ok: false, message: 'Qur\'an log: ' + failed + ' entr' + (failed===1?'y':'ies') + ' failed' + (lastErr ? ' (' + lastErr + ')' : '') + '.' };
 }
 
 // Pull-down counterparts to the three backup functions above. No confirm()
@@ -2923,8 +2942,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreBackupBank());
   statusEl.textContent = 'Backing up grammar notebook...';
   results.push(await coreBackupGrammar());
-  statusEl.textContent = 'Syncing Qur\'an log...';
-  results.push(await coreSyncQuran(true));
+  statusEl.textContent = 'Backing up Qur\'an log...';
+  results.push(await coreBackupQuran(true));
   statusEl.textContent = 'Syncing drill progress...';
   results.push(await coreSyncDrills());
 
@@ -3130,12 +3149,13 @@ function renderHistory(entries){
     statsRow.innerHTML = '';
     return;
   }
-  const enCount = entries.filter(e=>e.lang === 'en').length;
-  const arCount = entries.filter(e=>e.lang === 'ar').length;
+  const enCount = entries.filter(e=>e.lang === 'en').reduce((sum, e) => sum + (Number(e.count) || 1), 0);
+  const arCount = entries.filter(e=>e.lang === 'ar').reduce((sum, e) => sum + (Number(e.count) || 1), 0);
+  const totalLogged = entries.reduce((sum, e) => sum + (Number(e.count) || 1), 0);
   const days = new Set(entries.map(e=>e.date)).size;
   const streak = getStreakInfo(entries);
   statsRow.innerHTML = `
-    <div class="stat"><div class="num">${entries.length}</div><div class="lbl">Total logged</div></div>
+    <div class="stat"><div class="num">${totalLogged}</div><div class="lbl">Total logged</div></div>
     <div class="stat"><div class="num">${enCount}</div><div class="lbl">English</div></div>
     <div class="stat"><div class="num">${arCount}</div><div class="lbl">Arabic</div></div>
     <div class="stat"><div class="num">${days}</div><div class="lbl">Days practiced</div></div>
@@ -3145,7 +3165,7 @@ function renderHistory(entries){
   entries.slice().reverse().forEach(e=>{
     const row = document.createElement('div');
     row.className = 'log-row';
-    row.innerHTML = `<span>${escapeHtml(e.date)} ${escapeHtml(e.time||'')} · ${(e.lang||'').toUpperCase()} · ${escapeHtml(e.phrase)}${e.category ? ' <span class="tag">'+escapeHtml(e.category)+'</span>' : ''}</span>`;
+    row.innerHTML = `<span>${escapeHtml(e.date)} ${escapeHtml(e.time||'')} · ${(e.lang||'').toUpperCase()} · ${escapeHtml(e.phrase)}${e.count > 1 ? ' <span class="tag">×'+e.count+'</span>' : ''}${e.category ? ' <span class="tag">'+escapeHtml(e.category)+'</span>' : ''}</span>`;
     list.appendChild(row);
   });
 }
@@ -5332,9 +5352,9 @@ document.getElementById('quranSyncBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('quranSyncStatus');
   const btn = document.getElementById('quranSyncBtn');
   btn.disabled = true;
-  statusEl.textContent = 'Syncing...';
+  statusEl.textContent = 'Backing up...';
   statusEl.className = 'status-msg';
-  const r = await coreSyncQuran(true);
+  const r = await coreBackupQuran(true);
   statusEl.textContent = r.message;
   statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
   btn.disabled = false;
