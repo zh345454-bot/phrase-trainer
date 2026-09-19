@@ -1072,7 +1072,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
+let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -1090,6 +1090,9 @@ function lsSet(key, value){
 async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
+  state.practicedDates = lsGet('practicedDates', []);
+  pruneOldLogEntries(); // trims already-synced rows older than the retention window; safe on every load since the full history stays in the Sheet (Pull anytime) and streaks are read from practicedDates, not the raw rows
+  await saveLog();
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -1105,9 +1108,47 @@ async function loadState(){
   if(state.settings.newPerDayCap === undefined) state.settings.newPerDayCap = 15;
 }
 async function saveBank(){ lsSet('bank', state.bank); }
-async function saveLog(){ lsSet('log', state.log); }
+async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); }
 async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
+
+// ---------- Keeping the local practice log from growing forever ----------
+// The Log sheet (Google Sheets) is the permanent, complete history — it's
+// appended to, never trimmed, and the full record is always retrievable any
+// time via the "Pull" button (Settings → History). Locally, though, every
+// logged phrase (voice practice, grammar checks, reviews...) was being kept
+// in localStorage forever, which only ever grows and serves no purpose once
+// a row is safely synced — the sheet already has it. Two changes fix that
+// without losing anything the app currently uses the log for:
+//  1. Streaks are computed from `state.practicedDates` (a tiny, permanent
+//     list of just the distinct days you've logged something), not from the
+//     raw rows — so trimming old rows never costs you streak accuracy.
+//  2. Only rows that are BOTH already synced AND older than the retention
+//     window are dropped locally; anything not yet synced is kept
+//     regardless of age, so nothing pending ever gets lost.
+// The one real trade-off: "search bold words logged on a specific date"
+// (Grammar check tab) only searches rows still held locally, so a date
+// older than the window won't turn up Log-sourced results there anymore
+// (Bank and Grammar sources are unaffected). 90 days keeps several months
+// of that fully working; raise LOG_RETENTION_DAYS if you want more.
+const LOG_RETENTION_DAYS = 90;
+
+function mergePracticedDates(){
+  const set = new Set(state.practicedDates || []);
+  state.log.forEach(l => { if(l.date) set.add(l.date); });
+  state.practicedDates = Array.from(set).sort();
+}
+
+function getAllPracticedDateObjs(){
+  mergePracticedDates();
+  return state.practicedDates.map(d => ({ date: d }));
+}
+
+function pruneOldLogEntries(){
+  mergePracticedDates(); // capture every date into the permanent record before any rows built from it are dropped
+  const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86400000).toISOString().slice(0, 10);
+  state.log = state.log.filter(l => !l.synced || (l.date || '9999-99-99') >= cutoff);
+}
 
 // ---------- Speech ----------
 let voicesReady = false;
@@ -2480,7 +2521,12 @@ function getGeminiUsageBySlot(){
 // per-phrase, due-gated progress is counted.)
 
 async function addLogEntry(text, lang, category){
-  state.log.unshift({ id: uid(), date: todayStr(), time: timeStr(), lang, category, phrase: text, synced: false });
+  const date = todayStr();
+  // No id here: log rows are matched by object reference when marking them
+  // synced (see coreSyncLog), never looked up by id, so it was dead weight
+  // on every single row.
+  state.log.unshift({ date, time: timeStr(), lang, category, phrase: text, synced: false });
+  if(!state.practicedDates.includes(date)) state.practicedDates.push(date);
   await saveLog();
   renderSession();
 }
@@ -2491,7 +2537,7 @@ function renderSession(){
   const container = document.getElementById('sessionList');
   const streakNote = document.getElementById('streakNote');
   if(streakNote){
-    const streak = getStreakInfo(state.log);
+    const streak = getStreakInfo(getAllPracticedDateObjs());
     if(streak.current > 0){
       streakNote.textContent = `🔥 ${streak.current}-day streak` + (streak.practicedToday ? '' : ' — practice today to keep it going') + ` (longest: ${streak.longest})`;
     } else if(state.log.length > 0){
@@ -2585,6 +2631,7 @@ async function coreSyncLog(){
       lastErr = err.message || '';
     }
   }
+  pruneOldLogEntries(); // now that any newly-synced rows are marked, drop whatever's eligible
   await saveLog();
   renderSession();
   if(failed === 0) return { ok: true, message: 'Practice log: ' + pending.length + ' entr' + (pending.length===1?'y':'ies') + ' synced.' };
@@ -2969,6 +3016,7 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     version: 1,
     bank: state.bank,
     log: state.log,
+    practicedDates: state.practicedDates,
     grammar: state.grammar,
     quran: state.quran
   };
@@ -3002,6 +3050,8 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     if(!confirm(`This replaces your ${sectionsPresent.join(', ')} on this device with the contents of this file (${summary}), from ${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'an unknown date'}. Continue?`)) return;
     if(Array.isArray(payload.bank)) state.bank = payload.bank;
     if(Array.isArray(payload.log)) state.log = payload.log;
+    if(Array.isArray(payload.practicedDates)) state.practicedDates = payload.practicedDates;
+    mergePracticedDates(); // backfill from the restored log too, in case this backup predates practicedDates
     if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
     if(Array.isArray(payload.quran)) state.quran = payload.quran;
     await saveBank(); await saveLog(); await saveGrammar(); await saveQuran();
@@ -4171,7 +4221,7 @@ function renderDailyPlan(){
   const el = document.getElementById('dailyPlan');
   if(!el) return;
   const dueCount = countDuePhrases();
-  const streak = getStreakInfo(state.log);
+  const streak = getStreakInfo(getAllPracticedDateObjs());
 
   // Today's dose target is locked once (see getDailyDoseState) — capped at
   // 10, Practice & Log's smallest preset, rather than the full backlog.
