@@ -1752,6 +1752,22 @@ function wireBoldButton(boldBtnId, textareaId){
   });
 }
 
+// ---------- Diacritic-insensitive search ----------
+// Folds text so a search typed WITHOUT tashkeel still finds Arabic text that
+// has it (and vice versa): bold markers and diacritics/tatweel removed, alef
+// variants → ا, ى → ي, ة → ه, and English lowercased. Both the search box text
+// and the text being searched go through this before being compared.
+function foldSearch(s){
+  return stripTashkeel(String(s == null ? '' : s).replace(/\*\*/g, ''))
+    .replace(/ـ/g, '')
+    .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+    .toLowerCase();
+}
+function searchIncludes(haystack, query){
+  const q = foldSearch(query).trim();
+  return !q || foldSearch(haystack).includes(q);
+}
+
 function matchesFilter(p, query, category, boldFilter){
   if(category && p.category !== category) return false;
   if(boldFilter){
@@ -1762,8 +1778,7 @@ function matchesFilter(p, query, category, boldFilter){
     if(boldFilter === 'any' && !enBold && !arBold) return false;
   }
   if(!query) return true;
-  const q = query.toLowerCase();
-  return (p.en||'').toLowerCase().includes(q) || (p.ar||'').includes(query) || (p.category||'').toLowerCase().includes(q);
+  return searchIncludes(p.en, query) || searchIncludes(p.ar, query) || searchIncludes(p.category, query);
 }
 
 function getCategories(){
@@ -1932,7 +1947,7 @@ function renderStarred(){
   const matches = all.filter(item=>{
     if(starredFilter.type && item.type !== starredFilter.type) return false;
     if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
-    if(q && !item.haystack.toLowerCase().includes(q)) return false;
+    if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
     if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
     if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
     return true;
@@ -1994,7 +2009,7 @@ document.getElementById('starredSelectAll').addEventListener('change', e=>{
   const visible = all.filter(item=>{
     if(starredFilter.type && item.type !== starredFilter.type) return false;
     if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
-    if(q && !item.haystack.toLowerCase().includes(q)) return false;
+    if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
     if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
     if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
     return true;
@@ -2199,11 +2214,59 @@ function isSingleWord(text){
   return clean.split(/\s+/).filter(Boolean).length <= 1;
 }
 
+// ---- Arabic attached-prefix merging ----------------------------------------
+// Arabic glues small words onto the front of the next word: و (and), ف (so),
+// ب (with/in), ل (for/to), ك (like), sometimes stacked and/or with the article
+// ("وبمدرسة", "والمدرسة", "للمدرسة" = ل + ال). Counting each of those as a new
+// word inflates the total, so a prefixed form is merged into its BARE word —
+// but only when that bare word is itself already in the bank and at least 3
+// letters would remain. That keeps real words like وقت (time), بيت (house)
+// and فهم (understood) intact. It's an approximation: two unrelated words
+// that happen to line up (e.g. بطاقة "card" and طاقة "energy") would merge.
+const AR_PREFIXES = (() => {
+  const set = new Set();
+  ['', 'و', 'ف'].forEach(c => ['', 'ب', 'ل', 'ك'].forEach(pr => ['', 'ال'].forEach(art => {
+    const pre = (pr === 'ل' && art === 'ال') ? c + 'لل' : c + pr + art; // ل + ال → لل
+    if(pre) set.add(pre);
+  })));
+  return [...set].sort((x, y) => y.length - x.length); // longest prefix first
+})();
+// All bare forms of a normalised Arabic key: what's left after removing any
+// supported prefix, if 3+ letters remain. Shortest remainder comes first.
+function arPrefixRemainders(x){
+  const out = [];
+  for(const pre of AR_PREFIXES){
+    if(x.length - pre.length >= 3 && x.startsWith(pre)) out.push(x.slice(pre.length));
+  }
+  return out;
+}
+// The key itself plus every bare form it could be a prefixed version of.
+function arForms(x){ return [x].concat(arPrefixRemainders(x)); }
+// Follows prefixed forms down to the bare word that is present in `keys`.
+function resolveArRoot(x, keys, depth){
+  depth = depth || 0;
+  if(depth > 4) return x;
+  for(const r of arPrefixRemainders(x)){
+    if(keys.has(r)) return resolveArRoot(r, keys, depth + 1);
+  }
+  return x;
+}
+// Is `w` known, given a set of known keys? Arabic also counts it as known when
+// it is a prefixed form of a known word.
+function isKnownKey(w, lang, known){
+  if(known.has(w)) return true;
+  return lang === 'ar' && arPrefixRemainders(w).some(r => known.has(r));
+}
+
 // Every distinct bare word already used anywhere in the bank, for one
 // language — the "already known" pool that new words are measured against.
-function bankWordSet(lang){
+function bankWordSet(lang, exactOnly){
   const set = new Set();
-  state.bank.forEach(p => wordsOf(lang === 'ar' ? p.ar : p.en, lang).forEach(w => set.add(w)));
+  state.bank.forEach(p => wordKeysOf(lang === 'ar' ? p.ar : p.en, lang).forEach(w => set.add(w)));
+  if(lang === 'ar' && !exactOnly){
+    // A bare word is also "known" when the bank only has a prefixed form of it.
+    [...set].forEach(k => arPrefixRemainders(k).forEach(r => set.add(r)));
+  }
   return set;
 }
 
@@ -2222,7 +2285,7 @@ function newTermsIn(text, lang, knownSet){
     if(!seen.has(key)){ seen.add(key); terms.push(run); }
     run = [];
   };
-  wordsOf(text, lang).forEach(w => { if(known.has(w)) flush(); else run.push(w); });
+  wordKeysOf(text, lang).forEach(w => { if(isKnownKey(w, lang, known)) flush(); else run.push(w); });
   flush();
   return terms;
 }
@@ -2270,10 +2333,15 @@ function wordsOf(text, lang){
 // The first existing bank entry that already contains `word` (as its own
 // full phrase, or as one word inside a longer phrase) in the given
 // language field — or null if it's genuinely not there yet.
-function findWordInBank(word, lang){
-  const target = wordsOf(word, lang)[0];
+function findWordInBank(word, lang, exactOnly){
+  const target = wordKeysOf(word, lang)[0];
   if(!target) return null;
-  return state.bank.find(p => wordsOf(lang === 'ar' ? p.ar : p.en, lang).includes(target)) || null;
+  if(lang === 'ar' && !exactOnly){
+    // Same word if either is the other with an attached prefix (or both share a bare form).
+    const tf = new Set(arForms(target));
+    return state.bank.find(p => wordKeysOf(p.ar, 'ar').some(k => arForms(k).some(f => tf.has(f)))) || null;
+  }
+  return state.bank.find(p => wordKeysOf(lang === 'ar' ? p.ar : p.en, lang).includes(target)) || null;
 }
 
 // Hard-blocks a single word from being saved as a new phrase if it already
@@ -2283,16 +2351,18 @@ function findWordInBank(word, lang){
 // no override here: revisit the word from wherever it already lives rather
 // than logging a duplicate. Only applies to sides that are a single word;
 // a deliberately-confirmed multi-word side is never checked this way.
-function alreadyKnownWordMessage(en, ar){
+function alreadyKnownWordMessage(en, ar, overridePrefixMerge){
   const checks = [
     en && isSingleWord(en) ? { word: en, lang: 'en', label: 'English' } : null,
     ar && isSingleWord(ar) ? { word: ar, lang: 'ar', label: 'Arabic' } : null
   ].filter(Boolean);
   for(const c of checks){
-    const hit = findWordInBank(c.word, c.lang);
+    const exact = findWordInBank(c.word, c.lang, true);
+    const hit = exact || (c.lang === 'ar' && !overridePrefixMerge ? findWordInBank(c.word, c.lang, false) : null);
     if(hit){
       const example = c.lang === 'ar' ? hit.ar : hit.en;
-      return `The ${c.label} word "${c.word}" is already in your bank — it's used in the phrase "${example}"${hit.category ? ' (' + hit.category + ')' : ''}. It needs to be a genuinely new word to save as its own entry.`;
+      const prefixNote = exact ? '' : ' It looks like the same word with an attached و / ف / ب / ل / ك prefix (or without one). If it really is a different word, tick "This is a deliberate multi-word phrase" to save it anyway.';
+      return `The ${c.label} word "${c.word}" is already in your bank — it's used in the phrase "${example}"${hit.category ? ' (' + hit.category + ')' : ''}. It needs to be a genuinely new word to save as its own entry.${prefixNote}`;
     }
   }
   return '';
@@ -2308,7 +2378,7 @@ document.getElementById('addBankBtn').addEventListener('click', async ()=>{
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
-  const knownWord = alreadyKnownWordMessage(en, ar);
+  const knownWord = alreadyKnownWordMessage(en, ar, allowMultiWord);
   if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
@@ -2339,7 +2409,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
     if(!en && !ar) return;
     if(isDuplicatePhrase(en, ar)){ skipped++; return; }
     if(!allowMultiWord && multiWordViolationKind(en, ar)){ noNewWordRejected++; return; }
-    if(alreadyKnownWordMessage(en, ar)){ knownWordRejected++; return; }
+    if(alreadyKnownWordMessage(en, ar, allowMultiWord)){ knownWordRejected++; return; }
     state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
     added++;
   });
@@ -2765,23 +2835,37 @@ function countBoldWordsByLang(){
   });
   return totals;
 }
-// Normalised comparison key for the unique-word count, so trivial spelling
-// differences don't inflate it: case and edge punctuation are ignored in
-// English; in Arabic, diacritics, tatweel, alef/ya/ta-marbuta variants and a
-// leading "ال" are ignored. Different word FORMS (renew / renewed) still
-// count separately — this is a distinct-spelling count, not a lemma count.
-function normalizeBoldKey(seg, lang){
-  const clean = stripBold(seg || '').trim();
-  if(!clean) return '';
-  const cleanEdges = w => w.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
+// ONE cleanup used everywhere words are compared — the unique-word count AND
+// the "is there a new word?" check when adding phrases — so they always agree.
+// English: lowercased, edge punctuation trimmed. Arabic: diacritics and
+// tatweel removed, alef variants folded to ا, ى to ي, ة to ه, and a leading
+// "ال" dropped (when 3+ letters remain). Different word FORMS (renew /
+// renewed) still count separately — this is a distinct-spelling count, not a
+// lemma count.
+function normalizeWordKey(w, lang){
+  let x = stripBold(w || '').trim();
+  if(!x) return '';
+  x = x.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
+  if(!x) return '';
   if(lang === 'ar'){
-    return stripTashkeel(clean).replace(/ـ/g, '').split(/\s+/).map(cleanEdges).filter(Boolean).map(w => {
-      w = w.replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
-      if(w.startsWith('ال') && w.length - 2 >= 3) w = w.slice(2);
-      return w;
-    }).join(' ');
+    x = stripTashkeel(x).replace(/ـ/g, '')
+      .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+    if(x.startsWith('ال') && x.length - 2 >= 3) x = x.slice(2);
+    return x;
   }
-  return clean.toLowerCase().split(/\s+/).map(cleanEdges).filter(Boolean).join(' ');
+  return x.toLowerCase();
+}
+// Every countable word in `text` as its normalised key (bare numbers and
+// symbols are skipped).
+function wordKeysOf(text, lang){
+  return stripBold(text || '').trim().split(/\s+/)
+    .map(w => normalizeWordKey(w, lang))
+    .filter(k => k && /\p{L}/u.test(k));
+}
+// Key for a whole bolded segment: each word normalised, joined by spaces.
+function normalizeBoldKey(seg, lang){
+  return stripBold(seg || '').trim().split(/\s+/)
+    .map(w => normalizeWordKey(w, lang)).filter(Boolean).join(' ');
 }
 
 // Distinct bolded words/terms across the WHOLE bank, per language, each
@@ -2900,10 +2984,10 @@ function countUniqueWords(){
     state.bank.forEach(p => {
       ensureSrs(p);
       const added = /^\d{4}-\d{2}-\d{2}$/.test(p.dateAdded || '') ? p.dateAdded : '';
-      wordsOf(p[lang], lang).forEach(raw => {
-        if(!/\p{L}/u.test(raw)) return; // skip bare numbers / symbols
-        const key = normalizeBoldKey(raw, lang);
-        if(!key) return;
+      stripBold(p[lang] || '').trim().split(/\s+/).forEach(rawTok => {
+        const key = normalizeWordKey(rawTok, lang);
+        if(!key || !/\p{L}/u.test(key)) return; // skip bare numbers / symbols
+        const raw = stripTashkeel(rawTok).replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
         total++;
         const rec = map.get(key);
         if(rec){
@@ -2914,10 +2998,32 @@ function countUniqueWords(){
         }
       });
     });
-    const recs = [...map.values()];
+    // Arabic: fold prefixed forms into their bare word (when that word is in
+    // the bank too) so each real word counts once. Keeps a list of what merged.
+    let groups = map;
+    const merges = [];
+    if(lang === 'ar'){
+      const keys = new Set(map.keys());
+      const rootMap = new Map();
+      map.forEach((rec, key) => {
+        const root = resolveArRoot(key, keys);
+        if(root !== key) merges.push({ from: rec.label, to: (map.get(root) || rec).label, count: rec.count });
+        const g = rootMap.get(root);
+        if(g){
+          g.count += rec.count;
+          if(rec.first && (!g.first || rec.first < g.first)) g.first = rec.first;
+        } else {
+          rootMap.set(root, { label: (map.get(root) || rec).label, count: rec.count, first: rec.first });
+        }
+      });
+      groups = rootMap;
+      merges.sort((a, b) => b.count - a.count);
+    }
+    const recs = [...groups.values()];
     result[lang] = {
       total,
-      unique: map.size,
+      unique: groups.size,
+      merges,
       top: recs.filter(r => r.count > 1).sort((a, b) => b.count - a.count).slice(0, 12),
       firstDates: recs.map(r => r.first).filter(Boolean)
     };
@@ -2947,6 +3053,13 @@ function timelineHtml(lang, u, b){
   html += `<p class="hs-eta hs-alt">At ${PACE_SCENARIOS.join(' / ')} new words a day: ` + (b.next ? `${escapeHtml(b.next.label)} in ${scen(toNext)} · ` : '') + `${escapeHtml(spk.label.toLowerCase())} in ${scen(toTarget)}</p>`;
   return html;
 }
+function mergesHtml(w){
+  if(!w.merges || !w.merges.length) return '';
+  const chips = w.merges.slice(0, 60).map(m =>
+    `<span class="hs-chip"><span dir="rtl">${escapeHtml(m.from)}</span> → <span dir="rtl">${escapeHtml(m.to)}</span></span>`).join('');
+  return `<p class="hs-sum">Prefix merges: ${w.merges.length} form${w.merges.length === 1 ? '' : 's'} folded into their bare word — check for wrong ones</p>
+    <div class="hs-repeats">${chips}${w.merges.length > 60 ? `<span class="hs-note"> …and ${w.merges.length - 60} more</span>` : ''}</div>`;
+}
 function hsDetailsHtml(boldEntries, boldUniq, words){
   const block = (lang, label) => {
     const w = words[lang];
@@ -2960,12 +3073,12 @@ function hsDetailsHtml(boldEntries, boldUniq, words){
       <div class="hs-bar"><i style="width:${Math.max(0, Math.min(100, b.pct))}%"></i></div>
       ${timelineHtml(lang, w, b)}
       <p class="hs-sum">Bolded: ${boldEntries[lang].toLocaleString()} bold entr${boldEntries[lang] === 1 ? 'y' : 'ies'} → ${boldUniq[lang].unique.toLocaleString()} unique bolded</p>
-      <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>`;
+      <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>${mergesHtml(w)}`;
   };
   return block('en', 'English') + block('ar', 'Arabic')
     + `<p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.en.source)}</p><p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.ar.source)}</p>`
     + '<p class="hs-src">Speaking target: English ≈3,000 word families covers ~95% of everyday spoken English, and 5,000–7,000 covers ~98% (Nation 2006; Adolphs &amp; Schmitt 2003). Arabic 3,000 is a loose estimate — no comparable coverage study. Pace ETAs assume you keep the same rate; they are projections, not promises.</p>'
-    + '<p class="hs-note">Unique words = every distinct word in your phrases, bolded or not, ignoring case, punctuation, Arabic diacritics and a leading “ال”. Different forms of a word (renew / renewed) still count separately, and small words like “the” count too.</p>';
+    + '<p class="hs-note">Unique words = every distinct word in your phrases, bolded or not, ignoring case, punctuation, Arabic diacritics, spelling variants of alef / ya / ta marbuta and a leading “ال”. Arabic words with an attached و / ف / ب / ل / ك prefix are merged into the bare word when that word (3+ letters) is already in your bank — the same rules the add-phrase “new word” check uses. Plurals and verb forms still count separately. The bolded line above uses the simpler cleanup without prefix merging.</p>';
 }
 
 function renderHeaderStats(){
@@ -4374,7 +4487,7 @@ async function vpSaveBankDraft(){
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
-  const knownWord = alreadyKnownWordMessage(en, ar);
+  const knownWord = alreadyKnownWordMessage(en, ar, vpBankDraftAllowMultiWord);
   if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false });
@@ -4793,7 +4906,7 @@ async function gcSaveBankDraft(){
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
-  const knownWord = alreadyKnownWordMessage(en, ar);
+  const knownWord = alreadyKnownWordMessage(en, ar, gcBankDraftAllowMultiWord);
   if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Grammar check', practiceCount: 0, lastPracticed: null, starred: false });
@@ -4918,7 +5031,7 @@ function renderGcStarResults(){
     list.innerHTML = '<div class="empty">No bolded words in your starred phrases yet. Open a starred entry in Phrase Bank, select the word or phrase you want here, and tap Bold.</div>';
     return;
   }
-  const matches = q ? segments.filter(s => s.text.toLowerCase().includes(q) || s.haystack.includes(q)) : segments;
+  const matches = q ? segments.filter(s => searchIncludes(s.text, raw) || searchIncludes(s.haystack, raw)) : segments;
   if(!matches.length){
     list.innerHTML = '<div class="empty">No bolded words match that search.</div>';
     return;
@@ -5135,7 +5248,7 @@ function matchesGrammarFilter(g, f){
   if(!f.query) return true;
   const q = f.query.toLowerCase();
   const hay = [g.title, g.rule_summary, g.user_notes, (g.tags||[]).join(' '), (g.examples||[]).map(e=>e.target+' '+e.translation).join(' ')].join(' ');
-  return hay.toLowerCase().includes(q) || hay.includes(f.query);
+  return searchIncludes(hay, f.query);
 }
 
 function renderCategoryFrequency(){
@@ -5665,7 +5778,7 @@ function matchesQuranFilter(q, f){
   if(!f.query) return true;
   const query = f.query.toLowerCase();
   const hay = [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic].join(' ');
-  return hay.toLowerCase().includes(query) || hay.includes(f.query);
+  return searchIncludes(hay, f.query);
 }
 
 function buildQuranCard(q){
