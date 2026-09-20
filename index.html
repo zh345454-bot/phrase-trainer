@@ -432,7 +432,58 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   padding:22px;
   max-width:440px;
   width:100%;
+  max-height:calc(100vh - 40px); /* long pop-ups scroll instead of running off-screen */
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
 }
+.modal-x{
+  position:sticky; top:0; float:right; margin:-12px -12px 0 8px; z-index:3;
+  width:32px; height:32px; padding:0; line-height:1; font-size:16px; cursor:pointer;
+  border:1px solid var(--line); border-radius:50%; background:var(--panel); color:var(--ink);
+}
+.modal-x:hover{ border-color:var(--ink); }
+
+/* ---------- Gaps (words forgotten while speaking) ---------- */
+.gap-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
+.gap-table th, .gap-table td{ text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
+.gap-table th{ color:var(--ink-soft); font-weight:600; }
+.gap-cue{ font-size:16px; line-height:1.6; margin:8px 0; }
+.gap-answer{ font-size:18px; font-weight:600; margin:8px 0 4px; }
+.gap-stats-row{ display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px; }
+
+.gap-fab{
+  position:fixed; right:16px; bottom:calc(16px + env(safe-area-inset-bottom, 0px)); z-index:9;
+  border:none; border-radius:999px; padding:12px 18px; cursor:pointer;
+  background:var(--brass-deep); color:#fff; font-weight:600; font-size:14px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.28);
+}
+.gap-fab:hover{ background:var(--ink); }
+.gap-toast{
+  position:fixed; left:50%; transform:translateX(-50%); bottom:calc(76px + env(safe-area-inset-bottom, 0px));
+  z-index:11; background:var(--ink); color:#fff; padding:9px 14px; font-size:13px; max-width:88vw;
+  display:none; box-shadow:0 4px 14px rgba(0,0,0,0.3);
+}
+.gap-toast.show{ display:block; }
+.gap-lang-toggle{ display:flex; gap:6px; margin-bottom:12px; }
+.gap-lang-toggle button.active{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.gap-card{ border:1px solid var(--line); background:var(--panel); padding:12px 14px; margin-bottom:10px; }
+.gap-card.closed{ opacity:0.72; }
+.gap-head{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
+.gap-wanted{ font-size:17px; font-weight:600; }
+.gap-badges{ display:flex; gap:5px; flex-wrap:wrap; }
+.badge.type-new{ background:#F2E6C9; color:var(--brass-deep); }
+.badge.type-retrieval{ background:var(--teal-soft); color:var(--teal); }
+.badge.type-chunk{ background:#E4DDF0; color:#4B3A73; }
+.badge.gap-closed{ background:#E6E2D6; color:var(--ink-soft); }
+.gap-meta{ font-size:12px; color:var(--ink-soft); margin:5px 0; }
+.gap-correct{ font-size:14.5px; margin:4px 0 6px; }
+.gap-editor{ margin-top:10px; border-top:1px dashed var(--line); padding-top:10px; }
+.gap-editor label{ display:block; font-size:11.5px; color:var(--ink-soft); margin:8px 0 2px; }
+.gap-editor input, .gap-editor select{ width:100%; box-sizing:border-box; }
+.gap-editor .card-actions{ margin-top:12px; flex-wrap:wrap; }
+.gap-mini{ font-size:12.5px; color:var(--ink-soft); }
+.gap-check label{ display:flex; gap:8px; align-items:center; margin:5px 0; font-size:14px; }
+
 .modal h2{ font-family:'Newsreader',serif; margin:0 0 6px; font-size:19px; }
 .modal p{ font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin-top:0; }
 .modal .field{ margin-bottom:14px; }
@@ -468,6 +519,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="starred">★ Starred</button>
     <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
     <button class="tab-btn" data-view="review">Review</button>
+    <button class="tab-btn" data-view="gaps">Gaps</button>
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
@@ -732,6 +784,38 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </section>
 
   <!-- DRILLS -->
+  <section class="view" id="view-gaps">
+    <div class="panel">
+      <h2>Speaking gaps</h2>
+      <p class="gap-mini">Words you couldn't find while speaking. Log one any time with the <strong>+ Gap</strong> button (bottom-right, on every tab). Logging the same gap again never adds a second entry — it updates the one you have.</p>
+      <div id="gapChecklist"></div>
+    </div>
+    <div class="panel" id="gapTopPanel" style="display:none;"><div id="gapTop"></div></div>
+    <div class="panel" id="gapReviewPanel" style="display:none;"><div id="gapReviewBox"></div></div>
+    <div class="panel">
+      <h2>Your gaps</h2>
+      <div class="toolbar">
+        <div class="field"><label>Search</label><input type="text" id="gapSearch" placeholder="Search any field (Arabic works without tashkeel)"></div>
+        <div class="field" style="max-width:170px;"><label>Type</label>
+          <select id="gapTypeFilter"><option value="">All types</option><option value="new">Never learned</option><option value="retrieval">Couldn't recall</option><option value="chunk">Wrong choice / chunk</option></select></div>
+        <div class="field" style="max-width:150px;"><label>Status</label>
+          <select id="gapStatusFilter"><option value="">Open + archived</option><option value="open">Open</option><option value="closed">Archived</option></select></div>
+        <div class="field" style="max-width:170px;"><label>Topic</label>
+          <select id="gapTopicFilter"><option value="">All topics</option></select></div>
+      </div>
+      <div class="toolbar">
+        <div class="field" style="max-width:170px;"><label>Logged from</label><input type="date" id="gapFrom"></div>
+        <div class="field" style="max-width:170px;"><label>Logged to</label><input type="date" id="gapTo"></div>
+        <div class="field" style="max-width:120px;"><label>&nbsp;</label><button class="ghost" id="gapClearFilters" type="button">Clear</button></div>
+      </div>
+      <div class="count-note" id="gapCount"></div>
+      <div id="gapList"></div>
+      <datalist id="gapTopicList"></datalist>
+    </div>
+    <div class="panel"><div id="gapStats"></div></div>
+    <div class="panel"><div id="gapSyncBox"></div></div>
+  </section>
+
   <section class="view" id="view-drills">
     <div class="panel">
       <h2>Today's plan</h2>
@@ -969,6 +1053,27 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </section>
 </div>
 
+<button class="gap-fab" id="gapFab" type="button" title="Log a word you couldn't find while speaking">＋ Gap</button>
+<div class="gap-toast" id="gapToast"></div>
+<div class="modal-backdrop" id="gapModal">
+  <div class="modal">
+    <h2>Log a speaking gap</h2>
+    <p>What did you want to say? Two taps is enough — fill in the details later.</p>
+    <div class="gap-lang-toggle">
+      <button type="button" class="ghost" id="gapLangEn" data-lang="en">English</button>
+      <button type="button" class="ghost" id="gapLangAr" data-lang="ar">العربية</button>
+    </div>
+    <div class="field"><label>What I wanted to say</label><input type="text" id="gapWanted" placeholder="e.g. Islamic studies"></div>
+    <div class="field"><label>What I said instead (optional)</label><input type="text" id="gapSaid" placeholder="e.g. Islamic teaching"></div>
+    <div class="status-msg" id="gapCaptureMsg"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="gapCancelBtn" type="button">Cancel</button>
+      <button class="ghost" id="gapSaveMoreBtn" type="button">Save &amp; log another</button>
+      <button class="primary" id="gapSaveBtn" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="settingsModal">
   <div class="modal">
     <h2>Sheet &amp; AI connection</h2>
@@ -1139,6 +1244,9 @@ async function loadState(){
   await saveLog();
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
+  state.gaps = lsGet('gaps', []);
+  state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
+  if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
   if(state.settings.sharedSecret === undefined) state.settings.sharedSecret = '';
   if(state.settings.geminiApiKey === undefined) state.settings.geminiApiKey = '';
@@ -1155,6 +1263,7 @@ async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); }
 async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
+async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); }
 
 // ---------- Keeping the local practice log from growing forever ----------
 // The Log sheet (Google Sheets) is the permanent, complete history — it's
@@ -1329,6 +1438,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'starred') renderStarred();
     if(btn.dataset.view === 'drills') renderDrills();
     if(btn.dataset.view === 'quran') renderQuran();
+    if(btn.dataset.view === 'gaps') renderGaps();
     if(btn.dataset.view === 'practice') renderTodayStrip();
   });
 });
@@ -3538,7 +3648,9 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     log: state.log,
     practicedDates: state.practicedDates,
     grammar: state.grammar,
-    quran: state.quran
+    quran: state.quran,
+    gaps: state.gaps,
+    gapMeta: state.gapMeta
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -3562,7 +3674,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
   try{
     const text = await file.text();
     const payload = JSON.parse(text);
-    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran))){
+    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran) && !Array.isArray(payload.gaps))){
       throw new Error('This file doesn\'t look like a Phrase Trainer backup.');
     }
     const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}, quran: ${payload.quran ? payload.quran.length : 0}`;
@@ -3574,8 +3686,15 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     mergePracticedDates(); // backfill from the restored log too, in case this backup predates practicedDates
     if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
     if(Array.isArray(payload.quran)) state.quran = payload.quran;
-    await saveBank(); await saveLog(); await saveGrammar(); await saveQuran();
-    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran();
+    // Gaps are MERGED (never replaced), so gaps logged on this device since the backup are kept.
+    if(Array.isArray(payload.gaps)){
+      state.gaps = mergeGaps(state.gaps, payload.gaps);
+      if(payload.gapMeta && payload.gapMeta.checklist){
+        Object.keys(payload.gapMeta.checklist).forEach(d => { if(!state.gapMeta.checklist[d]) state.gapMeta.checklist[d] = payload.gapMeta.checklist[d]; });
+      }
+    }
+    await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps();
+    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps();
     renderGcStarResults(); renderGcDateResults();
     statusEl.textContent = 'Restored from file: ' + summary + '.';
     statusEl.className = 'status-msg';
@@ -6119,6 +6238,647 @@ if('serviceWorker' in navigator){
   });
 }
 
+
+// =====================================================================
+// GAPS — words forgotten while speaking (own storage: state.gaps).
+// Entirely separate from the phrase bank: nothing here touches state.bank
+// unless you press "Move to bank", and it never writes to the practice log.
+// =====================================================================
+const GAP_TYPE_LABELS = { new: 'Never learned', retrieval: 'Couldn\u2019t recall', chunk: 'Wrong choice / chunk' };
+let gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '' };
+let gapExpanded = new Set();
+
+// Same wording (after the app's normal word cleanup) = same gap.
+function gapKey(lang, text){
+  const k = wordKeysOf(text, lang).join(' ');
+  return lang + '|' + (k || foldSearch(text).trim());
+}
+// "Never learned" if the wanted text has a word not in the bank, else "couldn't recall".
+function gapAutoType(wanted, lang){
+  return newTermsIn(wanted, lang).length ? 'new' : 'retrieval';
+}
+function gapTouch(g){ g.updatedAt = new Date().toISOString(); return g; }
+function gapToastMsg(msg){
+  const el = document.getElementById('gapToast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(gapToastMsg._t);
+  gapToastMsg._t = setTimeout(()=> el.classList.remove('show'), 3800);
+}
+function gapTick(which){
+  const today = todayStr();
+  const c = state.gapMeta.checklist[today] || (state.gapMeta.checklist[today] = { logged: false, drill: false, spoke: false });
+  if(!c[which]){ c[which] = true; }
+}
+function gapLastLog(g){ return (g.logDates && g.logDates.length) ? g.logDates[g.logDates.length - 1] : g.date; }
+
+// Log a gap, or — if the same gap already exists — update that entry instead
+// of adding another (one row per gap, however often you forget it).
+function captureGap({ lang, wanted, said }){
+  wanted = (wanted || '').trim(); said = (said || '').trim();
+  if(!wanted) return null;
+  const today = todayStr();
+  const key = gapKey(lang, wanted);
+  let g = state.gaps.find(x => gapKey(x.lang, x.wanted) === key);
+  let isNew = false, reopened = false;
+  if(g){
+    if(!g.logDates) g.logDates = [g.date];
+    if(!g.logDates.includes(today)) g.logDates.push(today);
+    if(said) g.said = said;
+    if(g.status === 'closed'){
+      g.status = 'open'; g.closedAt = ''; g.closedBy = '';
+      g.srs = { station: 1, reps: 0, nextReview: today, dateAdded: g.dateAdded || today, hotLayerDone: [] };
+      reopened = true;
+    }
+    if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
+  } else {
+    isNew = true;
+    g = { id: uid(), lang, wanted, said, correct: '', exEn: '', exAr: '', note: '', topic: '',
+          type: gapAutoType(wanted, lang), typeManual: false,
+          createdAt: new Date().toISOString(), date: today, dateAdded: today, logDates: [today], attempts: [],
+          status: 'open', closedAt: '', closedBy: '', inBank: false, bankedAt: '' };
+    ensureSrs(g);
+    state.gaps.unshift(g);
+  }
+  gapTouch(g);
+  gapTick('logged');
+  saveGaps();
+  return { g, isNew, reopened };
+}
+
+// Merge two gap lists (used by file restore and Sheet sync). Same id → the
+// newer edit wins; same wording under different ids (logged on two devices)
+// → folded into the older entry. Log dates are always unioned.
+function mergeGaps(local, incoming){
+  const byId = new Map();
+  const add = (g) => {
+    if(!g || !g.id) return;
+    const cur = byId.get(g.id);
+    if(!cur){ byId.set(g.id, Object.assign({}, g)); return; }
+    const newer = (g.updatedAt || '') > (cur.updatedAt || '') ? g : cur;
+    const merged = Object.assign({}, newer);
+    merged.logDates = [...new Set([].concat(cur.logDates || [], g.logDates || []))].sort();
+    byId.set(g.id, merged);
+  };
+  (local || []).forEach(add); (incoming || []).forEach(add);
+  const byKey = new Map();
+  [...byId.values()].forEach(g => {
+    const k = gapKey(g.lang, g.wanted);
+    const other = byKey.get(k);
+    if(!other){ byKey.set(k, g); return; }
+    const [base, extra] = (other.createdAt || '') <= (g.createdAt || '') ? [other, g] : [g, other];
+    const newest = (extra.updatedAt || '') > (base.updatedAt || '') ? extra : base;
+    const merged = Object.assign({}, newest, { id: base.id, createdAt: base.createdAt, date: base.date, dateAdded: base.dateAdded });
+    merged.logDates = [...new Set([].concat(base.logDates || [], extra.logDates || []))].sort();
+    byKey.set(k, merged);
+  });
+  return [...byKey.values()];
+}
+
+// ---------- List + filters ----------
+function gapMatches(g){
+  const f = gapFilter;
+  if(f.type && g.type !== f.type) return false;
+  if(f.status && g.status !== f.status) return false;
+  if(f.topic && (g.topic || '') !== f.topic) return false;
+  if(f.from || f.to){
+    const ds = g.logDates && g.logDates.length ? g.logDates : [g.date];
+    if(!ds.some(d => (!f.from || d >= f.from) && (!f.to || d <= f.to))) return false;
+  }
+  if(f.query){
+    const hay = [g.wanted, g.said, g.correct, g.exEn, g.exAr, g.note, g.topic].join(' ');
+    if(!searchIncludes(hay, f.query)) return false;
+  }
+  return true;
+}
+function gapEditorHtml(g){
+  const opt = (v, l) => `<option value="${v}"${g.type === v ? ' selected' : ''}>${l}</option>`;
+  const canAi = typeof gapAiFill === 'function' && getGeminiKeys().length;
+  const canBank = typeof gapMoveToBank === 'function';
+  return `<div class="gap-editor">
+    <label>What I wanted to say</label><input data-gf="wanted" value="${escapeHtml(g.wanted)}" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>
+    <label>What I said instead</label><input data-gf="said" value="${escapeHtml(g.said || '')}">
+    <label>Correct word / chunk</label><input data-gf="correct" value="${escapeHtml(g.correct || '')}" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>
+    <label>Example sentence (English)</label><input data-gf="exEn" value="${escapeHtml(g.exEn || '')}">
+    <label>Example sentence (Arabic)</label><input data-gf="exAr" dir="rtl" value="${escapeHtml(g.exAr || '')}">
+    <label>Why the substitute was wrong (optional)</label><input data-gf="note" value="${escapeHtml(g.note || '')}">
+    <label>Topic</label><input data-gf="topic" list="gapTopicList" value="${escapeHtml(g.topic || '')}" placeholder="e.g. Islamic studies">
+    <label>Type</label><select data-gf="type">${opt('new', GAP_TYPE_LABELS.new)}${opt('retrieval', GAP_TYPE_LABELS.retrieval)}${opt('chunk', GAP_TYPE_LABELS.chunk)}</select>
+    <div class="status-msg" data-gstatus></div>
+    <div class="card-actions">
+      <button class="primary" data-gact="save" data-gid="${g.id}" type="button">Save details</button>
+      ${canAi ? `<button class="ghost" data-gact="ai" data-gid="${g.id}" type="button">✨ AI fill</button>` : ''}
+      ${canBank && g.status !== 'closed' || canBank && !g.inBank ? `<button class="ghost" data-gact="bank" data-gid="${g.id}" type="button">Move to bank</button>` : ''}
+      ${g.status === 'closed' ? `<button class="ghost" data-gact="reopen" data-gid="${g.id}" type="button">Reopen</button>` : `<button class="ghost" data-gact="archive" data-gid="${g.id}" type="button">Archive</button>`}
+      <button class="ghost" data-gact="delete" data-gid="${g.id}" type="button">Delete</button>
+    </div>
+  </div>`;
+}
+function renderGapList(){
+  const list = document.getElementById('gapList');
+  if(!list) return;
+  // topic dropdown + datalist from what exists
+  const topics = [...new Set(state.gaps.map(g => (g.topic || '').trim()).filter(Boolean))].sort();
+  const sel = document.getElementById('gapTopicFilter');
+  const cur = gapFilter.topic;
+  sel.innerHTML = '<option value="">All topics</option>' + topics.map(t => `<option value="${escapeHtml(t)}"${t === cur ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+  document.getElementById('gapTopicList').innerHTML = topics.map(t => `<option value="${escapeHtml(t)}">`).join('');
+  const rows = state.gaps.filter(gapMatches).sort((a, b) => {
+    if((a.status === 'closed') !== (b.status === 'closed')) return a.status === 'closed' ? 1 : -1;
+    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+  });
+  document.getElementById('gapCount').textContent = state.gaps.length
+    ? `Showing ${rows.length} of ${state.gaps.length} gap${state.gaps.length === 1 ? '' : 's'}` : '';
+  if(!rows.length){
+    list.innerHTML = `<div class="empty">${state.gaps.length ? 'No gaps match those filters.' : 'No gaps yet — tap “＋ Gap” next time a word escapes you mid-sentence.'}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map(g => {
+    const times = (g.logDates && g.logDates.length) || 1;
+    const open = gapExpanded.has(g.id);
+    ensureSrs(g);
+    return `<div class="gap-card${g.status === 'closed' ? ' closed' : ''}" data-gid="${g.id}">
+      <div class="gap-head">
+        <div class="gap-wanted" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>${escapeHtml(g.wanted)}</div>
+        <div class="gap-badges">
+          <span class="badge type-${g.type}">${GAP_TYPE_LABELS[g.type] || g.type}</span>
+          ${g.status === 'closed' ? `<span class="badge gap-closed">Archived${g.closedBy === 'bank' ? ' · in bank' : g.closedBy === 'mastered' ? ' · mastered' : ''}</span>` : `<span class="station-pill">Station ${g.srs.station}</span>`}
+          ${g.inBank && g.closedBy !== 'bank' ? '<span class="badge gap-closed">In bank</span>' : ''}
+        </div>
+      </div>
+      <div class="gap-meta">logged ×${times} · first ${g.date} · last ${gapLastLog(g)}${g.said ? ' · said: “' + escapeHtml(g.said) + '”' : ''}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}</div>
+      ${g.correct ? `<div class="gap-correct" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>→ ${escapeHtml(g.correct)}</div>` : ''}
+      <div class="card-actions"><button class="ghost" data-gact="toggle" data-gid="${g.id}" type="button">${open ? 'Hide details ▴' : 'Details ▾'}</button></div>
+      ${open ? gapEditorHtml(g) : ''}
+    </div>`;
+  }).join('');
+}
+function renderGaps(){
+  renderGapList();
+  ['renderGapChecklist', 'renderGapTop', 'renderGapReview', 'renderGapStats', 'renderGapSync'].forEach(fn => {
+    if(typeof window[fn] === 'function') window[fn]();
+  });
+}
+
+// ---------- List events ----------
+['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapFrom', 'gapTo'].forEach(id => {
+  const el = document.getElementById(id);
+  const key = { gapSearch: 'query', gapTypeFilter: 'type', gapStatusFilter: 'status', gapTopicFilter: 'topic', gapFrom: 'from', gapTo: 'to' }[id];
+  el.addEventListener(el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change', () => { gapFilter[key] = el.value; renderGapList(); });
+});
+document.getElementById('gapClearFilters').addEventListener('click', () => {
+  gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '' };
+  ['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapFrom', 'gapTo'].forEach(id => { document.getElementById(id).value = ''; });
+  renderGapList();
+});
+document.getElementById('gapList').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-gact]');
+  if(!btn) return;
+  const g = state.gaps.find(x => x.id === btn.dataset.gid);
+  if(!g) return;
+  const act = btn.dataset.gact;
+  const card = btn.closest('.gap-card');
+  if(act === 'toggle'){
+    if(gapExpanded.has(g.id)) gapExpanded.delete(g.id); else gapExpanded.add(g.id);
+    renderGapList(); return;
+  }
+  if(act === 'save'){
+    const val = (f) => (card.querySelector(`[data-gf="${f}"]`).value || '').trim();
+    const st = card.querySelector('[data-gstatus]');
+    const newWanted = val('wanted');
+    if(!newWanted){ st.textContent = 'The wanted word can\u2019t be empty.'; st.className = 'status-msg err'; return; }
+    const clash = state.gaps.find(x => x.id !== g.id && gapKey(x.lang, x.wanted) === gapKey(g.lang, newWanted));
+    if(clash){ st.textContent = 'Another gap already has this wording — open that one instead.'; st.className = 'status-msg err'; return; }
+    g.wanted = newWanted; g.said = val('said'); g.correct = val('correct');
+    g.exEn = val('exEn'); g.exAr = val('exAr'); g.note = val('note'); g.topic = val('topic');
+    const newType = val('type');
+    if(newType !== g.type){ g.type = newType; g.typeManual = true; }
+    else if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
+    gapTouch(g); await saveGaps(); renderGaps(); return;
+  }
+  if(act === 'archive'){ g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'manual'; gapTouch(g); await saveGaps(); renderGaps(); return; }
+  if(act === 'reopen'){
+    g.status = 'open'; g.closedAt = ''; g.closedBy = '';
+    g.srs = { station: 1, reps: 0, nextReview: todayStr(), dateAdded: g.dateAdded || todayStr(), hotLayerDone: [] };
+    gapTouch(g); await saveGaps(); renderGaps(); return;
+  }
+  if(act === 'delete'){
+    if(!confirm('Delete this gap and its history for good? (Archive keeps it in your records instead.)')) return;
+    state.gaps = state.gaps.filter(x => x.id !== g.id); gapExpanded.delete(g.id);
+    await saveGaps(); renderGaps(); return;
+  }
+  if(act === 'ai' && typeof gapAiFill === 'function'){ gapAiFill(g, card, btn); return; }
+  if(act === 'bank' && typeof gapMoveToBank === 'function'){ gapMoveToBank(g, card); return; }
+});
+
+// ---------- Quick capture (button on every tab) ----------
+let gapCaptureLang = 'en';
+function setGapCaptureLang(l){
+  gapCaptureLang = l; state.gapMeta.lastLang = l;
+  document.getElementById('gapLangEn').classList.toggle('active', l === 'en');
+  document.getElementById('gapLangAr').classList.toggle('active', l === 'ar');
+  document.getElementById('gapWanted').setAttribute('dir', l === 'ar' ? 'rtl' : 'ltr');
+  document.getElementById('gapSaid').setAttribute('dir', l === 'ar' ? 'rtl' : 'ltr');
+}
+function openGapCapture(){
+  setGapCaptureLang(state.gapMeta.lastLang || 'en');
+  document.getElementById('gapWanted').value = '';
+  document.getElementById('gapSaid').value = '';
+  document.getElementById('gapCaptureMsg').textContent = '';
+  document.getElementById('gapModal').classList.add('open');
+  setTimeout(() => document.getElementById('gapWanted').focus(), 50);
+}
+document.getElementById('gapFab').addEventListener('click', openGapCapture);
+document.getElementById('gapLangEn').addEventListener('click', () => setGapCaptureLang('en'));
+document.getElementById('gapLangAr').addEventListener('click', () => setGapCaptureLang('ar'));
+document.getElementById('gapCancelBtn').addEventListener('click', () => document.getElementById('gapModal').classList.remove('open'));
+async function saveGapFromModal(keepOpen){
+  const wanted = document.getElementById('gapWanted').value;
+  const msg = document.getElementById('gapCaptureMsg');
+  if(!wanted.trim()){ msg.textContent = 'Type what you wanted to say first.'; msg.className = 'status-msg err'; return; }
+  const r = captureGap({ lang: gapCaptureLang, wanted, said: document.getElementById('gapSaid').value });
+  if(!r) return;
+  await saveGaps();
+  renderGaps();
+  const times = r.g.logDates.length;
+  const note = r.isNew ? `Logged — tagged “${GAP_TYPE_LABELS[r.g.type]}”.`
+    : r.reopened ? 'You logged this one again — reopened for review.'
+    : `Already in your gaps — updated it (logged ×${times}).`;
+  gapToastMsg(note);
+  if(keepOpen){
+    document.getElementById('gapWanted').value = ''; document.getElementById('gapSaid').value = '';
+    msg.textContent = note; msg.className = 'status-msg';
+    document.getElementById('gapWanted').focus();
+  } else {
+    document.getElementById('gapModal').classList.remove('open');
+  }
+}
+document.getElementById('gapSaveBtn').addEventListener('click', () => saveGapFromModal(false));
+document.getElementById('gapSaveMoreBtn').addEventListener('click', () => saveGapFromModal(true));
+document.getElementById('gapWanted').addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); saveGapFromModal(false); } });
+
+
+// ---------- Gaps · Batch 2: review (same 7-station engine as the phrase bank),
+// top-5 card, daily checklist, stats, move-to-bank, AI fill ----------
+
+// Same schedule as the bank (STATION_GAP_DAYS / MIN_TO_ADVANCE), applied to
+// gap entries. Kept as its own function so it never touches the bank's daily
+// dose, drill sync or the practice log.
+function rateGapReview(g, rating){
+  ensureSrs(g);
+  const today = todayStr();
+  let station = g.srs.station;
+  if(rating >= 4){
+    g.srs.reps += 1;
+    if(station < 7 && g.srs.reps >= MIN_TO_ADVANCE[station]){
+      station += 1; g.srs.station = station; g.srs.reps = 0;
+      g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+    } else if(station === 7){
+      // Finished the last station well → the gap is mastered: archive it (kept in your records).
+      g.status = 'closed'; g.closedAt = today; g.closedBy = 'mastered';
+      g.srs.nextReview = addDays(today, MAINTENANCE_GAP_DAYS);
+    } else {
+      g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+    }
+  } else if(rating === 3){
+    g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station] || 1);
+  } else {
+    station = Math.max(1, station - (rating === 2 ? 1 : 2));
+    g.srs.station = station; g.srs.reps = 0;
+    g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
+  }
+  g.attempts = (g.attempts || []).concat([{ d: today, r: rating }]).slice(-30); // capped: history doesn't grow forever
+  gapTick('drill');
+  gapTouch(g);
+}
+function getDueGaps(){
+  const today = todayStr();
+  return state.gaps.filter(g => { ensureSrs(g); return g.status === 'open' && g.srs.nextReview <= today; })
+    .sort((a, b) => a.srs.nextReview.localeCompare(b.srs.nextReview) || a.srs.station - b.srs.station);
+}
+const GAP_DIAC = '[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]*';
+function gapTargetRegex(target, lang){
+  const t = (lang === 'ar' ? stripTashkeel(stripBold(target)) : stripBold(target)).trim();
+  if(!t) return null;
+  const esc = c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if(lang === 'ar') return new RegExp([...t].map(esc).join(GAP_DIAC) + GAP_DIAC);
+  return new RegExp('\\b' + esc(t).replace(/\s+/g, '\\s+') + '\\b', 'i');
+}
+function gapReplaceTarget(sentence, target, lang, fn){
+  const re = gapTargetRegex(target, lang);
+  if(!re || !sentence || !re.test(sentence)) return '';
+  return sentence.replace(re, fn);
+}
+function gapTargetOf(g){ return g.correct || g.wanted; }
+
+// ---------- Review card ----------
+let gapSessionDone = new Set();
+let gapRevealed = false;
+function renderGapReview(){
+  const panel = document.getElementById('gapReviewPanel');
+  const box = document.getElementById('gapReviewBox');
+  if(!panel) return;
+  const openCount = state.gaps.filter(g => g.status === 'open').length;
+  panel.style.display = openCount ? '' : 'none';
+  if(!openCount) return;
+  const dueAll = getDueGaps();
+  const due = dueAll.filter(g => !gapSessionDone.has(g.id));
+  if(!due.length){
+    box.innerHTML = `<h2>Gap review</h2><div class="empty">${dueAll.length ? 'Done for now — ' + dueAll.length + ' will come back again later today.' : 'Nothing due — your open gaps come back on their station schedule.'}</div>`;
+    return;
+  }
+  const g = due[0];
+  const own = g.lang === 'ar' ? g.exAr : g.exEn;
+  const other = g.lang === 'ar' ? g.exEn : g.exAr;
+  const target = gapTargetOf(g);
+  const blanked = gapReplaceTarget(own, target, g.lang, '_____');
+  const dir = g.lang === 'ar' ? 'rtl' : 'ltr', odir = g.lang === 'ar' ? 'ltr' : 'rtl';
+  let cue = '';
+  if(blanked) cue += `<div class="gap-cue" dir="${dir}">${escapeHtml(blanked)}</div>`;
+  if(other) cue += `<div class="gap-cue" dir="${odir}">${escapeHtml(other)}</div>`;
+  if(!cue){
+    cue = g.said ? `<div class="gap-cue">You said “${escapeHtml(g.said)}” — what was the word or phrase you were missing?</div>`
+      : `<div class="gap-cue">Say the word you were missing${g.topic ? ' (' + escapeHtml(g.topic) + ')' : ''}.</div>`;
+  }
+  const answer = `<div class="gap-answer" dir="${dir}">${escapeHtml(target)}</div>`
+    + (own ? `<div class="gap-meta" dir="${dir}">${escapeHtml(own)}</div>` : '')
+    + (g.note ? `<div class="gap-meta">${escapeHtml(g.note)}</div>` : '')
+    + (!g.correct ? '<div class="gap-meta">(No correct word saved yet — open Details on this gap to add it.)</div>' : '');
+  box.innerHTML = `<h2>Gap review</h2>
+    <div class="count-note">${due.length} due · say the answer out loud first, then reveal</div>
+    <div class="due-card"><div class="phrase-texts">
+      <div class="due-meta"><span class="station-pill">Station ${g.srs.station}</span> ${g.srs.reps}/${MIN_TO_ADVANCE[g.srs.station]} reps at this station · ${GAP_TYPE_LABELS[g.type]}</div>
+      ${cue}
+      ${gapRevealed ? answer : ''}
+    </div>
+    ${gapRevealed ? `<div class="rating-row">
+        <button class="rate-btn rate-1" data-grate="1" data-gid="${g.id}" type="button">1 Major forgetting</button>
+        <button class="rate-btn rate-2" data-grate="2" data-gid="${g.id}" type="button">2 Struggled</button>
+        <button class="rate-btn rate-3" data-grate="3" data-gid="${g.id}" type="button">3 Okay</button>
+        <button class="rate-btn rate-4" data-grate="4" data-gid="${g.id}" type="button">4 Good</button>
+        <button class="rate-btn rate-5" data-grate="5" data-gid="${g.id}" type="button">5 Perfect</button>
+      </div>` : `<div class="card-actions"><button class="primary" id="gapRevealBtn" type="button">Reveal answer</button></div>`}
+    </div>`;
+}
+document.getElementById('gapReviewBox').addEventListener('click', async (e) => {
+  if(e.target.id === 'gapRevealBtn'){ gapRevealed = true; renderGapReview(); return; }
+  const r = e.target.dataset.grate;
+  if(!r) return;
+  const g = state.gaps.find(x => x.id === e.target.dataset.gid);
+  if(!g) return;
+  rateGapReview(g, parseInt(r, 10));
+  gapSessionDone.add(g.id); gapRevealed = false;
+  await saveGaps();
+  renderGaps();
+});
+
+// ---------- Top 5 ----------
+function gapPriorityList(){
+  const open = state.gaps.filter(g => g.status === 'open');
+  const neverRecalled = g => !(g.attempts || []).some(a => a.r >= 4);
+  const lastMiss = g => ((g.attempts || []).filter(a => a.r <= 2).map(a => a.d).sort().pop()) || '';
+  return open.sort((a, b) => {
+    const na = neverRecalled(a), nb = neverRecalled(b);
+    if(na !== nb) return na ? -1 : 1;
+    if(na) return (b.createdAt || '').localeCompare(a.createdAt || '');
+    return lastMiss(b).localeCompare(lastMiss(a)) || (b.logDates || []).length - (a.logDates || []).length;
+  });
+}
+function renderGapTop(){
+  const panel = document.getElementById('gapTopPanel');
+  if(!panel) return;
+  const top = gapPriorityList().slice(0, 5);
+  panel.style.display = top.length ? '' : 'none';
+  if(!top.length) return;
+  document.getElementById('gapTop').innerHTML = `<h2>Today’s top ${top.length} gap${top.length === 1 ? '' : 's'}</h2>
+    <p class="gap-mini">Never recalled first, then the ones you missed most recently. Try to use at least 3 of these in real conversation today.</p>`
+    + top.map(g => `<div class="gap-meta" style="font-size:14px;color:var(--ink);"><span dir="${g.lang === 'ar' ? 'rtl' : 'ltr'}"><strong>${escapeHtml(g.wanted)}</strong>${g.correct && g.correct !== g.wanted ? ' → ' + escapeHtml(g.correct) : ''}</span> <span class="badge type-${g.type}">${GAP_TYPE_LABELS[g.type]}</span></div>`).join('');
+}
+
+// ---------- Daily checklist ----------
+function renderGapChecklist(){
+  const box = document.getElementById('gapChecklist');
+  if(!box) return;
+  const today = todayStr();
+  const c = state.gapMeta.checklist[today] || {};
+  let full = 0;
+  for(let i = 0; i < 7; i++){ const d = state.gapMeta.checklist[addDays(today, -i)]; if(d && d.logged && d.drill && d.spoke) full++; }
+  box.innerHTML = `<div class="gap-check">
+    <div class="gap-mini">Today · full days in the last 7: <strong>${full}/7</strong></div>
+    <label><input type="checkbox" data-gchk="logged" ${c.logged ? 'checked' : ''}> Logged my gaps</label>
+    <label><input type="checkbox" data-gchk="drill" ${c.drill ? 'checked' : ''}> Did the gap review</label>
+    <label><input type="checkbox" data-gchk="spoke" ${c.spoke ? 'checked' : ''}> Used 3 gap words in real speech</label>
+  </div>`;
+}
+document.getElementById('gapChecklist').addEventListener('change', async (e) => {
+  const k = e.target.dataset.gchk;
+  if(!k) return;
+  const today = todayStr();
+  const c = state.gapMeta.checklist[today] || (state.gapMeta.checklist[today] = { logged: false, drill: false, spoke: false });
+  c[k] = e.target.checked;
+  await saveGaps(); renderGapChecklist();
+});
+
+// ---------- Stats ----------
+function renderGapStats(){
+  const box = document.getElementById('gapStats');
+  if(!box) return;
+  const gs = state.gaps;
+  if(!gs.length){ box.innerHTML = ''; return; }
+  const today = todayStr(), weekStart = addDays(today, -6);
+  const evs = g => (g.logDates && g.logDates.length) ? g.logDates : [g.date];
+  const weekGaps = gs.filter(g => evs(g).some(d => d >= weekStart));
+  const loggedWeek = gs.reduce((n, g) => n + evs(g).filter(d => d >= weekStart).length, 0);
+  const closedWeek = gs.filter(g => g.closedAt && g.closedAt >= weekStart).length;
+  const split = arr => ({ new: arr.filter(g => g.type === 'new').length, retrieval: arr.filter(g => g.type === 'retrieval').length, chunk: arr.filter(g => g.type === 'chunk').length });
+  const sw = split(weekGaps), sa = split(gs);
+  const pct = (n, t) => t ? Math.round(n / t * 100) + '%' : '—';
+  const open = gs.filter(g => g.status === 'open').length;
+  const topicCounts = {};
+  gs.forEach(g => { const t = (g.topic || '').trim(); if(t) topicCounts[t] = (topicCounts[t] || 0) + 1; });
+  const topics = Object.entries(topicCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const recurring = gs.filter(g => evs(g).length > 1).sort((a, b) => evs(b).length - evs(a).length).slice(0, 8);
+  const months = [];
+  let ref = new Date(today + 'T00:00:00');
+  for(let i = 0; i < 12; i++){
+    const key = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
+    months.push(key.getFullYear() + '-' + String(key.getMonth() + 1).padStart(2, '0'));
+  }
+  const rows = months.map(m => {
+    const logged = gs.reduce((n, g) => n + evs(g).filter(d => d.slice(0, 7) === m).length, 0);
+    const created = gs.filter(g => (g.date || '').slice(0, 7) === m).length;
+    const archived = gs.filter(g => (g.closedAt || '').slice(0, 7) === m).length;
+    return { m, logged, created, archived };
+  }).filter(r => r.logged || r.created || r.archived);
+  box.innerHTML = `<h2>Progress</h2>
+    <div class="gap-stats-row">
+      <div class="stat"><div class="num">${gs.length}</div><div class="lbl">Gaps</div></div>
+      <div class="stat"><div class="num">${open}</div><div class="lbl">Open</div></div>
+      <div class="stat"><div class="num">${gs.length - open}</div><div class="lbl">Archived</div></div>
+      <div class="stat"><div class="num">${loggedWeek}</div><div class="lbl">Logged this week</div></div>
+      <div class="stat"><div class="num">${closedWeek}</div><div class="lbl">Closed this week</div></div>
+    </div>
+    <p class="gap-mini"><strong>Couldn’t recall</strong> (knew it, couldn’t retrieve it in time) — this week: ${sw.retrieval} of ${weekGaps.length} (${pct(sw.retrieval, weekGaps.length)}) · all time: ${sa.retrieval} of ${gs.length} (${pct(sa.retrieval, gs.length)}). If speaking is improving, this share should fall over time.<br>
+    Never learned: ${sw.new} this week · ${sa.new} all time. Wrong choice / chunk: ${sw.chunk} this week · ${sa.chunk} all time.</p>
+    ${topics.length ? `<p class="gap-mini"><strong>By topic:</strong> ${topics.map(([t, n]) => escapeHtml(t) + ' ×' + n).join(' · ')}</p>` : ''}
+    ${recurring.length ? `<p class="gap-mini"><strong>Logged more than once:</strong> ${recurring.map(g => '<span dir="' + (g.lang === 'ar' ? 'rtl' : 'ltr') + '">' + escapeHtml(g.wanted) + '</span> ×' + evs(g).length).join(' · ')}</p>` : ''}
+    ${rows.length ? `<table class="gap-table"><tr><th>Month</th><th>Times logged</th><th>New gaps</th><th>Archived</th></tr>${rows.map(r => `<tr><td>${r.m}</td><td>${r.logged}</td><td>${r.created}</td><td>${r.archived}</td></tr>`).join('')}</table>` : ''}`;
+}
+
+// ---------- Move to bank ----------
+async function gapMoveToBank(g, card){
+  const st = card.querySelector('[data-gstatus]');
+  const say = (m, err) => { st.textContent = m; st.className = 'status-msg' + (err ? ' err' : ''); };
+  // Use what's currently typed in the editor, not just what's saved.
+  const val = f => (card.querySelector(`[data-gf="${f}"]`).value || '').trim();
+  const target = val('correct') || val('wanted');
+  let en = val('exEn'), ar = val('exAr');
+  if(!en || !ar){ say('Add both example sentences first (English and Arabic) — ✨ AI fill can draft them.', true); return; }
+  const own = g.lang === 'ar' ? 'ar' : 'en';
+  const bolded = gapReplaceTarget(own === 'ar' ? ar : en, target, own, m => '**' + m + '**');
+  if(bolded){ if(own === 'ar') ar = bolded; else en = bolded; }
+  const known = alreadyKnownWordMessage(en, ar);
+  if(known){ say(known, true); return; }
+  if(isDuplicatePhrase(en, ar) && !confirm('This sentence looks like it\u2019s already in your bank. Add it again anyway?')) return;
+  if(multiWordViolationMessage(en, ar) && !confirm('Nothing in this sentence is new to your bank — every word is already in it. Add it anyway?')) return;
+  state.bank.unshift({ id: uid(), en, ar, category: val('topic') || g.topic || 'Gaps', practiceCount: 0, lastPracticed: null });
+  await saveBank();
+  renderBank();
+  g.exEn = val('exEn'); g.exAr = val('exAr'); g.correct = val('correct'); g.topic = val('topic') || g.topic;
+  g.inBank = true; g.bankedAt = todayStr(); g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'bank';
+  gapTouch(g); await saveGaps(); renderGaps();
+  gapToastMsg(bolded ? 'Moved to your phrase bank with the word in bold.' : 'Moved to your phrase bank (couldn\u2019t find the word in the sentence to bold it).');
+}
+
+// ---------- AI fill (optional — needs a Gemini key) ----------
+async function gapAiFill(g, card, btn){
+  const st = card.querySelector('[data-gstatus]');
+  const val = f => (card.querySelector(`[data-gf="${f}"]`).value || '').trim();
+  btn.disabled = true; const oldLabel = btn.textContent; btn.textContent = 'Thinking…';
+  st.textContent = ''; st.className = 'status-msg';
+  const langName = g.lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a bilingual English / Modern Standard Arabic tutor. Reply with ONLY one JSON object and nothing else (no markdown fences): {"correct":"","note":"","exEn":"","exAr":""}.';
+  const text = `A learner wanted to say something in ${langName} but couldn't find the word.\n`
+    + `What they wanted to say: "${val('wanted')}"\n`
+    + (val('said') ? `What they said instead: "${val('said')}"\n` : 'They said nothing suitable instead.\n')
+    + `Fill in: "correct" = the natural ${langName} word or fixed chunk they were looking for; `
+    + '"note" = one short sentence on why what they said instead was the wrong choice, or how the two differ (empty string if not relevant); '
+    + '"exEn" and "exAr" = ONE natural example sentence in English and its Modern Standard Arabic translation, both using the correct word/chunk (write the Arabic without tashkeel).';
+  try{
+    const { text: out } = await callGemini(text, { system, useSearch: false });
+    const a = out.indexOf('{'), b = out.lastIndexOf('}');
+    if(a < 0 || b < a) throw new Error('The AI reply wasn\u2019t in the expected format.');
+    const j = JSON.parse(out.slice(a, b + 1));
+    [['correct', j.correct], ['note', j.note], ['exEn', j.exEn], ['exAr', j.exAr]].forEach(([f, v]) => {
+      if(v) card.querySelector(`[data-gf="${f}"]`).value = String(v).trim();
+    });
+    st.textContent = 'Draft filled in — check it, then press Save details.'; st.className = 'status-msg';
+  }catch(err){
+    st.textContent = 'AI fill failed: ' + (err && err.message ? err.message : 'unknown error'); st.className = 'status-msg err';
+  }
+  btn.disabled = false; btn.textContent = oldLabel;
+}
+
+
+// ---------- Gaps · Batch 3: Sheet sync (pull → merge → push) ----------
+// Needs the updated Apps Script (a "Gaps" tab). Order matters on purpose: it
+// pulls and merges the Sheet's gaps into this device FIRST, then pushes the
+// merged list back, so gaps logged on another device are never overwritten.
+function gapToRow(g){
+  ensureSrs(g);
+  return {
+    id: g.id, lang: g.lang, wanted: g.wanted, said: g.said || '', correct: g.correct || '',
+    exEn: g.exEn || '', exAr: g.exAr || '', note: g.note || '', topic: g.topic || '', type: g.type,
+    typeManual: g.typeManual ? 'Yes' : '', status: g.status, closedAt: g.closedAt || '', closedBy: g.closedBy || '',
+    inBank: g.inBank ? 'Yes' : '', bankedAt: g.bankedAt || '', createdAt: g.createdAt || '', date: g.date || '',
+    logDates: (g.logDates || []).join(';'), station: g.srs.station, reps: g.srs.reps, nextReview: g.srs.nextReview,
+    attempts: JSON.stringify(g.attempts || []), updatedAt: g.updatedAt || ''
+  };
+}
+function gapFromRow(r){
+  const d10 = v => v ? String(v).slice(0, 10) : '';
+  const wanted = String(r.wanted == null ? '' : r.wanted).trim();
+  if(!wanted) return null;
+  let attempts = [];
+  try{ const a = JSON.parse(r.attempts || '[]'); if(Array.isArray(a)) attempts = a; }catch(e){}
+  const date = d10(r.date) || todayStr();
+  const logDates = String(r.logDates || '').split(';').map(d10).filter(Boolean);
+  return {
+    id: String(r.id || uid()), lang: r.lang === 'ar' ? 'ar' : 'en', wanted,
+    said: String(r.said || ''), correct: String(r.correct || ''), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
+    note: String(r.note || ''), topic: String(r.topic || ''),
+    type: ['new', 'retrieval', 'chunk'].includes(r.type) ? r.type : 'new', typeManual: r.typeManual === 'Yes',
+    status: r.status === 'closed' ? 'closed' : 'open', closedAt: d10(r.closedAt), closedBy: String(r.closedBy || ''),
+    inBank: r.inBank === 'Yes', bankedAt: d10(r.bankedAt),
+    createdAt: String(r.createdAt || ''), date, dateAdded: date, logDates: logDates.length ? logDates : [date], attempts,
+    srs: { station: Math.min(7, Math.max(1, Number(r.station) || 1)), reps: Number(r.reps) || 0, nextReview: d10(r.nextReview) || todayStr(), dateAdded: date, hotLayerDone: [] },
+    updatedAt: String(r.updatedAt || '')
+  };
+}
+async function coreSyncGaps(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    // 1) pull + merge
+    const res = await fetch(sheetGetUrl(url, { type: 'gaps' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    if(Array.isArray(data)) throw new Error('your Apps Script doesn\u2019t have the Gaps update yet — paste in the updated script and redeploy first (nothing was sent)');
+    const incoming = (data.entries || []).map(gapFromRow).filter(Boolean);
+    const before = state.gaps.length;
+    state.gaps = mergeGaps(state.gaps, incoming);
+    await saveGaps();
+    // 2) push the merged list back
+    const post = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow) })
+    });
+    throwIfRejected(await post.json());
+    return { ok: true, message: `Gaps synced: ${incoming.length} from the Sheet merged with ${before} here → ${state.gaps.length} in total, all backed up.` };
+  }catch(err){
+    return { ok: false, message: 'Gaps sync failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+function renderGapSync(){
+  const box = document.getElementById('gapSyncBox');
+  if(!box || box.dataset.ready) return;
+  box.dataset.ready = '1';
+  box.innerHTML = `<h2>Backup &amp; devices</h2>
+    <p class="gap-mini">Your gaps live on this device. <strong>Sync gaps with Sheet</strong> pulls what’s in your Google Sheet, merges it with what’s here (nothing is overwritten), then backs the combined list up — press it on each device whenever you switch. “Download backup file” (Phrase Bank tab) also includes your gaps, and restoring a file merges them too.</p>
+    <div class="card-actions"><button class="primary" id="gapSyncBtn" type="button">Sync gaps with Sheet</button></div>
+    <div class="status-msg" id="gapSyncStatus"></div>
+    <p class="gap-mini">First time only: the Sheet needs the updated Apps Script that adds a “Gaps” tab. Paste the new <code>phrase-trainer-sheet-sync.gs</code> over your current one, then Deploy → Manage deployments → edit → New version.</p>`;
+  document.getElementById('gapSyncBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('gapSyncBtn'), st = document.getElementById('gapSyncStatus');
+    btn.disabled = true; st.textContent = 'Syncing gaps…'; st.className = 'status-msg';
+    const r = await coreSyncGaps();
+    st.textContent = r.message; st.className = r.ok ? 'status-msg' : 'status-msg err';
+    btn.disabled = false;
+    if(r.ok) renderGaps();
+  });
+}
+
+// ---------- Pop-ups: every one gets a ✕ and closes with Esc ----------
+// (The Sheet & AI settings pop-up used to run off-screen with its Cancel
+// button out of reach; .modal now scrolls, and these give a second way out.)
+function closeModalBackdrop(bd){
+  const cand = [...bd.querySelectorAll('button')].find(b => /^(cancel|close|done)$/i.test((b.textContent || '').trim()) || /close|cancel/i.test(b.id || ''));
+  if(cand) cand.click(); else bd.classList.remove('open');
+}
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+  const modal = bd.querySelector('.modal');
+  if(!modal || modal.querySelector('.modal-x')) return;
+  if(getComputedStyle(modal).display === 'flex') return; // flex-layout pop-ups keep their own header; Esc still works
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'modal-x'; x.setAttribute('aria-label', 'Close'); x.textContent = '✕';
+  x.addEventListener('click', () => closeModalBackdrop(bd));
+  modal.insertBefore(x, modal.firstChild);
+});
+document.addEventListener('keydown', (e) => {
+  if(e.key !== 'Escape') return;
+  const open = [...document.querySelectorAll('.modal-backdrop.open')];
+  if(open.length) closeModalBackdrop(open[open.length - 1]);
+});
+
 // ---------- Init ----------
 (async function init(){
   await loadState();
@@ -6131,6 +6891,7 @@ if('serviceWorker' in navigator){
   renderQuran();
   renderGcStarResults();
   renderGcDateResults();
+  renderGaps();
 
   // Silently catch up today's drill progress from another device, if any —
   // best-effort and non-blocking, so a slow/offline sheet never delays the
