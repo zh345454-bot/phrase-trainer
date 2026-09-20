@@ -458,6 +458,10 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   box-shadow:0 4px 14px rgba(0,0,0,0.28);
 }
 .gap-fab:hover{ background:var(--ink); }
+.gap-fab.has-sel{ background:var(--teal); max-width:78vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gap-ctx{ font-size:12.5px; color:var(--ink-soft); margin:0 0 10px; display:none; }
+.gap-ctx label{ display:flex; gap:8px; align-items:flex-start; }
+.gap-ctx.show{ display:block; }
 .gap-toast{
   position:fixed; left:50%; transform:translateX(-50%); bottom:calc(76px + env(safe-area-inset-bottom, 0px));
   z-index:11; background:var(--ink); color:#fff; padding:9px 14px; font-size:13px; max-width:88vw;
@@ -1065,6 +1069,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
     <div class="field"><label>What I wanted to say</label><input type="text" id="gapWanted" placeholder="e.g. Islamic studies"></div>
     <div class="field"><label>What I said instead (optional)</label><input type="text" id="gapSaid" placeholder="e.g. Islamic teaching"></div>
+    <div class="gap-ctx" id="gapCtxRow"><label><input type="checkbox" id="gapUseCtx" checked><span id="gapCtxText"></span></label></div>
     <div class="status-msg" id="gapCaptureMsg"></div>
     <div class="modal-actions">
       <button class="ghost" id="gapCancelBtn" type="button">Cancel</button>
@@ -1755,6 +1760,7 @@ function bumpNewIntroCount(n){
   if(usage.date !== today) usage = { date: today, count: 0 };
   usage.count += n;
   lsSet('newIntro', usage);
+  bumpDrillSyncInBackground();
   return usage.count;
 }
 function getNewIntroTodayCount(){
@@ -3263,57 +3269,92 @@ async function coreSyncLog(){
 // deliberately not an appended log — so switching between laptop and phone
 // mid-day can pick up where the other device left off without the sheet
 // growing a row per review the way the practice Log does.
+// What counts as "drill progress" for a day: the review dose (target /
+// completed) PLUS the other daily-plan counters — Voice practice, Write &
+// check, Add new phrases — and the new-phrase intake counter. All of it rides
+// on the ONE Drills row for that date (upserted in place, never appended), so
+// it follows you between devices without the sheet growing per action.
+function getDrillSnapshot(){
+  const dose = getDailyDoseState();
+  return {
+    date: dose.date, target: dose.target, completed: dose.completed,
+    voicePractice: getTaskProgress('voicePractice').completed,
+    writeCheck: getTaskProgress('writeCheck').completed,
+    addPhrase: getTaskProgress('addPhrase').completed,
+    newIntro: getNewIntroTodayCount()
+  };
+}
+// Pull today's row and merge it into this device, taking the HIGHER value of
+// every counter — so returning to a device never loses progress made on it,
+// and never loses progress made on another one.
+async function pullDrillsMerge(){
+  const url = state.settings.webAppUrl;
+  const res = await fetch(sheetGetUrl(url, { type: 'drill', date: todayStr() }));
+  const remote = await res.json();
+  throwIfRejected(remote);
+  if(!(remote && remote.date)) return { found: false, snap: getDrillSnapshot() };
+  const local = getDrillSnapshot();
+  const n = v => Number(v) || 0;
+  lsSet('dailyDose', { date: local.date, target: Math.max(local.target, n(remote.target)), completed: Math.max(local.completed, n(remote.completed)) });
+  ['voicePractice', 'writeCheck', 'addPhrase'].forEach(k => {
+    const m = Math.max(local[k], n(remote[k]));
+    if(m !== local[k]) lsSet('dailyTask_' + k, { date: local.date, completed: m });
+  });
+  const ni = Math.max(local.newIntro, n(remote.newIntro));
+  if(ni !== local.newIntro) lsSet('newIntro', { date: local.date, count: ni });
+  return { found: true, snap: getDrillSnapshot() };
+}
 async function coreSyncDrills(){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
-  const dose = getDailyDoseState();
   try{
+    // Pull-merge first, so this device's push can never overwrite another device's higher counts.
+    try{ await pullDrillsMerge(); }catch(e){}
+    const d = getDrillSnapshot();
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: sheetPostBody({ type: 'drill_sync', date: dose.date, target: dose.target, completed: dose.completed })
+      body: sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
+        voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro })
     });
     throwIfRejected(await res.json());
-    return { ok: true, message: 'Drill progress: today\'s dose (' + dose.completed + '/' + dose.target + ') synced.' };
+    renderDailyPlan();
+    return { ok: true, message: 'Drill progress: today\'s dose (' + d.completed + '/' + d.target + '), voice ' + d.voicePractice + ', write & check ' + d.writeCheck + ', new phrases ' + d.addPhrase + ' synced.' };
   }catch(err){
     return { ok: false, message: 'Drill progress: ' + (err && err.message ? err.message : 'sync failed.') };
   }
 }
-// Fire-and-forget wrapper for use right after a review completes — the
-// review flow itself shouldn't wait on a network round trip, and a failed
-// background sync just means the next completion (or "Sync all") retries it.
+// Fire-and-forget wrapper, called whenever any drill counter moves. Debounced
+// so a burst of actions makes one request, and a failure just means the next
+// action (or "Sync all") retries it.
+let drillSyncTimer = null;
 function bumpDrillSyncInBackground(){
   if(!state.settings.webAppUrl) return;
-  coreSyncDrills().catch(()=>{});
+  clearTimeout(drillSyncTimer);
+  drillSyncTimer = setTimeout(()=>{ coreSyncDrills().catch(()=>{}); }, 1500);
 }
 
-// Pulls today's row (if any) from the Drills sheet and merges it into the
-// local dailyDose so progress made on another device today shows up here
-// too. Takes the higher completed count rather than blindly overwriting —
-// so returning to a device you'd already made some progress on today
-// never loses that progress.
+// Catches this device up with progress made on another device today.
 async function coreRestoreDrills(){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
-    const res = await fetch(sheetGetUrl(url, { type: 'drill', date: todayStr() }));
-    const remote = await res.json();
-    if(remote && remote.date){
-      const local = getDailyDoseState();
-      const merged = {
-        date: local.date,
-        target: Math.max(local.target, Number(remote.target) || 0),
-        completed: Math.max(local.completed, Number(remote.completed) || 0)
-      };
-      lsSet('dailyDose', merged);
-      renderDrills();
-      return { ok: true, message: 'Drill progress: caught up to ' + merged.completed + '/' + merged.target + ' for today.' };
+    const r = await pullDrillsMerge();
+    renderDrills();
+    renderDailyPlan();
+    if(r.found){
+      const m = r.snap;
+      return { ok: true, message: 'Drill progress: caught up — dose ' + m.completed + '/' + m.target + ', voice ' + m.voicePractice + ', write & check ' + m.writeCheck + ', new phrases ' + m.addPhrase + ' today.' };
     }
     return { ok: true, skipped: true, message: 'Drill progress: nothing synced for today yet.' };
   }catch(err){
     return { ok: false, message: 'Drill progress: ' + (err && err.message ? err.message : 'restore failed.') };
   }
 }
+// Coming back to this tab/app after using another device → catch up silently.
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && state.settings && state.settings.webAppUrl) coreRestoreDrills().catch(()=>{});
+});
 
 async function coreBackupBank(){
   const url = state.settings.webAppUrl;
@@ -4879,6 +4920,7 @@ function bumpTaskProgress(key, by){
 // storage hiccup can never turn a successful recording/check into an error.
 function countTask(key, by){
   try{ bumpTaskProgress(key, by); }catch(e){ console.error('Could not record task progress:', e); }
+  bumpDrillSyncInBackground();
 }
 
 function renderDailyPlan(){
@@ -6277,7 +6319,7 @@ function gapLastLog(g){ return (g.logDates && g.logDates.length) ? g.logDates[g.
 
 // Log a gap, or — if the same gap already exists — update that entry instead
 // of adding another (one row per gap, however often you forget it).
-function captureGap({ lang, wanted, said }){
+function captureGap({ lang, wanted, said, source, exEn, exAr }){
   wanted = (wanted || '').trim(); said = (said || '').trim();
   if(!wanted) return null;
   const today = todayStr();
@@ -6288,6 +6330,9 @@ function captureGap({ lang, wanted, said }){
     if(!g.logDates) g.logDates = [g.date];
     if(!g.logDates.includes(today)) g.logDates.push(today);
     if(said) g.said = said;
+    if(source && !g.source) g.source = source;   // never overwrite what's already there
+    if(exEn && !g.exEn) g.exEn = exEn;
+    if(exAr && !g.exAr) g.exAr = exAr;
     if(g.status === 'closed'){
       g.status = 'open'; g.closedAt = ''; g.closedBy = '';
       g.srs = { station: 1, reps: 0, nextReview: today, dateAdded: g.dateAdded || today, hotLayerDone: [] };
@@ -6296,7 +6341,7 @@ function captureGap({ lang, wanted, said }){
     if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
   } else {
     isNew = true;
-    g = { id: uid(), lang, wanted, said, correct: '', exEn: '', exAr: '', note: '', topic: '',
+    g = { id: uid(), lang, wanted, said, correct: '', exEn: exEn || '', exAr: exAr || '', note: '', topic: '', source: source || '',
           type: gapAutoType(wanted, lang), typeManual: false,
           createdAt: new Date().toISOString(), date: today, dateAdded: today, logDates: [today], attempts: [],
           status: 'open', closedAt: '', closedBy: '', inBank: false, bankedAt: '' };
@@ -6365,6 +6410,7 @@ function gapEditorHtml(g){
     <label>Example sentence (English)</label><input data-gf="exEn" value="${escapeHtml(g.exEn || '')}">
     <label>Example sentence (Arabic)</label><input data-gf="exAr" dir="rtl" value="${escapeHtml(g.exAr || '')}">
     <label>Why the substitute was wrong (optional)</label><input data-gf="note" value="${escapeHtml(g.note || '')}">
+    <label>Source (where you met it)</label><input data-gf="source" value="${escapeHtml(g.source || '')}" placeholder="e.g. Phrase bank">
     <label>Topic</label><input data-gf="topic" list="gapTopicList" value="${escapeHtml(g.topic || '')}" placeholder="e.g. Islamic studies">
     <label>Type</label><select data-gf="type">${opt('new', GAP_TYPE_LABELS.new)}${opt('retrieval', GAP_TYPE_LABELS.retrieval)}${opt('chunk', GAP_TYPE_LABELS.chunk)}</select>
     <div class="status-msg" data-gstatus></div>
@@ -6409,7 +6455,7 @@ function renderGapList(){
           ${g.inBank && g.closedBy !== 'bank' ? '<span class="badge gap-closed">In bank</span>' : ''}
         </div>
       </div>
-      <div class="gap-meta">logged ×${times} · first ${g.date} · last ${gapLastLog(g)}${g.said ? ' · said: “' + escapeHtml(g.said) + '”' : ''}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}</div>
+      <div class="gap-meta">logged ×${times} · first ${g.date} · last ${gapLastLog(g)}${g.said ? ' · said: “' + escapeHtml(g.said) + '”' : ''}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}${g.source ? ' · from ' + escapeHtml(g.source) : ''}</div>
       ${g.correct ? `<div class="gap-correct" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>→ ${escapeHtml(g.correct)}</div>` : ''}
       <div class="card-actions"><button class="ghost" data-gact="toggle" data-gid="${g.id}" type="button">${open ? 'Hide details ▴' : 'Details ▾'}</button></div>
       ${open ? gapEditorHtml(g) : ''}
@@ -6453,7 +6499,7 @@ document.getElementById('gapList').addEventListener('click', async (e) => {
     const clash = state.gaps.find(x => x.id !== g.id && gapKey(x.lang, x.wanted) === gapKey(g.lang, newWanted));
     if(clash){ st.textContent = 'Another gap already has this wording — open that one instead.'; st.className = 'status-msg err'; return; }
     g.wanted = newWanted; g.said = val('said'); g.correct = val('correct');
-    g.exEn = val('exEn'); g.exAr = val('exAr'); g.note = val('note'); g.topic = val('topic');
+    g.exEn = val('exEn'); g.exAr = val('exAr'); g.note = val('note'); g.topic = val('topic'); g.source = val('source');
     const newType = val('type');
     if(newType !== g.type){ g.type = newType; g.typeManual = true; }
     else if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
@@ -6483,15 +6529,27 @@ function setGapCaptureLang(l){
   document.getElementById('gapWanted').setAttribute('dir', l === 'ar' ? 'rtl' : 'ltr');
   document.getElementById('gapSaid').setAttribute('dir', l === 'ar' ? 'rtl' : 'ltr');
 }
-function openGapCapture(){
-  setGapCaptureLang(state.gapMeta.lastLang || 'en');
-  document.getElementById('gapWanted').value = '';
+let gapCapturePrefill = null;
+function openGapCapture(prefill){
+  gapCapturePrefill = prefill || null;
+  const isAr = t => /[\u0600-\u06FF]/.test(t || '');
+  setGapCaptureLang(prefill ? (isAr(prefill.text) ? 'ar' : 'en') : (state.gapMeta.lastLang || 'en'));
+  document.getElementById('gapWanted').value = prefill ? prefill.text : '';
   document.getElementById('gapSaid').value = '';
   document.getElementById('gapCaptureMsg').textContent = '';
+  const row = document.getElementById('gapCtxRow');
+  if(prefill){
+    const hasCtx = prefill.exEn || prefill.exAr;
+    document.getElementById('gapCtxText').textContent = `Save “${prefill.source}” as the source${hasCtx ? ' and keep the sentence as context' : ''}`;
+    document.getElementById('gapUseCtx').checked = true;
+    row.classList.add('show');
+  } else {
+    row.classList.remove('show');
+  }
   document.getElementById('gapModal').classList.add('open');
   setTimeout(() => document.getElementById('gapWanted').focus(), 50);
 }
-document.getElementById('gapFab').addEventListener('click', openGapCapture);
+document.getElementById('gapFab').addEventListener('click', () => openGapCapture(gapFreshSelection()));
 document.getElementById('gapLangEn').addEventListener('click', () => setGapCaptureLang('en'));
 document.getElementById('gapLangAr').addEventListener('click', () => setGapCaptureLang('ar'));
 document.getElementById('gapCancelBtn').addEventListener('click', () => document.getElementById('gapModal').classList.remove('open'));
@@ -6499,7 +6557,9 @@ async function saveGapFromModal(keepOpen){
   const wanted = document.getElementById('gapWanted').value;
   const msg = document.getElementById('gapCaptureMsg');
   if(!wanted.trim()){ msg.textContent = 'Type what you wanted to say first.'; msg.className = 'status-msg err'; return; }
-  const r = captureGap({ lang: gapCaptureLang, wanted, said: document.getElementById('gapSaid').value });
+  const pf = gapCapturePrefill, useCtx = !!(pf && document.getElementById('gapUseCtx').checked);
+  const r = captureGap({ lang: gapCaptureLang, wanted, said: document.getElementById('gapSaid').value,
+    source: useCtx ? pf.source : '', exEn: useCtx ? pf.exEn : '', exAr: useCtx ? pf.exAr : '' });
   if(!r) return;
   await saveGaps();
   renderGaps();
@@ -6507,7 +6567,9 @@ async function saveGapFromModal(keepOpen){
   const note = r.isNew ? `Logged — tagged “${GAP_TYPE_LABELS[r.g.type]}”.`
     : r.reopened ? 'You logged this one again — reopened for review.'
     : `Already in your gaps — updated it (logged ×${times}).`;
-  gapToastMsg(note);
+  gapToastMsg(note + (useCtx ? ` Source: ${pf.source}.` : ''));
+  if(document.activeElement && document.activeElement.blur && !keepOpen) document.activeElement.blur();
+  if(pf){ gapSel = null; gapCapturePrefill = null; try{ window.getSelection().removeAllRanges(); }catch(e){} updateGapFab(); }
   if(keepOpen){
     document.getElementById('gapWanted').value = ''; document.getElementById('gapSaid').value = '';
     msg.textContent = note; msg.className = 'status-msg';
@@ -6795,7 +6857,7 @@ function gapToRow(g){
     typeManual: g.typeManual ? 'Yes' : '', status: g.status, closedAt: g.closedAt || '', closedBy: g.closedBy || '',
     inBank: g.inBank ? 'Yes' : '', bankedAt: g.bankedAt || '', createdAt: g.createdAt || '', date: g.date || '',
     logDates: (g.logDates || []).join(';'), station: g.srs.station, reps: g.srs.reps, nextReview: g.srs.nextReview,
-    attempts: JSON.stringify(g.attempts || []), updatedAt: g.updatedAt || ''
+    attempts: JSON.stringify(g.attempts || []), updatedAt: g.updatedAt || '', source: g.source || ''
   };
 }
 function gapFromRow(r){
@@ -6809,7 +6871,7 @@ function gapFromRow(r){
   return {
     id: String(r.id || uid()), lang: r.lang === 'ar' ? 'ar' : 'en', wanted,
     said: String(r.said || ''), correct: String(r.correct || ''), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
-    note: String(r.note || ''), topic: String(r.topic || ''),
+    note: String(r.note || ''), topic: String(r.topic || ''), source: String(r.source || ''),
     type: ['new', 'retrieval', 'chunk'].includes(r.type) ? r.type : 'new', typeManual: r.typeManual === 'Yes',
     status: r.status === 'closed' ? 'closed' : 'open', closedAt: d10(r.closedAt), closedBy: String(r.closedBy || ''),
     inBank: r.inBank === 'Yes', bankedAt: d10(r.bankedAt),
@@ -6878,6 +6940,84 @@ function renderGapSync(){
     if(r.ok) renderGaps();
   });
 }
+
+
+// ---------- Select-and-tap: turn highlighted text anywhere into a gap ----------
+// Select words in any phrase card, grammar example, Qur'an entry or log row and
+// the ＋ Gap button becomes "＋ Gap: “word”". Tapping it opens the capture
+// pop-up pre-filled, with the source tab and the surrounding sentence(s) kept as
+// context. The selection is remembered for a short while, because phones clear
+// it the moment you tap a button.
+const GAP_VIEW_LABELS = { bank: 'Phrase bank', starred: 'Starred', practice: 'Practice & Log', review: 'Review', drills: 'Drills', grammar: 'Grammar Hub', quran: 'Qur\u2019an', history: 'History', gaps: 'Gaps' };
+const GAP_SEL_TTL = 25000;
+let gapSel = null, gapSelTimer = null;
+function gapCleanText(node){
+  if(!node) return '';
+  const c = node.cloneNode(true);
+  c.querySelectorAll('.station-pill,.hot-badge,.badge,.tag,button,.due-meta').forEach(x => x.remove());
+  return (c.textContent || '').replace(/\s+/g, ' ').trim();
+}
+function gapContextFor(el, text){
+  // Bank-style cards (bank / starred / practice / review): keep BOTH language lines.
+  const texts = el.closest('.phrase-texts');
+  if(texts && (texts.querySelector('.phrase-en') || texts.querySelector('.phrase-ar'))){
+    return { exEn: gapCleanText(texts.querySelector('.phrase-en')), exAr: gapCleanText(texts.querySelector('.phrase-ar')) };
+  }
+  // Anywhere else: the sentence around the selection.
+  let block = el;
+  const view = el.closest('.view') || document.body;
+  while(block && block !== view && gapCleanText(block).length < text.length + 15) block = block.parentElement;
+  const full = gapCleanText(block || el);
+  const idx = full.indexOf(text);
+  let sentence = text;
+  if(idx >= 0){
+    const isEnd = c => /[.!?\u061F\u061B\n]/.test(c);
+    let a = idx; while(a > 0 && !isEnd(full[a - 1])) a--;
+    let b = idx + text.length; while(b < full.length && !isEnd(full[b])) b++;
+    if(b < full.length) b++;
+    sentence = full.slice(a, b).trim();
+    if(sentence.length > 400) sentence = full.slice(Math.max(0, idx - 120), idx + text.length + 120).trim();
+  }
+  return /[\u0600-\u06FF]/.test(sentence) ? { exEn: '', exAr: sentence } : { exEn: sentence, exAr: '' };
+}
+function gapReadSelection(){
+  const sel = window.getSelection();
+  if(!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const ae = document.activeElement;
+  // Text highlighted inside a box being typed in is the user's own writing, not material.
+  if(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && ae.selectionStart != null && ae.selectionStart !== ae.selectionEnd) return null;
+  const text = sel.toString().replace(/\s+/g, ' ').trim();
+  if(!text || text.length > 200) return null;
+  const node = sel.getRangeAt(0).commonAncestorContainer;
+  const el = node.nodeType === 1 ? node : node.parentElement;
+  if(!el || el.closest('#gapModal') || el.closest('#gapFab')) return null;
+  const vw = el.closest('.view');
+  const source = vw ? (GAP_VIEW_LABELS[vw.id.replace('view-', '')] || 'App') : (el.closest('.modal-backdrop') ? 'Pop-up' : 'App');
+  const ctx = gapContextFor(el, text);
+  return { text, source, exEn: ctx.exEn, exAr: ctx.exAr, at: Date.now() };
+}
+function gapFreshSelection(){
+  const live = gapReadSelection();
+  if(live) gapSel = live;
+  return gapSel && (Date.now() - gapSel.at) < GAP_SEL_TTL + 5000 ? gapSel : null;
+}
+function updateGapFab(){
+  const fab = document.getElementById('gapFab');
+  if(gapSel && (Date.now() - gapSel.at) < GAP_SEL_TTL + 5000){
+    const t = gapSel.text.length > 18 ? gapSel.text.slice(0, 17) + '…' : gapSel.text;
+    fab.textContent = '＋ Gap: “' + t + '”'; fab.classList.add('has-sel');
+  } else {
+    gapSel = null; fab.textContent = '＋ Gap'; fab.classList.remove('has-sel');
+  }
+}
+document.addEventListener('selectionchange', () => {
+  const r = gapReadSelection();
+  if(r){ gapSel = r; clearTimeout(gapSelTimer); gapSelTimer = setTimeout(updateGapFab, GAP_SEL_TTL + 6000); updateGapFab(); }
+  else if(gapSel){ clearTimeout(gapSelTimer); gapSelTimer = setTimeout(updateGapFab, GAP_SEL_TTL + 100); }
+});
+// Grab the selection the instant the button is touched, before the browser can clear it.
+['pointerdown', 'touchstart', 'mousedown'].forEach(ev =>
+  document.getElementById('gapFab').addEventListener(ev, () => { const r = gapReadSelection(); if(r){ gapSel = r; } }, { passive: true }));
 
 // ---------- Pop-ups: every one gets a ✕ and closes with Esc ----------
 // (The Sheet & AI settings pop-up used to run off-screen with its Cancel
