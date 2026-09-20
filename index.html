@@ -2190,6 +2190,49 @@ function multiWordViolationMessage(en, ar){
   return `The ${sides} side${isPlural ? 's' : ''} of this phrase ${isPlural ? 'have' : 'has'} more than one word${onlyOneSideBad ? ', with no single-word side to confirm it\'s one concept' : ''}. Tick "This is a deliberate multi-word phrase" to save it anyway, or edit it down to a single word.`;
 }
 
+// Splits text into bare words for "already known" comparisons: bold
+// markers stripped, Arabic diacritics stripped (so "في" matches "فِي"),
+// English lowercased, and leading/trailing punctuation trimmed off each
+// word — so matching is on the word itself, not its exact formatting.
+function wordsOf(text, lang){
+  const clean = stripBold(text || '').trim();
+  const normalized = lang === 'ar' ? stripTashkeel(clean) : clean.toLowerCase();
+  return normalized.split(/\s+/)
+    .map(w => w.replace(/^[.,!?;:"'()\-–—]+|[.,!?;:"'()\-–—]+$/g, ''))
+    .filter(Boolean);
+}
+
+// The first existing bank entry that already contains `word` (as its own
+// full phrase, or as one word inside a longer phrase) in the given
+// language field — or null if it's genuinely not there yet.
+function findWordInBank(word, lang){
+  const target = wordsOf(word, lang)[0];
+  if(!target) return null;
+  return state.bank.find(p => wordsOf(lang === 'ar' ? p.ar : p.en, lang).includes(target)) || null;
+}
+
+// Hard-blocks a single word from being saved as a new phrase if it already
+// shows up anywhere in the bank — as its own entry or as one word inside a
+// longer existing phrase — since the whole point of a single-word entry is
+// that it's a genuinely NEW word. Unlike the multi-word checkbox, there's
+// no override here: revisit the word from wherever it already lives rather
+// than logging a duplicate. Only applies to sides that are a single word;
+// a deliberately-confirmed multi-word side is never checked this way.
+function alreadyKnownWordMessage(en, ar){
+  const checks = [
+    en && isSingleWord(en) ? { word: en, lang: 'en', label: 'English' } : null,
+    ar && isSingleWord(ar) ? { word: ar, lang: 'ar', label: 'Arabic' } : null
+  ].filter(Boolean);
+  for(const c of checks){
+    const hit = findWordInBank(c.word, c.lang);
+    if(hit){
+      const example = c.lang === 'ar' ? hit.ar : hit.en;
+      return `The ${c.label} word "${c.word}" is already in your bank — it's used in the phrase "${example}"${hit.category ? ' (' + hit.category + ')' : ''}. It needs to be a genuinely new word to save as its own entry.`;
+    }
+  }
+  return '';
+}
+
 document.getElementById('addBankBtn').addEventListener('click', async ()=>{
   const en = document.getElementById('bankEn').value.trim();
   const ar = document.getElementById('bankAr').value.trim();
@@ -2200,6 +2243,8 @@ document.getElementById('addBankBtn').addEventListener('click', async ()=>{
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
+  const knownWord = alreadyKnownWordMessage(en, ar);
+  if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
   await saveBank();
@@ -2220,6 +2265,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   let added = 0;
   let skipped = 0;
   let rejected = 0;
+  let knownWordRejected = 0;
   lines.forEach(line=>{
     const parts = line.split('|').map(s=>s.trim());
     const en = parts[0] || '';
@@ -2227,6 +2273,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
     const category = parts[2] || '';
     if(!en && !ar) return;
     if(!allowMultiWord && multiWordViolationMessage(en, ar)){ rejected++; return; }
+    if(alreadyKnownWordMessage(en, ar)){ knownWordRejected++; return; }
     if(isDuplicatePhrase(en, ar)){ skipped++; return; }
     state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
     added++;
@@ -2238,6 +2285,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
     + (skipped ? ', skipped ' + skipped + ' already in your bank' : '')
     + (rejected ? ', skipped ' + rejected + ' with more than one word — tick "Allow multi-word phrases in this batch" to include them' : '')
+    + (knownWordRejected ? ', skipped ' + knownWordRejected + ' whose word is already used elsewhere in your bank' : '')
     + '.';
   renderBank();
 });
@@ -4048,6 +4096,8 @@ async function vpSaveBankDraft(){
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
+  const knownWord = alreadyKnownWordMessage(en, ar);
+  if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false });
   await saveBank();
@@ -4465,6 +4515,8 @@ async function gcSaveBankDraft(){
     const violation = multiWordViolationMessage(en, ar);
     if(violation){ alert(violation); return; }
   }
+  const knownWord = alreadyKnownWordMessage(en, ar);
+  if(knownWord){ alert(knownWord); return; }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Grammar check', practiceCount: 0, lastPracticed: null, starred: false });
   await saveBank();
