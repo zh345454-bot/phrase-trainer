@@ -507,7 +507,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="sub">Daily English &amp; Arabic speaking practice, logged to your Google Sheet</div>
     </div>
     <button class="gear-btn primary-action" id="syncAllBtn">⟳ Sync all</button>
-    <button class="gear-btn" id="fullRestoreBtn" title="Pull phrase bank, grammar notebook, Qur'an log and today's drill progress from the Sheet — for catching this device up after working on another one">⟲ Full restore</button>
+    <button class="gear-btn" id="fullRestoreBtn" title="Pull phrase bank, grammar notebook, Qur'an log, speaking gaps (merged) and today's drill progress from the Sheet — for catching this device up after working on another one">⟲ Full restore</button>
     <button class="gear-btn" id="aiBtn">Ask AI</button>
     <button class="gear-btn" id="settingsBtn">Sheet &amp; AI settings</button>
     <div class="header-stats" id="headerStats"></div>
@@ -3555,6 +3555,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreBackupGrammar());
   statusEl.textContent = 'Backing up Qur\'an log...';
   results.push(await coreBackupQuran(true));
+  statusEl.textContent = 'Syncing gaps (merge, then back up)...';
+  results.push(await coreSyncGaps());
   statusEl.textContent = 'Syncing drill progress...';
   results.push(await coreSyncDrills());
 
@@ -3587,7 +3589,7 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
     return;
   }
   const counts = 'bank: ' + state.bank.length + ' phrases, grammar: ' + state.grammar.length + ' entries, Qur\'an: ' + state.quran.length + ' entries';
-  if(!confirm('This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
+  if(!confirm('(Your speaking gaps are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
   btn.disabled = true;
   syncBtn.disabled = true;
   const origLabel = btn.textContent;
@@ -3602,6 +3604,8 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   results.push(await coreRestoreGrammar());
   statusEl.textContent = 'Restoring Qur\'an log...';
   results.push(await coreRestoreQuran());
+  statusEl.textContent = 'Merging speaking gaps...';
+  results.push(await coreRestoreGaps());
   statusEl.textContent = 'Catching up drill progress...';
   results.push(await coreRestoreDrills());
 
@@ -6814,11 +6818,11 @@ function gapFromRow(r){
     updatedAt: String(r.updatedAt || '')
   };
 }
-async function coreSyncGaps(){
+// Pull the Sheet's gaps and MERGE them into this device (never replaces).
+async function coreRestoreGaps(){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
-    // 1) pull + merge
     const res = await fetch(sheetGetUrl(url, { type: 'gaps' }), { method: 'GET' });
     const data = await res.json();
     throwIfRejected(data);
@@ -6827,16 +6831,34 @@ async function coreSyncGaps(){
     const before = state.gaps.length;
     state.gaps = mergeGaps(state.gaps, incoming);
     await saveGaps();
-    // 2) push the merged list back
+    renderGaps();
+    return { ok: true, incoming: incoming.length, before, message: `Gaps: ${incoming.length} in the Sheet merged with ${before} here → ${state.gaps.length} on this device.` };
+  }catch(err){
+    return { ok: false, message: 'Gaps restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+// Push this device's (already merged) gaps to the Sheet.
+async function coreBackupGaps(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
     const post = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow) })
     });
     throwIfRejected(await post.json());
-    return { ok: true, message: `Gaps synced: ${incoming.length} from the Sheet merged with ${before} here → ${state.gaps.length} in total, all backed up.` };
+    return { ok: true, message: `Gaps: ${state.gaps.length} backed up.` };
   }catch(err){
-    return { ok: false, message: 'Gaps sync failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+    return { ok: false, message: 'Gaps backup failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
   }
+}
+// Pull → merge → push. Pulling first is what stops two devices overwriting each other.
+async function coreSyncGaps(){
+  const r = await coreRestoreGaps();
+  if(!r.ok) return r; // e.g. old Apps Script: nothing is sent
+  const b = await coreBackupGaps();
+  if(!b.ok) return b;
+  return { ok: true, message: `Gaps synced: ${r.incoming} from the Sheet merged with ${r.before} here → ${state.gaps.length} in total, all backed up.` };
 }
 function renderGapSync(){
   const box = document.getElementById('gapSyncBox');
