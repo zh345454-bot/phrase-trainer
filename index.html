@@ -444,6 +444,49 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .modal-x:hover{ border-color:var(--ink); }
 
 /* ---------- Gaps (words forgotten while speaking) ---------- */
+.gap-timer{ font-size:24px; font-weight:700; color:var(--brass-deep); margin:8px 0; font-variant-numeric:tabular-nums; }
+.gap-timer.late{ color:#B33A2E; }
+.gap-controls{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
+.gap-controls select{ width:auto; padding:2px 4px; font-size:12.5px; }
+/* ---------- Speaking cycle ---------- */
+.spk-caution{ border-left:4px solid var(--brass-deep); background:#FBF4E2; padding:10px 12px; margin:10px 0; font-size:13px; line-height:1.55; }
+.spk-caution strong{ color:var(--brass-deep); }
+.spk-steps{ display:flex; gap:6px; flex-wrap:wrap; margin:10px 0; }
+.spk-chip{ border:1px solid var(--line); background:var(--panel); padding:7px 10px; cursor:pointer; font-size:12.5px; }
+.spk-chip.done{ background:var(--teal-soft); }
+.spk-chip.current{ border:2px solid var(--brass-deep); font-weight:700; }
+.spk-chip.open{ outline:2px solid var(--ink); }
+.spk-next{ border:2px solid var(--brass-deep); padding:12px 14px; margin:12px 0; background:var(--panel); }
+.spk-next h3{ margin:0 0 4px; font-size:16px; }
+.spk-why{ font-size:12.5px; color:var(--ink-soft); margin:0 0 8px; }
+.spk-form label{ display:block; font-size:11.5px; color:var(--ink-soft); margin:8px 0 2px; }
+.spk-form input, .spk-form textarea{ width:100%; box-sizing:border-box; }
+.spk-form textarea{ min-height:96px; }
+.spk-form .row2{ display:flex; gap:10px; flex-wrap:wrap; }
+.spk-form .row2 > div{ flex:1; min-width:110px; }
+.spk-metrics{ font-size:13px; margin:8px 0; padding:8px 10px; background:#F4F1E8; }
+.spk-warn{ color:#B33A2E; font-weight:600; }
+.spk-pat{ border:1px solid var(--line); padding:8px 10px; margin:6px 0; background:var(--panel); }
+.spk-bars .r{ display:flex; align-items:center; gap:8px; margin:3px 0; font-size:12.5px; }
+.spk-bars .b{ height:12px; background:var(--brass-deep); min-width:2px; }
+.spk-bars .b.cold{ background:#B9A26A; }
+/* ---------- Today dashboard ---------- */
+.dash-next{ border:2px solid var(--brass-deep); padding:14px 16px; margin:12px 0; background:var(--panel); }
+.dash-next h3{ margin:0 0 4px; font-size:17px; }
+.dash-next .sub{ font-size:13px; color:var(--ink-soft); margin:0 0 10px; }
+.dash-list{ margin:6px 0; }
+.dash-row{ display:flex; justify-content:space-between; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; cursor:pointer; }
+.dash-row.done{ color:var(--ink-soft); }
+.dash-row .st{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+.dash-tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; margin:10px 0; }
+.dash-tile{ border:1px solid var(--line); background:var(--panel); padding:12px 14px; }
+.dash-tile h4{ margin:0 0 2px; font-size:12.5px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+.dash-tile .val{ font-size:24px; font-weight:700; margin:2px 0; }
+.dash-tile .val.na{ font-size:15px; color:var(--ink-soft); font-weight:600; }
+.dash-tile .dir{ font-size:12px; color:var(--ink-soft); margin:2px 0 6px; }
+.dash-warn{ border-left:4px solid #B33A2E; background:#FBEDEA; padding:8px 12px; margin:8px 0; font-size:13px; }
+.dash-info{ border-left:4px solid var(--line); background:#F4F1E8; padding:8px 12px; margin:8px 0; font-size:13px; }
+.dash-review li{ margin:5px 0; font-size:13.5px; }
 .gap-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
 .gap-table th, .gap-table td{ text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
 .gap-table th{ color:var(--ink-soft); font-weight:600; }
@@ -519,11 +562,13 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <div class="status-msg" id="syncAllStatus" style="display:none; margin-bottom:12px;"></div>
 
   <nav class="tabs">
-    <button class="tab-btn active" data-view="bank">Phrase Bank</button>
+    <button class="tab-btn active" data-view="today">Today</button>
+    <button class="tab-btn" data-view="bank">Phrase Bank</button>
     <button class="tab-btn" data-view="starred">★ Starred</button>
     <button class="tab-btn" data-view="practice">Practice &amp; Log</button>
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="gaps">Gaps</button>
+    <button class="tab-btn" data-view="speaking">Speaking</button>
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
@@ -531,7 +576,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </nav>
 
   <!-- PHRASE BANK -->
-  <section class="view active" id="view-bank">
+  <section class="view active" id="view-today">
+    <div class="panel"><div id="dashRoot"></div></div>
+  </section>
+
+  <section class="view" id="view-bank">
     <div class="panel">
       <h2>Add a phrase pair</h2>
       <div class="field-row">
@@ -804,6 +853,8 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           <select id="gapTypeFilter"><option value="">All types</option><option value="new">Never learned</option><option value="retrieval">Couldn't recall</option><option value="chunk">Wrong choice / chunk</option></select></div>
         <div class="field" style="max-width:150px;"><label>Status</label>
           <select id="gapStatusFilter"><option value="">Open + archived</option><option value="open">Open</option><option value="closed">Archived</option></select></div>
+        <div class="field" style="max-width:150px;"><label>Language</label>
+          <select id="gapLangFilter"><option value="">Both languages</option><option value="en">English</option><option value="ar">Arabic</option></select></div>
         <div class="field" style="max-width:170px;"><label>Topic</label>
           <select id="gapTopicFilter"><option value="">All topics</option></select></div>
       </div>
@@ -820,9 +871,15 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel"><div id="gapSyncBox"></div></div>
   </section>
 
+  <section class="view" id="view-speaking">
+    <div class="panel"><div id="spkRoot"></div></div>
+    <div class="panel"><div id="spkSync"></div></div>
+  </section>
+
   <section class="view" id="view-drills">
     <div class="panel">
       <h2>Today's plan</h2>
+      <div id="drillsSpeakingLine" style="margin-bottom:8px;"></div>
       <div class="count-note" style="margin-bottom:10px;">A realistic daily structure. The ordering matters more than the exact minutes: production and active recall first, passive review last.</div>
       <div id="dailyPlan"></div>
     </div>
@@ -1250,6 +1307,10 @@ async function loadState(){
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
   state.gaps = lsGet('gaps', []);
+  state.uiLang = lsGet('uiLang', 'en');
+  state.spk = lsGet('speaking', { patterns: [], cycles: [] });
+  if(!Array.isArray(state.spk.patterns)) state.spk.patterns = [];
+  if(!Array.isArray(state.spk.cycles)) state.spk.cycles = [];
   state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
   if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -1269,6 +1330,7 @@ async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state
 async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
 async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); }
+async function saveSpk(){ lsSet('speaking', state.spk); }
 
 // ---------- Keeping the local practice log from growing forever ----------
 // The Log sheet (Google Sheets) is the permanent, complete history — it's
@@ -1441,9 +1503,11 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'review') renderReview();
     if(btn.dataset.view === 'grammar'){ renderGrammarList(); renderGcStarResults(); renderGcDateResults(); }
     if(btn.dataset.view === 'starred') renderStarred();
-    if(btn.dataset.view === 'drills') renderDrills();
+    if(btn.dataset.view === 'drills'){ renderDrills(); renderDrillsSpeakingLine(); }
     if(btn.dataset.view === 'quran') renderQuran();
     if(btn.dataset.view === 'gaps') renderGaps();
+    if(btn.dataset.view === 'today') renderDashboard();
+    if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
     if(btn.dataset.view === 'practice') renderTodayStrip();
   });
 });
@@ -3598,6 +3662,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreBackupQuran(true));
   statusEl.textContent = 'Syncing gaps (merge, then back up)...';
   results.push(await coreSyncGaps());
+  statusEl.textContent = 'Syncing speaking cycles (merge, then back up)...';
+  results.push(await coreSyncSpeaking());
   statusEl.textContent = 'Syncing drill progress...';
   results.push(await coreSyncDrills());
 
@@ -3605,6 +3671,7 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>All synced.</strong><br>')
     + results.map(r=>escapeHtml(r.message)).join('<br>');
   statusEl.className = anyFailed ? 'status-msg err' : 'status-msg';
+  if(!anyFailed){ lsSet('lastSync', new Date().toISOString()); if(typeof renderDashboard === 'function') renderDashboard(); }
   btn.disabled = false;
   restoreBtn.disabled = false;
   btn.textContent = origLabel;
@@ -3630,7 +3697,7 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
     return;
   }
   const counts = 'bank: ' + state.bank.length + ' phrases, grammar: ' + state.grammar.length + ' entries, Qur\'an: ' + state.quran.length + ' entries';
-  if(!confirm('(Your speaking gaps are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
+  if(!confirm('(Your speaking gaps and speaking cycles are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
   btn.disabled = true;
   syncBtn.disabled = true;
   const origLabel = btn.textContent;
@@ -3647,6 +3714,8 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   results.push(await coreRestoreQuran());
   statusEl.textContent = 'Merging speaking gaps...';
   results.push(await coreRestoreGaps());
+  statusEl.textContent = 'Merging speaking cycles...';
+  results.push(await coreRestoreSpeaking());
   statusEl.textContent = 'Catching up drill progress...';
   results.push(await coreRestoreDrills());
 
@@ -3654,6 +3723,7 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>Fully restored.</strong><br>')
     + results.map(r=>escapeHtml(r.message)).join('<br>');
   statusEl.className = anyFailed ? 'status-msg err' : 'status-msg';
+  if(!anyFailed){ lsSet('lastSync', new Date().toISOString()); if(typeof renderDashboard === 'function') renderDashboard(); }
   btn.disabled = false;
   syncBtn.disabled = false;
   btn.textContent = origLabel;
@@ -3695,7 +3765,8 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     grammar: state.grammar,
     quran: state.quran,
     gaps: state.gaps,
-    gapMeta: state.gapMeta
+    gapMeta: state.gapMeta,
+    speaking: state.spk
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -3719,7 +3790,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
   try{
     const text = await file.text();
     const payload = JSON.parse(text);
-    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran) && !Array.isArray(payload.gaps))){
+    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran) && !Array.isArray(payload.gaps) && !(payload.speaking && Array.isArray(payload.speaking.cycles)))){
       throw new Error('This file doesn\'t look like a Phrase Trainer backup.');
     }
     const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}, quran: ${payload.quran ? payload.quran.length : 0}`;
@@ -3738,8 +3809,9 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
         Object.keys(payload.gapMeta.checklist).forEach(d => { if(!state.gapMeta.checklist[d]) state.gapMeta.checklist[d] = payload.gapMeta.checklist[d]; });
       }
     }
-    await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps();
-    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps();
+    if(payload.speaking && Array.isArray(payload.speaking.cycles)) state.spk = mergeSpk(state.spk, payload.speaking); // merged, never replaced
+    await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps(); await saveSpk();
+    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps(); renderSpeaking();
     renderGcStarResults(); renderGcDateResults();
     statusEl.textContent = 'Restored from file: ' + summary + '.';
     statusEl.className = 'status-msg';
@@ -6291,7 +6363,7 @@ if('serviceWorker' in navigator){
 // unless you press "Move to bank", and it never writes to the practice log.
 // =====================================================================
 const GAP_TYPE_LABELS = { new: 'Never learned', retrieval: 'Couldn\u2019t recall', chunk: 'Wrong choice / chunk' };
-let gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '' };
+let gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '', lang: '' };
 let gapExpanded = new Set();
 
 // Same wording (after the app's normal word cleanup) = same gap.
@@ -6328,7 +6400,8 @@ function captureGap({ lang, wanted, said, source, exEn, exAr }){
   let isNew = false, reopened = false;
   if(g){
     if(!g.logDates) g.logDates = [g.date];
-    if(!g.logDates.includes(today)) g.logDates.push(today);
+    const firstLogToday = !g.logDates.includes(today);
+    if(firstLogToday) g.logDates.push(today);
     if(said) g.said = said;
     if(source && !g.source) g.source = source;   // never overwrite what's already there
     if(exEn && !g.exEn) g.exEn = exEn;
@@ -6336,7 +6409,10 @@ function captureGap({ lang, wanted, said, source, exEn, exAr }){
     if(g.status === 'closed'){
       g.status = 'open'; g.closedAt = ''; g.closedBy = '';
       g.srs = { station: 1, reps: 0, nextReview: today, dateAdded: g.dateAdded || today, hotLayerDone: [] };
+      g.lt = { step: 0, next: addDays(today, 1) };
       reopened = true;
+    } else if(firstLogToday){
+      gapRelapse(g); // forgotten again in real speech → step it back
     }
     if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
   } else {
@@ -6346,8 +6422,10 @@ function captureGap({ lang, wanted, said, source, exEn, exAr }){
           createdAt: new Date().toISOString(), date: today, dateAdded: today, logDates: [today], attempts: [],
           status: 'open', closedAt: '', closedBy: '', inBank: false, bankedAt: '' };
     ensureSrs(g);
+    if(gapTrack(g) === 'light') g.lt = { step: 0, next: addDays(today, 1) };
     state.gaps.unshift(g);
   }
+  gapEnsureTrack(g);
   gapTouch(g);
   gapTick('logged');
   saveGaps();
@@ -6387,6 +6465,7 @@ function mergeGaps(local, incoming){
 function gapMatches(g){
   const f = gapFilter;
   if(f.type && g.type !== f.type) return false;
+  if(f.lang && g.lang !== f.lang) return false;
   if(f.status && g.status !== f.status) return false;
   if(f.topic && (g.topic || '') !== f.topic) return false;
   if(f.from || f.to){
@@ -6445,13 +6524,14 @@ function renderGapList(){
   list.innerHTML = rows.map(g => {
     const times = (g.logDates && g.logDates.length) || 1;
     const open = gapExpanded.has(g.id);
-    ensureSrs(g);
+    gapEnsureTrack(g);
     return `<div class="gap-card${g.status === 'closed' ? ' closed' : ''}" data-gid="${g.id}">
       <div class="gap-head">
         <div class="gap-wanted" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>${escapeHtml(g.wanted)}</div>
         <div class="gap-badges">
+          <span class="badge gap-closed">${g.lang === 'ar' ? 'AR' : 'EN'}</span>
           <span class="badge type-${g.type}">${GAP_TYPE_LABELS[g.type] || g.type}</span>
-          ${g.status === 'closed' ? `<span class="badge gap-closed">Archived${g.closedBy === 'bank' ? ' · in bank' : g.closedBy === 'mastered' ? ' · mastered' : ''}</span>` : `<span class="station-pill">Station ${g.srs.station}</span>`}
+          ${g.status === 'closed' ? `<span class="badge gap-closed">Archived${g.closedBy === 'bank' ? ' · in bank' : g.closedBy === 'mastered' ? ' · mastered' : ''}</span>` : (gapTrack(g) === 'light' ? `<span class="station-pill">Touch ${g.lt.step + 1}/${LIGHT_STEPS.length}</span>` : `<span class="station-pill">Station ${g.srs.station}</span>`)}
           ${g.inBank && g.closedBy !== 'bank' ? '<span class="badge gap-closed">In bank</span>' : ''}
         </div>
       </div>
@@ -6470,14 +6550,14 @@ function renderGaps(){
 }
 
 // ---------- List events ----------
-['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapFrom', 'gapTo'].forEach(id => {
+['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapLangFilter', 'gapFrom', 'gapTo'].forEach(id => {
   const el = document.getElementById(id);
-  const key = { gapSearch: 'query', gapTypeFilter: 'type', gapStatusFilter: 'status', gapTopicFilter: 'topic', gapFrom: 'from', gapTo: 'to' }[id];
+  const key = { gapSearch: 'query', gapTypeFilter: 'type', gapStatusFilter: 'status', gapTopicFilter: 'topic', gapLangFilter: 'lang', gapFrom: 'from', gapTo: 'to' }[id];
   el.addEventListener(el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change', () => { gapFilter[key] = el.value; renderGapList(); });
 });
 document.getElementById('gapClearFilters').addEventListener('click', () => {
-  gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '' };
-  ['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapFrom', 'gapTo'].forEach(id => { document.getElementById(id).value = ''; });
+  gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '', lang: '' };
+  ['gapSearch', 'gapTypeFilter', 'gapStatusFilter', 'gapTopicFilter', 'gapLangFilter', 'gapFrom', 'gapTo'].forEach(id => { document.getElementById(id).value = ''; });
   renderGapList();
 });
 document.getElementById('gapList').addEventListener('click', async (e) => {
@@ -6503,12 +6583,14 @@ document.getElementById('gapList').addEventListener('click', async (e) => {
     const newType = val('type');
     if(newType !== g.type){ g.type = newType; g.typeManual = true; }
     else if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
+    gapEnsureTrack(g);
     gapTouch(g); await saveGaps(); renderGaps(); return;
   }
   if(act === 'archive'){ g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'manual'; gapTouch(g); await saveGaps(); renderGaps(); return; }
   if(act === 'reopen'){
     g.status = 'open'; g.closedAt = ''; g.closedBy = '';
     g.srs = { station: 1, reps: 0, nextReview: todayStr(), dateAdded: g.dateAdded || todayStr(), hotLayerDone: [] };
+    g.lt = { step: 0, next: todayStr() };
     gapTouch(g); await saveGaps(); renderGaps(); return;
   }
   if(act === 'delete'){
@@ -6586,10 +6668,48 @@ document.getElementById('gapWanted').addEventListener('keydown', (e) => { if(e.k
 // ---------- Gaps · Batch 2: review (same 7-station engine as the phrase bank),
 // top-5 card, daily checklist, stats, move-to-bank, AI fill ----------
 
-// Same schedule as the bank (STATION_GAP_DAYS / MIN_TO_ADVANCE), applied to
-// gap entries. Kept as its own function so it never touches the bank's daily
-// dose, drill sync or the practice log.
-function rateGapReview(g, rating){
+// ---------- Gap review: two tracks, timed spoken card, daily cap ----------
+// "Never learned" / "Wrong choice" gaps use the SAME 7-station schedule as the
+// phrase bank (rateGapReview, 1–5 buttons). "Couldn't recall" gaps — words you
+// know but couldn't get out in time — use a lighter 3-touch schedule (+1, +4,
+// +14 days) judged on SPEED, because their problem is access, not knowledge.
+// Logging the same gap again is treated as a real lapse and sends it back.
+// All of this is separate from the bank's daily dose, drill sync and practice log.
+const LIGHT_STEPS = [1, 4, 14];
+const GAP_TIMER_CHOICES = [2, 3, 5, 8];
+const GAP_CAP_CHOICES = [15, 25, 40, 60];
+function gapTrack(g){ return g.type === 'retrieval' ? 'light' : 'full'; }
+function gapEnsureTrack(g){
+  if(gapTrack(g) === 'light'){
+    if(!g.lt){
+      ensureSrs(g);
+      g.lt = { step: 0, next: (g.srs && g.srs.nextReview) || addDays(todayStr(), 1) };
+    }
+  } else {
+    ensureSrs(g);
+  }
+  return g;
+}
+function gapNextDue(g){
+  gapEnsureTrack(g);
+  return gapTrack(g) === 'light' ? g.lt.next : g.srs.nextReview;
+}
+// A relog on a new day means you forgot it AGAIN in real speech: step it back.
+function gapRelapse(g){
+  const today = todayStr();
+  if(gapTrack(g) === 'light'){ g.lt = { step: 0, next: addDays(today, 1) }; }
+  else { ensureSrs(g); g.srs.station = Math.max(1, g.srs.station - 1); g.srs.reps = 0; g.srs.nextReview = today; }
+}
+// Daily cap on gap reviews (each rating counts). Overflow just stays due.
+function gapCapState(){
+  const today = todayStr(), m = state.gapMeta;
+  if(!m.reviewed || m.reviewed.date !== today) m.reviewed = { date: today, n: 0, bonus: 0 };
+  const cap = (m.cap || 25) + (m.reviewed.bonus || 0);
+  return { cap, n: m.reviewed.n, left: Math.max(0, cap - m.reviewed.n) };
+}
+function gapCountReview(){ gapCapState(); state.gapMeta.reviewed.n++; }
+
+function rateGapReview(g, rating, ms){
   ensureSrs(g);
   const today = todayStr();
   let station = g.srs.station;
@@ -6599,7 +6719,6 @@ function rateGapReview(g, rating){
       station += 1; g.srs.station = station; g.srs.reps = 0;
       g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
     } else if(station === 7){
-      // Finished the last station well → the gap is mastered: archive it (kept in your records).
       g.status = 'closed'; g.closedAt = today; g.closedBy = 'mastered';
       g.srs.nextReview = addDays(today, MAINTENANCE_GAP_DAYS);
     } else {
@@ -6612,15 +6731,56 @@ function rateGapReview(g, rating){
     g.srs.station = station; g.srs.reps = 0;
     g.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
   }
-  g.attempts = (g.attempts || []).concat([{ d: today, r: rating }]).slice(-30); // capped: history doesn't grow forever
-  gapTick('drill');
-  gapTouch(g);
+  g.attempts = (g.attempts || []).concat([{ d: today, r: rating, ms: ms || 0 }]).slice(-30);
+  gapCountReview(); gapTick('drill'); gapTouch(g);
 }
-function getDueGaps(){
+// outcome: 'fast' (said it within the timer) advances; 'slow' (got it, but late) repeats
+// the touch sooner; 'miss' steps back one touch. Three fast touches = mastered.
+function rateGapLight(g, outcome, ms){
   const today = todayStr();
-  return state.gaps.filter(g => { ensureSrs(g); return g.status === 'open' && g.srs.nextReview <= today; })
-    .sort((a, b) => a.srs.nextReview.localeCompare(b.srs.nextReview) || a.srs.station - b.srs.station);
+  gapEnsureTrack(g);
+  let step = g.lt.step;
+  if(outcome === 'fast'){
+    step += 1;
+    if(step >= LIGHT_STEPS.length){
+      g.status = 'closed'; g.closedAt = today; g.closedBy = 'mastered';
+      g.lt = { step: LIGHT_STEPS.length - 1, next: addDays(today, 60) };
+    } else {
+      g.lt = { step, next: addDays(today, LIGHT_STEPS[step]) };
+    }
+  } else if(outcome === 'slow'){
+    g.lt = { step, next: addDays(today, Math.min(LIGHT_STEPS[step], 4)) };
+  } else {
+    step = Math.max(0, step - 1);
+    g.lt = { step, next: addDays(today, LIGHT_STEPS[step]) };
+  }
+  const r = outcome === 'fast' ? 5 : outcome === 'slow' ? 3 : 1;
+  g.attempts = (g.attempts || []).concat([{ d: today, r, ms: ms || 0 }]).slice(-30);
+  gapCountReview(); gapTick('drill'); gapTouch(g);
 }
+// What's due, most urgent first: lapsed in the last 3 days, then most overdue.
+function gapDueSorted(){
+  const today = todayStr(), ago3 = addDays(today, -3);
+  return state.gaps.filter(g => g.status === 'open' && gapNextDue(g) <= today)
+    .map(g => ({ g, failed: (g.attempts || []).some(a => a.r <= 2 && a.d >= ago3) ? 1 : 0, over: daysBetween(gapNextDue(g), today) }))
+    .sort((a, b) => (b.failed - a.failed) || (b.over - a.over))
+    .map(x => x.g);
+}
+function getDueGaps(){ return gapDueSorted(); }
+// The session: the most urgent items the daily cap allows, grouped by topic so
+// consecutive cards share a subject.
+function gapSessionQueue(){
+  const left = gapCapState().left;
+  const pick = gapDueSorted().filter(g => !gapSessionDone.has(g.id)).slice(0, left);
+  const groups = {}, order = [];
+  pick.forEach(g => {
+    const k = (g.topic || '').trim().toLowerCase() || '~';
+    if(!groups[k]){ groups[k] = []; order.push(k); }
+    groups[k].push(g);
+  });
+  return order.reduce((acc, k) => acc.concat(groups[k]), []);
+}
+
 const GAP_DIAC = '[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]*';
 function gapTargetRegex(target, lang){
   const t = (lang === 'ar' ? stripTashkeel(stripBold(target)) : stripBold(target)).trim();
@@ -6636,23 +6796,54 @@ function gapReplaceTarget(sentence, target, lang, fn){
 }
 function gapTargetOf(g){ return g.correct || g.wanted; }
 
-// ---------- Review card ----------
+// ---------- Timed spoken card ----------
 let gapSessionDone = new Set();
-let gapRevealed = false;
+let gapRevealed = false, gapCardStart = null, gapRevealMs = 0, gapTimerId = null;
+function gapTimerSecs(){ return state.gapMeta.timerSecs || 3; }
+function stopGapTimer(){ if(gapTimerId){ clearInterval(gapTimerId); gapTimerId = null; } }
+function startGapTimer(){
+  stopGapTimer();
+  if(gapRevealed || !gapCardStart) return;
+  const secs = gapTimerSecs();
+  const tick = () => {
+    const el = document.getElementById('gapTimer');
+    if(!el || gapRevealed){ stopGapTimer(); return; }
+    const left = secs - (Date.now() - gapCardStart.t) / 1000;
+    if(left > 0){ el.textContent = left.toFixed(1) + ' s'; el.classList.remove('late'); }
+    else { el.textContent = 'Say it now!'; el.classList.add('late'); }
+  };
+  tick();
+  gapTimerId = setInterval(tick, 100);
+}
 function renderGapReview(){
   const panel = document.getElementById('gapReviewPanel');
   const box = document.getElementById('gapReviewBox');
   if(!panel) return;
   const openCount = state.gaps.filter(g => g.status === 'open').length;
   panel.style.display = openCount ? '' : 'none';
-  if(!openCount) return;
-  const dueAll = getDueGaps();
-  const due = dueAll.filter(g => !gapSessionDone.has(g.id));
-  if(!due.length){
-    box.innerHTML = `<h2>Gap review</h2><div class="empty">${dueAll.length ? 'Done for now — ' + dueAll.length + ' will come back again later today.' : 'Nothing due — your open gaps come back on their station schedule.'}</div>`;
+  if(!openCount){ stopGapTimer(); return; }
+  const cs = gapCapState();
+  const opts = (arr, cur, unit) => arr.map(v => `<option value="${v}"${v === cur ? ' selected' : ''}>${v}${unit}</option>`).join('');
+  const controls = `<div class="gap-controls">
+      <span>Reviewed today: <strong>${cs.n}/${cs.cap}</strong></span>
+      <label>Daily cap <select id="gapCapSel">${opts(GAP_CAP_CHOICES, state.gapMeta.cap || 25, '')}</select></label>
+      <label>Timer <select id="gapTimerSel">${opts(GAP_TIMER_CHOICES, gapTimerSecs(), ' s')}</select></label>
+    </div>`;
+  const dueAll = gapDueSorted();
+  const queue = gapSessionQueue();
+  if(!queue.length){
+    stopGapTimer();
+    const capped = cs.left === 0 && dueAll.some(g => !gapSessionDone.has(g.id));
+    box.innerHTML = `<h2>Gap review</h2>${controls}
+      <div class="empty">${capped
+        ? 'Daily cap reached — ' + dueAll.filter(g => !gapSessionDone.has(g.id)).length + ' still due will roll over to tomorrow.'
+        : (dueAll.length ? 'Done for now — ' + dueAll.length + ' will come back again later.' : 'Nothing due — your open gaps come back on schedule.')}</div>
+      ${capped ? '<div class="card-actions"><button class="ghost" id="gapMoreBtn" type="button">Do 10 more today</button></div>' : ''}`;
     return;
   }
-  const g = due[0];
+  const g = queue[0];
+  if(!gapCardStart || gapCardStart.id !== g.id){ gapCardStart = { id: g.id, t: Date.now() }; gapRevealed = false; gapRevealMs = 0; }
+  const light = gapTrack(g) === 'light';
   const own = g.lang === 'ar' ? g.exAr : g.exEn;
   const other = g.lang === 'ar' ? g.exEn : g.exAr;
   const target = gapTargetOf(g);
@@ -6666,33 +6857,51 @@ function renderGapReview(){
       : `<div class="gap-cue">Say the word you were missing${g.topic ? ' (' + escapeHtml(g.topic) + ')' : ''}.</div>`;
   }
   const answer = `<div class="gap-answer" dir="${dir}">${escapeHtml(target)}</div>`
+    + `<div class="gap-meta">Revealed after ${(gapRevealMs / 1000).toFixed(1)} s (target ≤ ${gapTimerSecs()} s)</div>`
     + (own ? `<div class="gap-meta" dir="${dir}">${escapeHtml(own)}</div>` : '')
     + (g.note ? `<div class="gap-meta">${escapeHtml(g.note)}</div>` : '')
     + (!g.correct ? '<div class="gap-meta">(No correct word saved yet — open Details on this gap to add it.)</div>' : '');
-  box.innerHTML = `<h2>Gap review</h2>
-    <div class="count-note">${due.length} due · say the answer out loud first, then reveal</div>
-    <div class="due-card"><div class="phrase-texts">
-      <div class="due-meta"><span class="station-pill">Station ${g.srs.station}</span> ${g.srs.reps}/${MIN_TO_ADVANCE[g.srs.station]} reps at this station · ${GAP_TYPE_LABELS[g.type]}</div>
-      ${cue}
-      ${gapRevealed ? answer : ''}
-    </div>
-    ${gapRevealed ? `<div class="rating-row">
+  const pill = light ? `<span class="station-pill">Touch ${g.lt.step + 1}/${LIGHT_STEPS.length}</span> quick track · say it aloud`
+    : `<span class="station-pill">Station ${g.srs.station}</span> ${g.srs.reps}/${MIN_TO_ADVANCE[g.srs.station]} reps at this station`;
+  const rating = !gapRevealed ? `<div class="card-actions"><button class="primary" id="gapRevealBtn" type="button">Reveal answer</button></div>`
+    : light ? `<div class="rating-row">
+        <button class="rate-btn rate-5" data-glight="fast" data-gid="${g.id}" type="button">⚡ Fast — said it in time</button>
+        <button class="rate-btn rate-3" data-glight="slow" data-gid="${g.id}" type="button">Slow — needed a moment</button>
+        <button class="rate-btn rate-1" data-glight="miss" data-gid="${g.id}" type="button">Missed</button>
+      </div>`
+    : `<div class="rating-row">
         <button class="rate-btn rate-1" data-grate="1" data-gid="${g.id}" type="button">1 Major forgetting</button>
         <button class="rate-btn rate-2" data-grate="2" data-gid="${g.id}" type="button">2 Struggled</button>
         <button class="rate-btn rate-3" data-grate="3" data-gid="${g.id}" type="button">3 Okay</button>
         <button class="rate-btn rate-4" data-grate="4" data-gid="${g.id}" type="button">4 Good</button>
         <button class="rate-btn rate-5" data-grate="5" data-gid="${g.id}" type="button">5 Perfect</button>
-      </div>` : `<div class="card-actions"><button class="primary" id="gapRevealBtn" type="button">Reveal answer</button></div>`}
-    </div>`;
+      </div>`;
+  box.innerHTML = `<h2>Gap review</h2>${controls}
+    <div class="count-note">${queue.length} in this session · say the answer out loud before you reveal it</div>
+    <div class="due-card"><div class="phrase-texts">
+      <div class="due-meta">${pill} · ${GAP_TYPE_LABELS[g.type]}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}</div>
+      ${cue}
+      ${gapRevealed ? '' : '<div class="gap-timer" id="gapTimer"></div>'}
+      ${gapRevealed ? answer : ''}
+    </div>${rating}</div>`;
+  startGapTimer();
 }
+document.getElementById('gapReviewBox').addEventListener('change', async (e) => {
+  if(e.target.id === 'gapCapSel'){ state.gapMeta.cap = parseInt(e.target.value, 10); await saveGaps(); renderGapReview(); }
+  if(e.target.id === 'gapTimerSel'){ state.gapMeta.timerSecs = parseInt(e.target.value, 10); await saveGaps(); renderGapReview(); }
+});
 document.getElementById('gapReviewBox').addEventListener('click', async (e) => {
-  if(e.target.id === 'gapRevealBtn'){ gapRevealed = true; renderGapReview(); return; }
-  const r = e.target.dataset.grate;
-  if(!r) return;
+  if(e.target.id === 'gapMoreBtn'){ gapCapState(); state.gapMeta.reviewed.bonus = (state.gapMeta.reviewed.bonus || 0) + 10; await saveGaps(); renderGapReview(); return; }
+  if(e.target.id === 'gapRevealBtn'){
+    gapRevealMs = gapCardStart ? Date.now() - gapCardStart.t : 0;
+    gapRevealed = true; stopGapTimer(); renderGapReview(); return;
+  }
+  const grate = e.target.dataset.grate, glight = e.target.dataset.glight;
+  if(!grate && !glight) return;
   const g = state.gaps.find(x => x.id === e.target.dataset.gid);
   if(!g) return;
-  rateGapReview(g, parseInt(r, 10));
-  gapSessionDone.add(g.id); gapRevealed = false;
+  if(glight) rateGapLight(g, glight, gapRevealMs); else rateGapReview(g, parseInt(grate, 10), gapRevealMs);
+  gapSessionDone.add(g.id); gapRevealed = false; gapCardStart = null; gapRevealMs = 0;
   await saveGaps();
   renderGaps();
 });
@@ -6785,8 +6994,27 @@ function renderGapStats(){
     </div>
     <p class="gap-mini"><strong>Couldn’t recall</strong> (knew it, couldn’t retrieve it in time) — this week: ${sw.retrieval} of ${weekGaps.length} (${pct(sw.retrieval, weekGaps.length)}) · all time: ${sa.retrieval} of ${gs.length} (${pct(sa.retrieval, gs.length)}). If speaking is improving, this share should fall over time.<br>
     Never learned: ${sw.new} this week · ${sa.new} all time. Wrong choice / chunk: ${sw.chunk} this week · ${sa.chunk} all time.</p>
+    ${(() => {
+      const since = addDays(today, -13);
+      const at = gs.filter(g => gapTrack(g) === 'light').flatMap(g => (g.attempts || []).filter(a => a.d >= since));
+      if(!at.length) return '';
+      const f = at.filter(a => a.r === 5).length, sl = at.filter(a => a.r === 3).length, mi = at.filter(a => a.r <= 2).length;
+      return `<p class="gap-mini"><strong>Spoken retrieval, last 14 days</strong> (quick-track gaps): ${Math.round(f / at.length * 100)}% fast · ${Math.round(sl / at.length * 100)}% slow · ${Math.round(mi / at.length * 100)}% missed, across ${at.length} reviews. The fast share is the number to grow.</p>`;
+    })()}
     ${topics.length ? `<p class="gap-mini"><strong>By topic:</strong> ${topics.map(([t, n]) => escapeHtml(t) + ' ×' + n).join(' · ')}</p>` : ''}
     ${recurring.length ? `<p class="gap-mini"><strong>Logged more than once:</strong> ${recurring.map(g => '<span dir="' + (g.lang === 'ar' ? 'rtl' : 'ltr') + '">' + escapeHtml(g.wanted) + '</span> ×' + evs(g).length).join(' · ')}</p>` : ''}
+    ${(() => {
+      const rowFor = l => {
+        const g2 = gs.filter(g => g.lang === l);
+        if(!g2.length) return '';
+        const lt = g2.filter(g => gapTrack(g) === 'light').flatMap(g => (g.attempts || []).filter(a => a.d >= addDays(today, -13)));
+        const fast = lt.length ? Math.round(lt.filter(a => a.r === 5).length / lt.length * 100) + '% (' + lt.length + ')' : '—';
+        const logged = g2.reduce((n, g) => n + evs(g).filter(d => d >= weekStart).length, 0);
+        return `<tr><td>${LANG_NAMES[l]}</td><td>${g2.length}</td><td>${g2.filter(g => g.status === 'open').length}</td><td>${logged}</td><td>${g2.filter(g => g.closedAt && g.closedAt >= weekStart).length}</td><td>${fast}</td></tr>`;
+      };
+      const body = rowFor('en') + rowFor('ar');
+      return body ? `<table class="gap-table"><tr><th>By language</th><th>Gaps</th><th>Open</th><th>Logged this week</th><th>Closed this week</th><th>Fast share, 14 d (reviews)</th></tr>${body}</table>` : '';
+    })()}
     ${rows.length ? `<table class="gap-table"><tr><th>Month</th><th>Times logged</th><th>New gaps</th><th>Archived</th></tr>${rows.map(r => `<tr><td>${r.m}</td><td>${r.logged}</td><td>${r.created}</td><td>${r.archived}</td></tr>`).join('')}</table>` : ''}`;
 }
 
@@ -6857,7 +7085,8 @@ function gapToRow(g){
     typeManual: g.typeManual ? 'Yes' : '', status: g.status, closedAt: g.closedAt || '', closedBy: g.closedBy || '',
     inBank: g.inBank ? 'Yes' : '', bankedAt: g.bankedAt || '', createdAt: g.createdAt || '', date: g.date || '',
     logDates: (g.logDates || []).join(';'), station: g.srs.station, reps: g.srs.reps, nextReview: g.srs.nextReview,
-    attempts: JSON.stringify(g.attempts || []), updatedAt: g.updatedAt || '', source: g.source || ''
+    attempts: JSON.stringify(g.attempts || []), updatedAt: g.updatedAt || '', source: g.source || '',
+    ltStep: g.lt ? g.lt.step : '', ltNext: g.lt ? g.lt.next : ''
   };
 }
 function gapFromRow(r){
@@ -6877,7 +7106,8 @@ function gapFromRow(r){
     inBank: r.inBank === 'Yes', bankedAt: d10(r.bankedAt),
     createdAt: String(r.createdAt || ''), date, dateAdded: date, logDates: logDates.length ? logDates : [date], attempts,
     srs: { station: Math.min(7, Math.max(1, Number(r.station) || 1)), reps: Number(r.reps) || 0, nextReview: d10(r.nextReview) || todayStr(), dateAdded: date, hotLayerDone: [] },
-    updatedAt: String(r.updatedAt || '')
+    updatedAt: String(r.updatedAt || ''),
+    lt: r.ltNext ? { step: Math.min(LIGHT_STEPS.length - 1, Math.max(0, Number(r.ltStep) || 0)), next: d10(r.ltNext) } : undefined
   };
 }
 // Pull the Sheet's gaps and MERGE them into this device (never replaces).
@@ -7019,6 +7249,719 @@ document.addEventListener('selectionchange', () => {
 ['pointerdown', 'touchstart', 'mousedown'].forEach(ev =>
   document.getElementById('gapFab').addEventListener(ev, () => { const r = gapReadSelection(); if(r){ gapSel = r; } }, { passive: true }));
 
+
+// =====================================================================
+// SPEAKING CYCLE — a 5-step weekly routine for accuracy on unfamiliar topics,
+// one independent cycle track PER LANGUAGE (English / Arabic).
+// Method (repeated, time-pressured speaking + feedback on your own errors):
+//   1 Cold run  2 Find patterns  3 Repeat ×2  4 Pattern drills  5 Transfer test
+// Own storage (state.spk). Every cycle and pattern carries a language; the
+// language switch decides which track you see. Nothing here touches the bank,
+// gaps or practice log, except the optional "Add to Gaps" button.
+// =====================================================================
+const SPK_MIN_WORDS_BY = { en: 60, ar: 45 };   // shorter than this is too noisy to compare
+const SPK_DRILL_TARGET = 10;
+const SPK_MAX_PATTERNS = 3;                    // per language
+const LANG_NAMES = { en: 'English', ar: 'Arabic' };
+const SPK_TOPICS_BY = {
+  en: [
+    'Explain how a bank loan and interest work', 'Describe how to prepare for a job interview', 'Give your opinion on working from home',
+    'Explain how vaccines protect people', 'Describe a historical event you know little about', 'Explain how a smartphone works to a child',
+    'Describe how to start a small business', 'Give your view on social media and teenagers', 'Explain how electricity gets to your house',
+    'Describe a festival or tradition from another country', 'Explain why the seasons change', 'Give advice to someone moving to a new city',
+    'Explain how a court case works', 'Describe how to plan a long trip on a budget', 'Give your opinion on electric cars',
+    'Explain how the stock market works', 'Describe a job you know nothing about and what it involves', 'Explain how recycling works',
+    'Give your opinion on online learning', 'Describe how you would organise a large event', 'Explain how an airplane stays in the air',
+    'Explain what inflation means to an ordinary family', 'Describe the process of making bread or another food you rarely cook', 'Give your view on a new law you have heard about',
+    'Explain how the internet finds a website', 'Describe how a hospital runs day to day', 'Give your opinion on space exploration',
+    'Explain how a newspaper decides what to publish', 'Describe how you would teach a skill you have never taught', 'Explain how a football match is organised'
+  ],
+  ar: [
+    'اشرح كيف يعمل القرض المصرفي والفائدة', 'صف كيف تستعد لمقابلة عمل', 'اذكر رأيك في العمل من المنزل',
+    'اشرح كيف تحمي اللقاحات الناس', 'صف حدثًا تاريخيًا لا تعرف عنه الكثير', 'اشرح لطفل كيف يعمل الهاتف الذكي',
+    'صف كيف تبدأ مشروعًا صغيرًا', 'اذكر رأيك في وسائل التواصل الاجتماعي والمراهقين', 'اشرح كيف تصل الكهرباء إلى بيتك',
+    'صف مهرجانًا أو تقليدًا من بلد آخر', 'اشرح لماذا تتغير الفصول', 'انصح شخصًا سينتقل إلى مدينة جديدة',
+    'اشرح كيف تسير القضية في المحكمة', 'صف كيف تخطط لرحلة طويلة بميزانية محدودة', 'اذكر رأيك في السيارات الكهربائية',
+    'اشرح كيف يعمل سوق الأسهم', 'صف وظيفة لا تعرف عنها شيئًا وماذا تتضمن', 'اشرح كيف تتم إعادة التدوير',
+    'اذكر رأيك في التعلم عبر الإنترنت', 'صف كيف تنظم حدثًا كبيرًا', 'اشرح كيف تبقى الطائرة في الجو',
+    'اشرح معنى التضخم لأسرة عادية', 'صف طريقة إعداد طبق لا تطبخه عادة', 'اذكر رأيك في قانون جديد سمعت عنه',
+    'اشرح كيف يجد الإنترنت موقعًا إلكترونيًا', 'صف كيف يعمل المستشفى يومًا بعد يوم', 'اذكر رأيك في استكشاف الفضاء',
+    'اشرح كيف تقرر الصحيفة ما تنشره', 'صف كيف تعلّم مهارة لم تعلّمها من قبل', 'اشرح كيف تُنظَّم مباراة كرة القدم'
+  ]
+};
+let spkOpenStep = null;
+let spkLast = {}; // last unsaved-form scratch (AI results shown before saving)
+
+// The language switch is shared by the Speaking tab and the Today dashboard.
+function uiLang(){ return state.uiLang === 'ar' ? 'ar' : 'en'; }
+function langToggleHtml(){
+  return `<div class="gap-lang-toggle" style="margin:6px 0 10px;">${['en', 'ar'].map(l => `<button type="button" class="ghost ui-lang-btn${uiLang() === l ? ' active' : ''}" data-uilang="${l}">${LANG_NAMES[l]}</button>`).join('')}</div>`;
+}
+function spkMin(lang){ return SPK_MIN_WORDS_BY[lang || uiLang()]; }
+function spkWords(t){ return (t || '').trim().split(/\s+/).filter(Boolean).length; }
+function spkRate(run){ return run && run.words > 0 ? Math.round(run.errors / run.words * 1000) / 10 : null; } // errors per 100 words
+function spkWpm(run){ return run && run.secs > 0 ? Math.round(run.words / run.secs * 60) : null; }
+function spkPlang(p){ return p.lang === 'ar' ? 'ar' : 'en'; }
+function spkClang(c){ return c.lang === 'ar' ? 'ar' : 'en'; }
+function spkActivePatterns(lang){ lang = lang || uiLang(); return state.spk.patterns.filter(p => p.status === 'active' && spkPlang(p) === lang); }
+function spkCycles(lang){ lang = lang || uiLang(); return state.spk.cycles.filter(c => spkClang(c) === lang); }
+function spkCurrent(lang){ const c = spkCycles(lang); return c.length ? c[c.length - 1] : null; }
+function spkCycleActiveIds(c){ const act = new Set(state.spk.patterns.filter(p => p.status === 'active').map(p => p.id)); return (c.patternIds || []).filter(id => act.has(id)); }
+function spkStepDone(c){
+  const ids = spkCycleActiveIds(c);
+  return [ !!c.cold, ids.length > 0, !!(c.rep1 && c.rep2), ids.length > 0 && ids.every(id => (c.drills[id] || 0) >= SPK_DRILL_TARGET), !!c.transfer ];
+}
+function spkPickTopics(n, avoid, lang){
+  const all = SPK_TOPICS_BY[lang || uiLang()];
+  const pool = all.filter(t => !avoid.includes(t));
+  const src = pool.length >= n ? pool : all.slice();
+  const out = [];
+  while(out.length < n && src.length){ out.push(src.splice(Math.floor(Math.random() * src.length), 1)[0]); }
+  return out;
+}
+function spkUsedTopics(lang){
+  const t = [];
+  spkCycles(lang).slice(-6).forEach(c => ['cold', 'rep1', 'rep2', 'transfer'].forEach(k => { if(c[k] && c[k].topic) t.push(c[k].topic); }));
+  return t;
+}
+function spkNewCycle(){
+  const lang = uiLang();
+  const c = { id: uid(), lang, n: spkCycles(lang).length + 1, start: todayStr(), patternIds: spkActivePatterns(lang).map(p => p.id).slice(0, SPK_MAX_PATTERNS),
+              cold: null, rep1: null, rep2: null, transfer: null, drills: {}, drillTopics: spkPickTopics(10, spkUsedTopics(lang), lang), analysis: null, updatedAt: new Date().toISOString() };
+  state.spk.cycles.push(c);
+  return c;
+}
+function spkTouch(c){ c.updatedAt = new Date().toISOString(); }
+// Where a language's current cycle stands (used by the Drills line and the dashboard).
+function spkStatus(lang){
+  const c = spkCurrent(lang);
+  if(!c) return { c: null };
+  const done = spkStepDone(c);
+  const current = done.findIndex(d => !d);
+  return { c, done, current, complete: !!c.transfer, dayN: Math.max(1, daysBetween(c.start, todayStr()) + 1) };
+}
+// Transfer-test trend for one language, with the same honesty rules everywhere.
+function spkTrendInfo(lang){
+  const min = spkMin(lang);
+  const valid = spkCycles(lang).filter(c => c.transfer && c.transfer.words >= min).map(c => ({ n: c.n, rate: spkRate(c.transfer) }));
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const info = { count: valid.length, latest: valid.length ? valid[valid.length - 1].rate : null, valid };
+  if(valid.length < 4) info.verdict = `<strong>Not enough cycles to say anything reliable.</strong> ${valid.length} of 4 needed with a valid transfer test (≥${min} words). Keep going — do not judge yet.`;
+  else if(valid.length < 6) info.verdict = `<strong>${valid.length} valid transfer tests.</strong> Wait for 6 before reading a change; week-to-week swings are normal.`;
+  else {
+    const first = valid.slice(0, 3).map(r => r.rate), last = valid.slice(-3).map(r => r.rate);
+    const d = Math.round((avg(last) - avg(first)) * 10) / 10;
+    info.change = d;
+    info.verdict = `<strong>Transfer-test errors per 100 words:</strong> first 3 cycles average ${Math.round(avg(first) * 10) / 10}, latest 3 average ${Math.round(avg(last) * 10) / 10} (<strong>${d > 0 ? '+' : ''}${d}</strong>). Lower is better. This is a rough gauge from self-counted data, not a test result.`;
+  }
+  return info;
+}
+
+// ---------- AI analysis (optional; an ESTIMATE the user checks) ----------
+async function spkAnalyze(transcript, lang){
+  lang = lang || uiLang();
+  let system, text;
+  if(lang === 'ar'){
+    system = 'You are a Modern Standard Arabic speaking coach. Reply with ONLY one JSON object, no markdown fences: {"errors":[{"wrong":"","right":"","sentence":"","pattern":""}]}.';
+    text = 'Below is a transcript of someone SPEAKING Arabic for about a minute (it comes from speech recognition, so it usually has no diacritics and little punctuation — ignore that). '
+      + 'List every clear GRAMMAR error: verb conjugation, gender/number agreement (noun, adjective, verb), definiteness (ال), idafa constructions, prepositions, word order, missing or extra words. '
+      + 'Do NOT list: missing case endings (i\u02bfrab) or diacritics, filler words, false starts, repetitions, pronunciation, style choices, or colloquial wording unless it breaks the grammar. '
+      + 'For each error give: "wrong" = the short wrong phrase as said (2-5 words, in Arabic), "right" = that phrase corrected (Arabic), "sentence" = the full corrected sentence (Arabic), '
+      + '"pattern" = a short ENGLISH label such as "verb agreement", "gender agreement", "definiteness", "prepositions", "word order". Count each mistake once.\n\nTRANSCRIPT:\n' + transcript;
+  } else {
+    system = 'You are an English speaking coach. Reply with ONLY one JSON object, no markdown fences: {"errors":[{"wrong":"","right":"","sentence":"","pattern":""}]}.';
+    text = 'Below is a transcript of someone SPEAKING English for about a minute (it has no punctuation or capitalization from speech recognition — ignore that). '
+      + 'List every clear GRAMMAR error: tense, subject-verb agreement, articles, prepositions, plurals, word order, missing or extra words, wrong word form. '
+      + 'Do NOT list: filler words, false starts, repetitions, punctuation, capitalization, pronunciation, style choices, or vocabulary that is merely unusual. '
+      + 'For each error give: "wrong" = the short wrong phrase as said (3-6 words), "right" = that same phrase corrected, "sentence" = the full corrected sentence, '
+      + '"pattern" = a short label such as "past tense", "articles", "prepositions", "subject-verb agreement", "word order". Count each mistake once.\n\nTRANSCRIPT:\n' + transcript;
+  }
+  const { text: out } = await callGemini(text, { system, useSearch: false });
+  const a = out.indexOf('{'), b = out.lastIndexOf('}');
+  if(a < 0 || b < a) throw new Error('The AI reply wasn\u2019t in the expected format.');
+  const j = JSON.parse(out.slice(a, b + 1));
+  return (Array.isArray(j.errors) ? j.errors : []).filter(e => e && e.right).slice(0, 40)
+    .map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), sentence: String(e.sentence || ''), pattern: String(e.pattern || 'other').toLowerCase().trim() }));
+}
+function spkPatternTally(errors){
+  const m = {};
+  (errors || []).forEach(e => { (m[e.pattern] = m[e.pattern] || { label: e.pattern, count: 0, example: e.sentence || e.right }).count++; });
+  return Object.values(m).sort((a, b) => b.count - a.count);
+}
+
+// ---------- Rendering ----------
+const SPK_STEPS = [
+  { t: '① Cold run', title: 'Step 1 — Cold run', why: 'Speak for 1–2 minutes on a topic you do NOT know well, with no preparation. This shows your real error pattern under load — the thing we are fixing.' },
+  { t: '② Find patterns', title: 'Step 2 — Find your error patterns', why: 'Pick only the 2–3 most repeated grammar patterns. Trying to fix everything at once does not work.' },
+  { t: '③ Repeat ×2', title: 'Step 3 — Repeat the SAME talk twice, shorter each time', why: 'Same content, less time (for example 2:00 → 1:30 → 1:00). Repetition under time pressure is what makes grammar automatic — the strongest evidence in the research.' },
+  { t: '④ Pattern drills', title: 'Step 4 — Pattern drills across different topics', why: 'Say one sentence with the target pattern for each of 10 different topics. This separates the grammar from the topic so it carries over.' },
+  { t: '⑤ Transfer test', title: 'Step 5 — Transfer test', why: 'A NEW topic you have never rehearsed, about 1 minute. This is the number that tells you whether it worked.' }
+];
+function spkRunSummary(r, lang){
+  if(!r) return '';
+  const rate = spkRate(r), wpm = spkWpm(r);
+  return `${r.words} words · <strong>${rate === null ? '—' : rate}</strong> errors per 100 words · ${wpm === null ? '—' : wpm} words/min${r.words < spkMin(lang) ? ' · <span class="spk-warn">too short to compare</span>' : ''}`;
+}
+function spkRunForm(key, cycle, opts){
+  const r = cycle[key], lang = spkClang(cycle), rtl = lang === 'ar' ? ' dir="rtl"' : '';
+  return `<div class="spk-form" data-runkey="${key}">
+    <label>Topic${opts.topicHint ? ' — ' + opts.topicHint : ''}</label>
+    <div class="row2"><div style="flex:3;min-width:180px;"><input type="text"${rtl} data-spk="topic" value="${escapeHtml(r ? r.topic : (opts.defaultTopic || ''))}" placeholder="What did you talk about?"></div>
+      <div style="flex:0 0 auto;"><button class="ghost" type="button" data-spkact="suggest" data-runkey="${key}">Suggest a topic</button></div></div>
+    <label>Transcript (record in <a href="#" data-spkact="gotovoice">Voice practice</a>, then paste the text here)</label>
+    <textarea${rtl} data-spk="text" placeholder="Paste your transcript…">${escapeHtml(r ? (r.transcript || '') : '')}</textarea>
+    <div class="row2">
+      <div><label>Seconds spoken</label><input type="number" min="5" data-spk="secs" value="${r ? r.secs : (opts.defaultSecs || 60)}"></div>
+      <div><label>Grammar errors (count)</label><input type="number" min="0" data-spk="errors" value="${r ? r.errors : ''}" placeholder="from Grammar check / AI"></div>
+    </div>
+    <div class="spk-metrics" data-spk-live>Words: <strong>${r ? r.words : 0}</strong></div>
+    <div class="card-actions" style="margin-top:8px;">
+      ${getGeminiKeys().length ? `<button class="ghost" type="button" data-spkact="analyze" data-runkey="${key}">✨ Find errors with AI</button>` : ''}
+      <button class="primary" type="button" data-spkact="saverun" data-runkey="${key}">${r ? 'Update' : 'Save'} this run</button>
+    </div>
+    <div class="status-msg" data-spk-status></div>
+    ${spkLast[key] ? spkAnalysisHtml(key, spkLast[key], lang) : ''}
+  </div>`;
+}
+function spkAnalysisHtml(key, errs, lang){
+  if(!errs.length) return '<div class="spk-metrics">The AI found no clear grammar errors in this transcript. Check it yourself too — the AI can miss things.</div>';
+  const tally = spkPatternTally(errs), dir = lang === 'ar' ? ' dir="rtl"' : '';
+  return `<div class="spk-caution"><strong>AI estimate — check it.</strong> It found <strong>${errs.length}</strong> possible errors (the count above is filled in; correct it if you disagree). Use the same counting method every week, or the trend means nothing.${lang === 'ar' ? ' <strong>For Arabic the AI is less reliable</strong> — treat the count as rough, and have a teacher or native speaker check a sample now and then.' : ''}</div>
+    <div class="gap-mini"><strong>Most repeated:</strong> ${tally.slice(0, 4).map(t => escapeHtml(t.label) + ' ×' + t.count).join(' · ')}</div>
+    ${errs.map((e, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px;"><input type="checkbox" data-spkerr="${i}" ${i < 3 ? 'checked' : ''} style="width:auto;margin-top:3px;"><span><span${dir}>“${escapeHtml(e.wrong)}” → <strong>${escapeHtml(e.right)}</strong></span> <span class="gap-mini">(${escapeHtml(e.pattern)})</span></span></label>`).join('')}
+    <div class="card-actions"><button class="ghost" type="button" data-spkact="toGaps" data-runkey="${key}">Add ticked corrections to Gaps</button></div>`;
+}
+function renderSpeaking(){
+  const root = document.getElementById('spkRoot');
+  if(!root) return;
+  const lang = uiLang(), min = spkMin(lang);
+  let c = spkCurrent(lang);
+  const done = c ? spkStepDone(c) : [];
+  const cycleComplete = c && !!c.transfer;
+  const current = c ? (done.findIndex(d => !d)) : -1;
+  const openStep = spkOpenStep !== null ? spkOpenStep : (current >= 0 ? current : 4);
+  let html = `<h2>Speaking cycle — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
+    <details ${state.spk.cycles.length ? '' : 'open'}><summary><strong>How this works</strong> (read once)</summary>
+      <p class="gap-mini">Your problem is grammar breaking down on <strong>unfamiliar</strong> topics. Research on speaking practice supports one routine: <strong>speak, repeat the same talk under time pressure, and fix your own most repeated errors</strong>. Do the 5 steps once a week for 12 weeks. <strong>English and Arabic are separate tracks</strong> with their own cycles, patterns and progress — switch above. Do English first each week; if time is tight, skip Arabic, not English.</p>
+    </details>
+    <div class="spk-caution"><strong>Read this before you trust any number.</strong><br>
+      • <strong>One week is noise.</strong> Judge only by the trend over 4+ weeks (the app will not show a trend before 4 cycles).<br>
+      • <strong>Count errors the same way every time</strong> — same tool, same rules. The AI count is an estimate; correct it if it is wrong.<br>
+      • <strong>Under ${min} words is too short to compare.</strong> Aim for about 1 minute of speech.<br>
+      • <strong>Max ${SPK_MAX_PATTERNS} active error patterns per language.</strong> Skipping steps 3–4 removes the parts with the best evidence.<br>
+      ${lang === 'ar' ? '• <strong>Arabic counts are rougher</strong> than English: AI grammar checking is less reliable in Arabic, so read the Arabic trend more loosely.<br>' : ''}
+      • This is a training routine and a rough gauge, not a proficiency test.</div>`;
+
+  if(!c){
+    html += `<div class="empty">No ${LANG_NAMES[lang]} cycle yet. Start your first one — you can begin with any unfamiliar topic.</div>
+      <div class="card-actions"><button class="primary" type="button" data-spkact="newcycle">Start ${LANG_NAMES[lang]} cycle 1</button></div>`;
+  } else {
+    const dayN = Math.max(1, daysBetween(c.start, todayStr()) + 1);
+    html += `<h3 style="margin:14px 0 4px;">${LANG_NAMES[lang]} cycle ${c.n} · started ${c.start} · day ${dayN}${dayN > 10 && !cycleComplete ? ' <span class="spk-warn">— running long: finish it or start a new cycle</span>' : ''}</h3>
+      <div class="spk-steps">${SPK_STEPS.map((st, i) => `<div class="spk-chip${done[i] ? ' done' : ''}${i === current ? ' current' : ''}${i === openStep ? ' open' : ''}" data-spkact="openstep" data-step="${i}">${done[i] ? '✓ ' : ''}${st.t}</div>`).join('')}</div>`;
+    if(cycleComplete){
+      const cr = spkRate(c.cold), tr = spkRate(c.transfer);
+      html += `<div class="spk-next"><h3>✅ Cycle ${c.n} complete</h3>
+        <p class="spk-why">Cold run: ${spkRunSummary(c.cold, lang) || 'not recorded'}<br>Transfer test: ${spkRunSummary(c.transfer, lang)}${cr !== null && tr !== null ? `<br><strong>Difference (transfer − cold): ${(tr - cr > 0 ? '+' : '') + (Math.round((tr - cr) * 10) / 10)} errors per 100 words</strong> — one cycle only; do not read much into it.` : ''}
+        ${done.every(Boolean) ? '' : '<br><span class="spk-warn">Some steps were skipped — the method works best with all five.</span>'}</p>
+        <div class="card-actions"><button class="primary" type="button" data-spkact="newcycle">Start ${LANG_NAMES[lang]} cycle ${c.n + 1}</button></div></div>`;
+    } else if(current >= 0){
+      html += `<div class="spk-next"><h3>👉 Next: ${SPK_STEPS[current].title}</h3><p class="spk-why">${SPK_STEPS[current].why}</p></div>`;
+    }
+    const st = SPK_STEPS[openStep];
+    html += `<div class="panel" style="margin:10px 0;"><h3 style="margin:0 0 4px;">${st.title}</h3>${openStep !== current ? `<p class="spk-why">${st.why}</p>` : ''}`;
+    if(openStep === 0){
+      html += (c.cold ? `<div class="spk-metrics">Saved: ${spkRunSummary(c.cold, lang)}</div>` : '')
+        + spkRunForm('cold', c, { topicHint: 'pick one you would NOT normally talk about', defaultSecs: 90, defaultTopic: '' });
+    } else if(openStep === 1){
+      html += spkPatternStep(c);
+    } else if(openStep === 2){
+      html += `<p class="gap-mini">Suggested times if your cold run was ~2:00 → repeat 1 at <strong>1:30</strong>, repeat 2 at <strong>1:00</strong>. Say the same points each time; use your corrected patterns.</p>`
+        + (c.cold ? `<div class="gap-mini">Your topic: <strong>${escapeHtml(c.cold.topic || '')}</strong></div>` : '<div class="spk-warn">Do step 1 first — repeat the same talk.</div>')
+        + '<h4 style="margin:12px 0 0;">Repeat 1</h4>' + spkRunForm('rep1', c, { defaultSecs: 75, defaultTopic: c.cold ? c.cold.topic : '' })
+        + '<h4 style="margin:12px 0 0;">Repeat 2</h4>' + spkRunForm('rep2', c, { defaultSecs: 60, defaultTopic: c.cold ? c.cold.topic : '' });
+    } else if(openStep === 3){
+      html += spkDrillStep(c);
+    } else {
+      html += (c.transfer ? `<div class="spk-metrics">Saved: ${spkRunSummary(c.transfer, lang)}</div>` : '')
+        + '<div class="spk-caution"><strong>Must be a NEW topic</strong> you have not spoken about this cycle. Do not prepare. About 1 minute.</div>'
+        + spkRunForm('transfer', c, { topicHint: 'a fresh one', defaultSecs: 60 });
+    }
+    html += '</div>';
+  }
+  html += spkPatternsPanel() + spkProgressPanel();
+  root.innerHTML = html;
+  if(typeof renderDrillsSpeakingLine === 'function') renderDrillsSpeakingLine();
+}
+function spkPatternStep(c){
+  const lang = spkClang(c), dir = lang === 'ar' ? ' dir="rtl"' : '';
+  const act = spkActivePatterns(lang);
+  const suggestions = c.analysis ? spkPatternTally(c.analysis.errors) : [];
+  const ids = new Set(spkCycleActiveIds(c));
+  let h = `<p class="gap-mini">Tick the patterns to work on <strong>this cycle</strong> (max ${SPK_MAX_PATTERNS} active per language).</p>`;
+  if(!act.length) h += '<div class="empty">You have no active patterns yet. Add one below — use your cold-run errors to choose.</div>';
+  h += act.map(p => `<label class="spk-pat" style="display:flex;gap:8px;align-items:flex-start;"><input type="checkbox" data-spkpat="${p.id}" ${ids.has(p.id) ? 'checked' : ''} style="width:auto;margin-top:3px;"><span><strong>${escapeHtml(p.name)}</strong>${p.model ? '<br><span class="gap-mini"' + dir + '>Model: ' + escapeHtml(p.model) + '</span>' : ''}</span></label>`).join('');
+  if(act.length) h += '<div class="card-actions"><button class="primary" type="button" data-spkact="savepats">Use the ticked patterns for this cycle</button></div>';
+  if(suggestions.length){
+    h += `<div class="gap-mini" style="margin-top:12px;"><strong>From your cold-run analysis</strong> (AI estimate):</div>` + suggestions.slice(0, 5).map(t =>
+      `<div class="spk-pat"><strong>${escapeHtml(t.label)}</strong> ×${t.count}${t.example ? ' <span class="gap-mini"' + dir + '>e.g. ' + escapeHtml(t.example) + '</span>' : ''}
+       <button class="ghost" type="button" data-spkact="addsugg" data-label="${escapeHtml(t.label)}" data-ex="${escapeHtml(t.example || '')}" style="margin-left:8px;">Add as pattern</button></div>`).join('');
+  }
+  return h + '<div class="status-msg" data-spk-status></div>';
+}
+function spkDrillStep(c){
+  const lang = spkClang(c), dir = lang === 'ar' ? ' dir="rtl"' : '';
+  const ids = spkCycleActiveIds(c);
+  if(!ids.length) return '<div class="spk-warn">Choose your patterns in step 2 first.</div>';
+  const pats = ids.map(id => state.spk.patterns.find(p => p.id === id)).filter(Boolean);
+  return `<p class="gap-mini">For each pattern say <strong>${SPK_DRILL_TARGET} sentences</strong> out loud — one per topic below, all using the pattern. Tap +1 after each sentence.</p>
+    <ol style="margin:6px 0 10px 18px;font-size:13px;"${dir}>${c.drillTopics.map(t => '<li>' + escapeHtml(t) + '</li>').join('')}</ol>
+    <div class="card-actions" style="margin-bottom:8px;"><button class="ghost" type="button" data-spkact="newtopics">Different topics</button></div>`
+    + pats.map(p => { const n = c.drills[p.id] || 0; return `<div class="spk-pat"><strong>${escapeHtml(p.name)}</strong> — <strong>${n}/${SPK_DRILL_TARGET}</strong> ${n >= SPK_DRILL_TARGET ? '✓' : ''}
+      <button class="ghost" type="button" data-spkact="drill" data-pid="${p.id}" data-d="1" style="margin-left:8px;">+1 sentence</button>
+      <button class="ghost" type="button" data-spkact="drill" data-pid="${p.id}" data-d="-1">−1</button>
+      ${p.model ? '<div class="gap-mini"' + dir + '>Model: ' + escapeHtml(p.model) + '</div>' : ''}</div>`; }).join('');
+}
+function spkPatternsPanel(){
+  const lang = uiLang(), dir = lang === 'ar' ? ' dir="rtl"' : '';
+  const act = spkActivePatterns(lang), ret = state.spk.patterns.filter(p => p.status !== 'active' && spkPlang(p) === lang);
+  return `<div class="panel" style="margin:14px 0 0;"><h3 style="margin:0 0 4px;">${LANG_NAMES[lang]} error patterns — <strong>${act.length} of ${SPK_MAX_PATTERNS}</strong> active</h3>
+    ${act.map(p => `<div class="spk-pat"><strong>${escapeHtml(p.name)}</strong>${p.model ? ' <span class="gap-mini"' + dir + '>— ' + escapeHtml(p.model) + '</span>' : ''}
+      <button class="ghost" type="button" data-spkact="retire" data-pid="${p.id}" style="margin-left:8px;">Retire</button></div>`).join('') || '<div class="empty">None yet.</div>'}
+    ${act.length < SPK_MAX_PATTERNS
+      ? `<div class="spk-form"><label>Add a pattern (name)</label><input type="text" id="spkNewPatName" placeholder="e.g. ${lang === 'ar' ? 'Verb agreement' : 'Past tense after time words'}">
+         <label>A correct model sentence</label><input type="text"${dir} id="spkNewPatModel" placeholder="${lang === 'ar' ? 'ذهبتُ إلى البنك أمس.' : 'e.g. Yesterday I went to the bank.'}">
+         <div class="card-actions"><button class="ghost" type="button" data-spkact="addpat">Add pattern</button></div><div class="status-msg" id="spkPatMsg"></div></div>`
+      : '<p class="gap-mini"><strong>All 3 slots are used.</strong> Retire a pattern (when you rarely make that error any more) to add another.</p>'}
+    ${ret.length ? `<details><summary class="gap-mini">Retired (${ret.length})</summary>${ret.map(p => '<div class="gap-mini">' + escapeHtml(p.name) + ' — retired ' + (p.retiredAt || '') + '</div>').join('')}</details>` : ''}
+  </div>`;
+}
+function spkProgressPanel(){
+  const lang = uiLang(), min = spkMin(lang);
+  const cs = spkCycles(lang).filter(c => c.cold || c.transfer);
+  if(!cs.length) return '';
+  const val = r => (r && r.words >= min) ? spkRate(r) : null;
+  const rows = cs.map(c => ({ n: c.n, cold: val(c.cold), tr: val(c.transfer), trRun: c.transfer }));
+  const max = Math.max(5, ...rows.flatMap(r => [r.cold, r.tr]).filter(v => v !== null));
+  const bar = (v, cls) => v === null ? '<span class="gap-mini">—</span>' : `<span class="b ${cls}" style="width:${Math.max(2, Math.round(v / max * 55))}%"></span> <strong>${v}</strong>`;
+  const info = spkTrendInfo(lang);
+  return `<div class="panel" style="margin:14px 0 0;"><h3 style="margin:0 0 4px;">${LANG_NAMES[lang]} progress</h3>
+    <div class="spk-caution">${info.verdict}</div>
+    <div class="gap-mini">Errors per 100 words (lower is better). <span style="display:inline-block;width:14px;height:10px;background:#B9A26A;"></span> cold run · <span style="display:inline-block;width:14px;height:10px;background:var(--brass-deep);"></span> transfer test. Runs under ${min} words are left out.</div>
+    <div class="spk-bars">${rows.map(r => `<div class="r"><span style="width:52px;">Cycle ${r.n}</span><div style="flex:1;">${bar(r.cold, 'cold')}<br>${bar(r.tr, '')}</div>
+      <span class="gap-mini" style="width:120px;">${r.trRun ? (spkWpm(r.trRun) || '—') + ' wpm' : ''}</span></div>`).join('')}</div></div>`;
+}
+
+// ---------- Events ----------
+function spkFormValues(form){
+  const g = k => (form.querySelector(`[data-spk="${k}"]`) || {}).value || '';
+  return { topic: g('topic').trim(), transcript: g('text').trim(), secs: Math.max(5, parseInt(g('secs'), 10) || 60), errorsRaw: g('errors') };
+}
+document.getElementById('spkRoot').addEventListener('input', (e) => {
+  const form = e.target.closest('.spk-form');
+  if(!form || (e.target.dataset.spk !== 'text' && e.target.dataset.spk !== 'errors' && e.target.dataset.spk !== 'secs')) return;
+  const v = spkFormValues(form), words = spkWords(v.transcript), min = spkMin();
+  const err = parseInt(v.errorsRaw, 10);
+  const live = form.querySelector('[data-spk-live]');
+  if(live) live.innerHTML = `Words: <strong>${words}</strong>${words && words < min ? ' <span class="spk-warn">— under ' + min + ', too short to compare</span>' : ''}${words && !isNaN(err) ? ' · <strong>' + (Math.round(err / words * 1000) / 10) + '</strong> errors per 100 words · ' + Math.round(words / v.secs * 60) + ' words/min' : ''}`;
+});
+document.getElementById('spkRoot').addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-spkact]');
+  if(!a) return;
+  e.preventDefault();
+  const act = a.dataset.spkact;
+  const lang = uiLang();
+  let c = spkCurrent(lang);
+  const form = a.closest('.spk-form');
+  const status = (msg, err) => { const s = (form || document.getElementById('spkRoot')).querySelector('[data-spk-status]'); if(s){ s.textContent = msg; s.className = 'status-msg' + (err ? ' err' : ''); } };
+  if(act === 'gotovoice'){ const b = document.querySelector('.tab-btn[data-view="practice"]'); if(b) b.click(); return; }
+  if(act === 'newcycle'){
+    if(c && !c.transfer && !confirm('Your current ' + LANG_NAMES[lang] + ' cycle is not finished. Start a new one anyway?')) return;
+    spkOpenStep = null; spkLast = {}; spkNewCycle(); await saveSpk(); renderSpeaking(); return;
+  }
+  if(!c) return;
+  if(act === 'openstep'){ spkOpenStep = parseInt(a.dataset.step, 10); renderSpeaking(); return; }
+  if(act === 'suggest'){
+    const t = spkPickTopics(1, spkUsedTopics(lang), lang)[0];
+    const inp = form.querySelector('[data-spk="topic"]'); if(inp) inp.value = t; return;
+  }
+  if(act === 'analyze'){
+    const v = spkFormValues(form);
+    if(spkWords(v.transcript) < 15){ status('Paste your transcript first (at least a few sentences).', true); return; }
+    a.disabled = true; const old = a.textContent; a.textContent = 'Analysing…';
+    try{
+      const errs = await spkAnalyze(v.transcript, lang);
+      spkLast[a.dataset.runkey] = errs;
+      if(a.dataset.runkey === 'cold') c.analysis = { errors: errs, at: todayStr() };
+      const keep = { topic: v.topic, text: v.transcript, secs: v.secs };
+      renderSpeaking();
+      const nf = document.querySelector(`.spk-form[data-runkey="${a.dataset.runkey}"]`);
+      nf.querySelector('[data-spk="topic"]').value = keep.topic; nf.querySelector('[data-spk="text"]').value = keep.text;
+      nf.querySelector('[data-spk="secs"]').value = keep.secs; nf.querySelector('[data-spk="errors"]').value = errs.length;
+      nf.querySelector('[data-spk="text"]').dispatchEvent(new Event('input', { bubbles: true }));
+    }catch(err){ a.disabled = false; a.textContent = old; status('AI analysis failed: ' + (err && err.message ? err.message : 'unknown error') + '. You can still count the errors yourself.', true); }
+    return;
+  }
+  if(act === 'saverun'){
+    const key = a.dataset.runkey, v = spkFormValues(form);
+    const words = spkWords(v.transcript), errors = parseInt(v.errorsRaw, 10);
+    if(!words){ status('Paste the transcript so the words can be counted.', true); return; }
+    if(isNaN(errors) || errors < 0){ status('Enter the number of grammar errors (0 or more).', true); return; }
+    if(!v.topic){ status('Give the topic a name.', true); return; }
+    if(key === 'transfer'){
+      const used = [c.cold, c.rep1, c.rep2].filter(Boolean).map(r => (r.topic || '').toLowerCase());
+      if(used.includes(v.topic.toLowerCase()) && !confirm('This topic was already used earlier in this cycle, so it is not a fair transfer test. Save it anyway?')) return;
+    }
+    c[key] = { date: todayStr(), topic: v.topic, words, errors, secs: v.secs, transcript: v.transcript.slice(0, 3000) };
+    spkLast[key] = null; spkTouch(c); await saveSpk();
+    if(key === 'cold' && !c.patternIds.length) spkOpenStep = 1; else spkOpenStep = null;
+    renderSpeaking();
+    gapToastMsg(words < spkMin(lang) ? `Saved — but ${words} words is too short to compare (aim for ${spkMin(lang)}+).` : 'Saved.');
+    return;
+  }
+  if(act === 'toGaps'){
+    const errs = spkLast[a.dataset.runkey] || [];
+    const picked = [...form.querySelectorAll('[data-spkerr]')].filter(x => x.checked).map(x => errs[parseInt(x.dataset.spkerr, 10)]).filter(Boolean);
+    if(!picked.length){ status('Tick at least one correction.', true); return; }
+    let added = 0;
+    picked.forEach(er => {
+      const r = captureGap({ lang, wanted: er.right, said: er.wrong, source: 'Speaking cycle', exEn: lang === 'en' ? er.sentence : '', exAr: lang === 'ar' ? er.sentence : '' });
+      if(r){ r.g.type = 'chunk'; r.g.typeManual = true; gapEnsureTrack(r.g); gapTouch(r.g); added++; }
+    });
+    await saveGaps(); renderGaps();
+    status(`Added ${added} correction${added === 1 ? '' : 's'} to Gaps as “Wrong choice / chunk” — you will drill them there.`);
+    return;
+  }
+  if(act === 'addsugg'){
+    if(spkActivePatterns(lang).length >= SPK_MAX_PATTERNS){ gapToastMsg('All 3 slots are used — retire a pattern first.'); return; }
+    const sp = { id: uid(), lang, name: a.dataset.label, model: a.dataset.ex || '', status: 'active', createdAt: todayStr(), retiredAt: '', updatedAt: new Date().toISOString() };
+    state.spk.patterns.push(sp);
+    if(!c.transfer && !(c.patternIds || []).includes(sp.id)){ c.patternIds.push(sp.id); spkTouch(c); }
+    await saveSpk(); renderSpeaking(); return;
+  }
+  if(act === 'addpat'){
+    const name = (document.getElementById('spkNewPatName').value || '').trim(), model = (document.getElementById('spkNewPatModel').value || '').trim();
+    const msg = document.getElementById('spkPatMsg');
+    if(!name){ msg.textContent = 'Give the pattern a name.'; msg.className = 'status-msg err'; return; }
+    if(spkActivePatterns(lang).length >= SPK_MAX_PATTERNS){ msg.textContent = 'All 3 slots are used.'; msg.className = 'status-msg err'; return; }
+    const pat = { id: uid(), lang, name, model, status: 'active', createdAt: todayStr(), retiredAt: '', updatedAt: new Date().toISOString() };
+    state.spk.patterns.push(pat);
+    if(c && !c.transfer && !(c.patternIds || []).includes(pat.id)){ c.patternIds.push(pat.id); spkTouch(c); }
+    await saveSpk(); renderSpeaking(); return;
+  }
+  if(act === 'retire'){
+    const p = state.spk.patterns.find(x => x.id === a.dataset.pid);
+    if(p && confirm(`Retire “${p.name}”? Do this when you rarely make that error any more.`)){ p.status = 'retired'; p.retiredAt = todayStr(); p.updatedAt = new Date().toISOString(); await saveSpk(); renderSpeaking(); }
+    return;
+  }
+  if(act === 'savepats'){
+    const ids = [...document.querySelectorAll('[data-spkpat]')].filter(x => x.checked).map(x => x.dataset.spkpat);
+    if(!ids.length){ status('Tick at least one pattern.', true); return; }
+    c.patternIds = ids.slice(0, SPK_MAX_PATTERNS); spkTouch(c); await saveSpk(); spkOpenStep = null; renderSpeaking(); return;
+  }
+  if(act === 'drill'){
+    const pid = a.dataset.pid, d = parseInt(a.dataset.d, 10);
+    c.drills[pid] = Math.max(0, (c.drills[pid] || 0) + d); spkTouch(c); await saveSpk(); renderSpeaking(); return;
+  }
+  if(act === 'newtopics'){ c.drillTopics = spkPickTopics(10, spkUsedTopics(lang).concat(c.drillTopics), lang); spkTouch(c); await saveSpk(); renderSpeaking(); return; }
+});
+// The English / Arabic switch (Speaking tab and Today dashboard share it).
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.ui-lang-btn');
+  if(!b) return;
+  state.uiLang = b.dataset.uilang === 'ar' ? 'ar' : 'en';
+  lsSet('uiLang', state.uiLang);
+  spkOpenStep = null; spkLast = {};
+  renderSpeaking();
+  if(typeof renderDashboard === 'function') renderDashboard();
+});
+// One-line status of each language's cycle, shown at the top of Drills.
+function renderDrillsSpeakingLine(){
+  const el = document.getElementById('drillsSpeakingLine');
+  if(!el) return;
+  const lines = ['en', 'ar'].map(l => {
+    const st = spkStatus(l);
+    if(!st.c){ return l === 'en' ? `<div class="gap-mini">Speaking cycle (English): not started — <a href="#" data-gotab="speaking">open</a></div>` : ''; }
+    const text = st.complete ? `cycle ${st.c.n} complete ✓` : `cycle ${st.c.n} · step ${st.current + 1} of 5, next: ${SPK_STEPS[st.current].title.replace(/^Step \d — /, '')} · day ${st.dayN}${st.dayN > 10 ? ' <span class="spk-warn">(running long)</span>' : ''}`;
+    return `<div class="gap-mini" style="font-size:13px;color:var(--ink);"><strong>Speaking cycle (${LANG_NAMES[l]}):</strong> ${text} — <a href="#" data-gotab="speaking" data-golang="${l}">open</a></div>`;
+  }).join('');
+  el.innerHTML = lines;
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-gotab]');
+  if(!a) return;
+  e.preventDefault();
+  if(a.dataset.golang){ state.uiLang = a.dataset.golang; lsSet('uiLang', state.uiLang); }
+  const b = document.querySelector('.tab-btn[data-view="' + a.dataset.gotab + '"]'); if(b) b.click();
+});
+
+// ---------- Speaking cycle: merge + Sheet sync (pull → merge → push) ----------
+// Merge by id (newer edit wins). Two devices that each started a cycle get both kept,
+// ordered by start date and renumbered, so nothing is lost or overwritten.
+function mergeSpk(local, incoming){
+  const pick = (a, b) => ((b.updatedAt || '') > (a.updatedAt || '')) ? b : a;
+  const mergeById = (x, y) => {
+    const m = new Map();
+    (x || []).concat(y || []).forEach(it => { if(!it || !it.id) return; const cur = m.get(it.id); m.set(it.id, cur ? pick(cur, it) : it); });
+    return [...m.values()];
+  };
+  const patterns = mergeById(local && local.patterns, incoming && incoming.patterns);
+  let cycles = mergeById(local && local.cycles, incoming && incoming.cycles);
+  cycles.sort((a, b) => (a.start || '').localeCompare(b.start || '') || String(a.id).localeCompare(String(b.id))); // same order on every device
+  const counter = { en: 0, ar: 0 };
+  cycles.forEach(c => { const l = c.lang === 'ar' ? 'ar' : 'en'; c.n = ++counter[l]; c.drills = c.drills || {}; c.patternIds = c.patternIds || []; c.drillTopics = c.drillTopics || []; });
+  return { patterns, cycles };
+}
+function spkToRows(){
+  return state.spk.patterns.map(p => ({ kind: 'pattern', id: p.id, key: p.name, data: JSON.stringify(p), updatedAt: p.updatedAt || '' }))
+    .concat(state.spk.cycles.map(c => ({ kind: 'cycle', id: c.id, key: c.start, data: JSON.stringify(c), updatedAt: c.updatedAt || '' })));
+}
+function spkFromRows(rows){
+  const out = { patterns: [], cycles: [] };
+  (rows || []).forEach(r => {
+    let d; try{ d = JSON.parse(r.data); }catch(e){ return; }
+    if(!d || !d.id) return;
+    if(!d.updatedAt) d.updatedAt = String(r.updatedAt || '');
+    if(r.kind === 'pattern' && d.name) out.patterns.push(d);
+    else if(r.kind === 'cycle' && d.start) out.cycles.push(d);
+  });
+  return out;
+}
+async function coreRestoreSpeaking(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'speaking' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    if(Array.isArray(data)) throw new Error('your Apps Script doesn\u2019t have the Speaking update yet — paste in the updated script and redeploy first (nothing was sent)');
+    const incoming = spkFromRows(data.rows);
+    const before = state.spk.cycles.length;
+    state.spk = mergeSpk(state.spk, incoming);
+    await saveSpk();
+    renderSpeaking();
+    return { ok: true, incoming: incoming.cycles.length, before, message: `Speaking cycles: ${incoming.cycles.length} in the Sheet merged with ${before} here → ${state.spk.cycles.length} on this device.` };
+  }catch(err){
+    return { ok: false, message: 'Speaking restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+async function coreBackupSpeaking(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'speaking_sync', rows: spkToRows() }) });
+    throwIfRejected(await post.json());
+    return { ok: true, message: `Speaking cycles: ${state.spk.cycles.length} cycle(s) and ${state.spk.patterns.length} pattern(s) backed up.` };
+  }catch(err){
+    return { ok: false, message: 'Speaking backup failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+async function coreSyncSpeaking(){
+  const r = await coreRestoreSpeaking();
+  if(!r.ok) return r; // e.g. old Apps Script: nothing is sent
+  const b = await coreBackupSpeaking();
+  if(!b.ok) return b;
+  return { ok: true, message: `Speaking cycles synced: ${r.incoming} from the Sheet merged with ${r.before} here → ${state.spk.cycles.length} in total, all backed up.` };
+}
+function renderSpkSync(){
+  const root = document.getElementById('spkSync');
+  if(!root || root.dataset.ready) return;
+  root.dataset.ready = '1';
+  root.innerHTML = `<h3 style="margin:0 0 4px;">Backup &amp; devices</h3>
+    <p class="gap-mini">Your cycles and patterns live on this device. <strong>Sync speaking with Sheet</strong> pulls the Sheet’s copy, merges it with this device’s (nothing is overwritten), then backs up the result. Press it when you switch devices. “Download backup file” also includes them. Needs the updated Apps Script (a “Speaking” tab).</p>
+    <div class="card-actions"><button class="primary" type="button" id="spkSyncBtn">Sync speaking with Sheet</button></div><div class="status-msg" id="spkSyncStatus"></div>`;
+  document.getElementById('spkSyncBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('spkSyncBtn'), st = document.getElementById('spkSyncStatus');
+    btn.disabled = true; st.textContent = 'Syncing…'; st.className = 'status-msg';
+    const r = await coreSyncSpeaking();
+    st.textContent = r.message; st.className = r.ok ? 'status-msg' : 'status-msg err'; btn.disabled = false;
+  });
+}
+
+
+// =====================================================================
+// TODAY DASHBOARD — what to do next, and whether it is working.
+// Reads what the app already records; adds no new data entry. The only new
+// data is local: the last successful sync time and a one-line-per-day backlog
+// history (neither is written to the Sheet).
+// =====================================================================
+function dashHours(iso){ return iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : Infinity; }
+function dashAgo(iso){
+  const h = dashHours(iso);
+  if(h === Infinity) return 'never';
+  if(h < 1) return 'less than an hour ago';
+  if(h < 48) return Math.round(h) + ' hour' + (Math.round(h) === 1 ? '' : 's') + ' ago';
+  return Math.round(h / 24) + ' days ago';
+}
+function dashGapDue(lang){
+  const today = todayStr();
+  const due = gapDueSorted().filter(g => !lang || g.lang === lang);
+  return { total: due.length, overdue3: due.filter(g => daysBetween(gapNextDue(g), today) > 3).length };
+}
+function dashFast(lang, from, to){
+  const at = state.gaps.filter(g => g.lang === lang && gapTrack(g) === 'light')
+    .flatMap(g => (g.attempts || []).filter(a => a.d >= from && a.d <= to));
+  const n = at.length;
+  const f = at.filter(a => a.r === 5).length, sl = at.filter(a => a.r === 3).length, mi = at.filter(a => a.r <= 2).length;
+  return { n, f, sl, mi, pct: n ? Math.round(f / n * 100) : null };
+}
+function dashRelogs(lang, from, to){
+  return state.gaps.filter(g => g.lang === lang).reduce((n, g) => {
+    const ds = (g.logDates && g.logDates.length) ? g.logDates : [g.date];
+    return n + ds.slice(1).filter(d => d >= from && d <= to).length;
+  }, 0);
+}
+function dashLogged(lang, from, to){
+  return state.gaps.filter(g => g.lang === lang).reduce((n, g) => n + ((g.logDates && g.logDates.length) ? g.logDates : [g.date]).filter(d => d >= from && d <= to).length, 0);
+}
+function dashPractice(lang, from, to){
+  return state.log.filter(l => l.lang === lang && l.date >= from && l.date <= to).reduce((n, l) => n + (l.count || 1), 0);
+}
+// One line per day of backlog, kept locally so a trend can be shown.
+function dashRecordSnapshot(){
+  const today = todayStr();
+  const h = lsGet('dashHist', {});
+  h[today] = { bankDue: getDueReviews().length, en: dashGapDue('en').total, ar: dashGapDue('ar').total };
+  Object.keys(h).sort().slice(0, -60).forEach(k => delete h[k]);
+  lsSet('dashHist', h);
+  return h;
+}
+function dashTotalDue(h){ return (h.bankDue || 0) + (h.en || 0) + (h.ar || 0); }
+function dashBacklogTrend(hist){
+  const dates = Object.keys(hist).sort();
+  const today = todayStr(), ago = addDays(today, -7);
+  const past = dates.filter(d => d <= ago).pop();
+  const rising = dates.length >= 4 && dates.slice(-4).every((d, i, arr) => i === 0 || dashTotalDue(hist[d]) > dashTotalDue(hist[arr[i - 1]]));
+  return { pastTotal: past ? dashTotalDue(hist[past]) : null, rising, days: dates.length };
+}
+const DASH_STEP_MIN = [5, 10, 10, 15, 5];
+function dashOutstanding(lang){
+  // Everything still open today, with rough minutes, in priority order.
+  const items = [];
+  const url = state.settings.webAppUrl;
+  const last = lsGet('lastSync', '');
+  if(url && dashHours(last) > 48) items.push({ key: 'sync', title: 'Sync your data', detail: `Last full sync on this device: ${dashAgo(last)}. Progress lives on each device until you sync.`, min: 1, act: 'syncall' });
+  const cs = gapCapState(), gd = dashGapDue();
+  const remainingDue = gapDueSorted().filter(g => !gapSessionDone.has(g.id)).length;
+  if(remainingDue > 0 && cs.left > 0){
+    const n = Math.min(remainingDue, cs.left);
+    items.push({ key: 'gaps', title: `Gap review: ${n} to do`, detail: `${remainingDue} due (English ${dashGapDue('en').total}, Arabic ${dashGapDue('ar').total}) · daily cap leaves room for ${cs.left}. Say each answer aloud before revealing.`, min: n, view: 'gaps' });
+  }
+  const dose = getDailyDoseState();
+  if(dose.completed < dose.target) items.push({ key: 'bank', title: `Bank review: ${dose.target - dose.completed} left in today's dose`, detail: 'Shared by both languages — each phrase holds both.', min: (dose.target - dose.completed) * 2, view: 'review' });
+  const st = spkStatus(lang);
+  if(!st.c) items.push({ key: 'spk', title: `Start your first ${LANG_NAMES[lang]} speaking cycle`, detail: 'Five steps over a week; step 1 is a 1–2 minute talk on an unfamiliar topic.', min: DASH_STEP_MIN[0], view: 'speaking', lang });
+  else if(!st.complete) items.push({ key: 'spk', title: `${LANG_NAMES[lang]} speaking cycle — next: ${SPK_STEPS[st.current].title.replace(/^Step \d — /, '')}`, detail: `Cycle ${st.c.n}, day ${st.dayN}, step ${st.current + 1} of 5.`, min: DASH_STEP_MIN[st.current], view: 'speaking', lang });
+  ['voicePractice', 'writeCheck', 'addPhrase'].forEach(k => {
+    const def = DAILY_TASK_DEFS[k], done = getTaskProgress(k).completed;
+    if(done < def.target) items.push({ key: k, title: `${def.title}: ${def.target - done} more`, detail: `${done}/${def.target} today.`, min: (def.target - done) * 2, view: k === 'voicePractice' || k === 'writeCheck' ? 'practice' : 'bank' });
+  });
+  return items;
+}
+function dashTile(title, valHtml, dir, sub, btn){
+  return `<div class="dash-tile"><h4>${title}</h4>${valHtml}<div class="dir">${dir}</div>${sub ? '<div class="gap-mini">' + sub + '</div>' : ''}${btn || ''}</div>`;
+}
+function renderDashboard(){
+  const root = document.getElementById('dashRoot');
+  if(!root) return;
+  const lang = uiLang(), other = lang === 'en' ? 'ar' : 'en', today = todayStr();
+  const hist = dashRecordSnapshot();
+  const items = dashOutstanding(lang);
+  const lastSync = lsGet('lastSync', '');
+  const totalMin = items.reduce((n, i) => n + i.min, 0);
+  const goBtn = (label, view, lg) => `<button class="ghost" type="button" data-dashact="goto" data-view="${view}"${lg ? ' data-lang="' + lg + '"' : ''}>${label}</button>`;
+
+  let html = `<h2>Today</h2>${langToggleHtml()}
+    <div class="gap-mini">Language view: <strong>${LANG_NAMES[lang]}</strong> · last full sync on this device: <strong>${dashAgo(lastSync)}</strong></div>`;
+
+  // ---- warnings ----
+  const warns = [];
+  if(!state.settings.webAppUrl) warns.push(['info', 'Your Google Sheet is not set up, so all progress lives on this device only. Set it up under “Sheet & AI settings” to sync and back up.']);
+  else if(dashHours(lastSync) > 48) warns.push(['warn', `Sync overdue — last full sync ${dashAgo(lastSync)}. Data made on another device may be missing here.`]);
+  const bt = dashBacklogTrend(hist);
+  if(bt.rising) warns.push(['warn', 'Your review backlog has grown four days in a row. Lower the gap intake or the bank intake, or raise the daily cap for a few days.']);
+  const cs = gapCapState();
+  if(cs.left === 0 && gapDueSorted().some(g => !gapSessionDone.has(g.id))) warns.push(['warn', `Daily gap cap reached (${cs.cap}) with reviews still due — they roll over. If this keeps happening, you are logging more than you can review.`]);
+  const st = spkStatus(lang);
+  if(st.c && !st.complete && st.dayN > 10) warns.push(['warn', `Your ${LANG_NAMES[lang]} speaking cycle is on day ${st.dayN} — finish it or start a new one.`]);
+  if(st.c && st.complete){ const since = daysBetween(st.c.start, today); if(since > 14) warns.push(['info', `Your last ${LANG_NAMES[lang]} speaking cycle started ${since} days ago. The routine works best weekly.`]); }
+  html += warns.map(([k, m]) => `<div class="dash-${k}">${escapeHtml(m)}</div>`).join('');
+
+  // ---- next best action ----
+  if(items.length){
+    const it = items[0];
+    html += `<div class="dash-next"><h3>👉 Next: ${escapeHtml(it.title)}</h3><p class="sub">${escapeHtml(it.detail)} · about ${it.min} min · <strong>everything left today ≈ ${totalMin} min</strong></p>
+      <button class="primary" type="button" data-dashact="${it.act || 'goto'}"${it.view ? ' data-view="' + it.view + '"' : ''}${it.lang ? ' data-lang="' + it.lang + '"' : ''}>Go →</button></div>`;
+  } else {
+    html += '<div class="dash-next"><h3>✅ Everything planned for today is done</h3><p class="sub">Anything more is optional. Log gaps as they happen with the ＋ Gap button.</p></div>';
+  }
+
+  // ---- today's checklist ----
+  const dose = getDailyDoseState();
+  const remDue = gapDueSorted().filter(g => !gapSessionDone.has(g.id)).length;
+  const row = (label, doneFlag, status, view, lg) => `<div class="dash-row${doneFlag ? ' done' : ''}" data-dashact="goto" data-view="${view}"${lg ? ' data-lang="' + lg + '"' : ''}><span>${doneFlag ? '✓' : '○'} ${label}</span><span class="st">${status}</span></div>`;
+  const tk = k => { const d = DAILY_TASK_DEFS[k], n = getTaskProgress(k).completed; return [n >= d.target, n + '/' + d.target]; };
+  const stepText = !st.c ? 'not started' : st.complete ? 'cycle complete' : `step ${st.current + 1} of 5`;
+  html += `<h3 style="margin:14px 0 2px;">Today’s checklist</h3><div class="dash-list">
+    ${row('Bank review dose', dose.completed >= dose.target, dose.completed + '/' + dose.target, 'review')}
+    ${row('Gap reviews', remDue === 0, cs.n + '/' + cs.cap + ' · ' + remDue + ' due', 'gaps')}
+    ${row('Voice practice', tk('voicePractice')[0], tk('voicePractice')[1], 'practice')}
+    ${row('Write &amp; check', tk('writeCheck')[0], tk('writeCheck')[1], 'practice')}
+    ${row('Add new phrases', tk('addPhrase')[0], tk('addPhrase')[1], 'bank')}
+    ${row('Speaking cycle (' + LANG_NAMES[lang] + ')', !!(st.c && st.complete), stepText, 'speaking', lang)}
+  </div>`;
+
+  // ---- four tiles ----
+  const w0 = addDays(today, -6), w1 = addDays(today, -13), w2 = addDays(today, -7);
+  const fast = dashFast(lang, addDays(today, -13), today);
+  const t1 = fast.n >= 10
+    ? dashTile('Spoken retrieval', `<div class="val">${fast.pct}%</div>`, '↑ higher is better', `${fast.f} fast · ${fast.sl} slow · ${fast.mi} missed, last 14 days (${fast.n} reviews, quick-track gaps)`, goBtn('Review gaps', 'gaps'))
+    : dashTile('Spoken retrieval', `<div class="val na">Not enough data yet</div>`, '↑ higher is better', `${fast.n} of 10 quick-track reviews in the last 14 days`, goBtn('Review gaps', 'gaps'));
+  const ti = spkTrendInfo(lang);
+  const t2 = ti.count >= 4
+    ? dashTile('Speaking accuracy', `<div class="val">${ti.latest}</div>`, '↓ errors per 100 words in your latest transfer test — lower is better', ti.change !== undefined ? `Change first 3 → latest 3 cycles: <strong>${ti.change > 0 ? '+' : ''}${ti.change}</strong> (rough gauge)` : `${ti.count} valid tests — read the change after 6`, goBtn('Open Speaking', 'speaking', lang))
+    : dashTile('Speaking accuracy', `<div class="val na">Not enough cycles yet</div>`, '↓ errors per 100 words — lower is better', `${ti.count} of 4 valid transfer tests. Do not judge yet.`, goBtn('Open Speaking', 'speaking', lang));
+  const rl = dashRelogs(lang, addDays(today, -29), today), rlPrev = dashRelogs(lang, addDays(today, -59), addDays(today, -30));
+  const t3 = (rl + rlPrev) >= 6
+    ? dashTile('Gaps that came back', `<div class="val">${rl}</div>`, '↓ fewer repeats over time means retrieval is improving', `Last 30 days: ${rl} · the 30 days before: ${rlPrev}`, goBtn('Open Gaps', 'gaps'))
+    : dashTile('Gaps that came back', `<div class="val na">Too few to read</div>`, '↓ fewer repeats over time means retrieval is improving', `${rl + rlPrev} repeats in the last 60 days (need about 6)`, goBtn('Open Gaps', 'gaps'));
+  const gl = dashGapDue(lang);
+  const nowTotal = getDueReviews().length + gl.total;
+  const t4 = dashTile('Backlog', `<div class="val">${nowTotal}</div>`, '↓ watch the direction, not the day', `Bank due ${getDueReviews().length} (shared by both languages) + ${LANG_NAMES[lang]} gaps due ${gl.total}${gl.overdue3 ? ' (' + gl.overdue3 + ' overdue over 3 days)' : ''}${bt.pastTotal !== null ? '<br>7 days ago (bank + both languages\u2019 gaps): ' + bt.pastTotal : '<br>Trend needs a week of history.'}`, '');
+  html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}</div>`;
+
+  // ---- corner ----
+  const uw = countUniqueWords();
+  html += `<div class="gap-mini">Unique words in your bank — English <strong>${uw.en.unique.toLocaleString()}</strong> · Arabic <strong>${uw.ar.unique.toLocaleString()}</strong> (saved words, not proof you can say them). Practice logged, last 7 days — ${LANG_NAMES[lang]} <strong>${dashPractice(lang, w0, today)}</strong> · ${LANG_NAMES[other]} <strong>${dashPractice(other, w0, today)}</strong>.</div>`;
+
+  // ---- weekly review (auto) ----
+  const lines = [];
+  const fThis = dashFast(lang, w0, today), fPrev = dashFast(lang, addDays(today, -13), w2);
+  if(fThis.n >= 8 && fPrev.n >= 8){
+    const d = fThis.pct - fPrev.pct;
+    lines.push(d >= 5 ? `Spoken retrieval improved: fast share ${fPrev.pct}% → ${fThis.pct}%. Keep the same routine.`
+      : d <= -5 ? `Spoken retrieval slipped: fast share ${fPrev.pct}% → ${fThis.pct}%. Try a smaller daily cap or fewer new gaps, and do the timed card when fresh.`
+      : `Spoken retrieval is steady (${fPrev.pct}% → ${fThis.pct}%).`);
+  } else lines.push('Spoken retrieval: not enough reviews in both weeks to compare yet.');
+  const lgThis = dashLogged(lang, w0, today), lgPrev = dashLogged(lang, w1, w2);
+  if(lgThis + lgPrev >= 6) lines.push(`Gaps logged: ${lgThis} this week vs ${lgPrev} last week.${lgThis > lgPrev * 1.5 && bt.rising ? ' Intake is outpacing review — slow down logging or extend review time.' : ''}`);
+  const rThis = dashRelogs(lang, w0, today), rPrev = dashRelogs(lang, w1, w2);
+  if(rThis + rPrev >= 4) lines.push(`Repeat gaps: ${rThis} this week vs ${rPrev} last week${rThis < rPrev ? ' — fewer words are slipping again.' : rThis > rPrev ? ' — the same words keep slipping; move them to the bank with an example sentence and say them in a full sentence.' : '.'}`);
+  if(bt.pastTotal !== null){ const d = nowTotal + dashGapDue(other).total - bt.pastTotal; lines.push(`Backlog (bank + both languages’ gaps): ${d > 0 ? '+' : ''}${d} versus 7 days ago${d > 10 ? ' — reviews are not keeping up; cut new intake for a few days.' : d < -10 ? ' — catching up nicely.' : '.'}`); }
+  const cyc = spkCycles(lang).filter(c => c.transfer && c.transfer.words >= spkMin(lang));
+  if(cyc.length >= 2){ const a = spkRate(cyc[cyc.length - 2].transfer), b = spkRate(cyc[cyc.length - 1].transfer); lines.push(`Latest transfer test: ${b} vs ${a} errors per 100 words in the cycle before (${b < a ? 'better' : b > a ? 'worse' : 'same'}). One cycle is noise — wait for the trend.`); }
+  html += `<h3 style="margin:14px 0 2px;">Weekly review — ${LANG_NAMES[lang]} (auto-written)</h3><ul class="dash-review">${lines.map(l => '<li>' + escapeHtml(l) + '</li>').join('')}</ul>
+    <div class="spk-caution"><strong>Read these as directions, not scores.</strong> Numbers here are only worth acting on when they move over weeks. The point of every tile is the action beside it — not a number to push up.</div>`;
+  root.innerHTML = html;
+}
+document.getElementById('dashRoot').addEventListener('click', (e) => {
+  const a = e.target.closest('[data-dashact]');
+  if(!a) return;
+  if(a.dataset.dashact === 'syncall'){ const b = document.getElementById('syncAllBtn'); if(b) b.click(); return; }
+  if(a.dataset.lang){ state.uiLang = a.dataset.lang; lsSet('uiLang', state.uiLang); }
+  const b = document.querySelector('.tab-btn[data-view="' + a.dataset.view + '"]'); if(b) b.click();
+});
+
 // ---------- Pop-ups: every one gets a ✕ and closes with Esc ----------
 // (The Sheet & AI settings pop-up used to run off-screen with its Cancel
 // button out of reach; .modal now scrolls, and these give a second way out.)
@@ -7054,6 +7997,9 @@ document.addEventListener('keydown', (e) => {
   renderGcStarResults();
   renderGcDateResults();
   renderGaps();
+  renderSpeaking();
+  renderSpkSync();
+  renderDashboard();
 
   // Silently catch up today's drill progress from another device, if any —
   // best-effort and non-blocking, so a slow/offline sheet never delays the
