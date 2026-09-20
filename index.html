@@ -1307,6 +1307,8 @@ async function loadState(){
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
   state.gaps = lsGet('gaps', []);
+  state.gapTomb = lsGet('gapTomb', []);   // ids of deleted gaps, so a sync can't bring them back
+  if(!Array.isArray(state.gapTomb)) state.gapTomb = [];
   state.uiLang = lsGet('uiLang', 'en');
   state.spk = lsGet('speaking', { patterns: [], cycles: [] });
   if(!Array.isArray(state.spk.patterns)) state.spk.patterns = [];
@@ -1329,7 +1331,7 @@ async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); }
 async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
-async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); }
+async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); lsSet('gapTomb', state.gapTomb || []); }
 async function saveSpk(){ lsSet('speaking', state.spk); }
 
 // ---------- Keeping the local practice log from growing forever ----------
@@ -3765,6 +3767,7 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     grammar: state.grammar,
     quran: state.quran,
     gaps: state.gaps,
+    gapTomb: state.gapTomb || [],
     gapMeta: state.gapMeta,
     speaking: state.spk
   };
@@ -3803,6 +3806,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
     if(Array.isArray(payload.quran)) state.quran = payload.quran;
     // Gaps are MERGED (never replaced), so gaps logged on this device since the backup are kept.
+    if(Array.isArray(payload.gapTomb)) gapAddTombs(payload.gapTomb);
     if(Array.isArray(payload.gaps)){
       state.gaps = mergeGaps(state.gaps, payload.gaps);
       if(payload.gapMeta && payload.gapMeta.checklist){
@@ -6435,6 +6439,14 @@ function captureGap({ lang, wanted, said, source, exEn, exAr }){
 // Merge two gap lists (used by file restore and Sheet sync). Same id → the
 // newer edit wins; same wording under different ids (logged on two devices)
 // → folded into the older entry. Log dates are always unioned.
+// Deleted gaps leave a small "tombstone" (id + when). Without it, the pull-and-merge
+// sync would just copy the deleted gap back from the Sheet or another device.
+function gapAddTombs(list){
+  const m = new Map((state.gapTomb || []).map(t => [t.id, t]));
+  (list || []).forEach(t => { if(t && t.id){ const cur = m.get(t.id); if(!cur || (t.at || '') > (cur.at || '')) m.set(t.id, { id: t.id, at: t.at || new Date().toISOString() }); } });
+  const cutoff = new Date(Date.now() - 400 * 86400000).toISOString();
+  state.gapTomb = [...m.values()].filter(t => (t.at || '') >= cutoff);
+}
 function mergeGaps(local, incoming){
   const byId = new Map();
   const add = (g) => {
@@ -6447,6 +6459,8 @@ function mergeGaps(local, incoming){
     byId.set(g.id, merged);
   };
   (local || []).forEach(add); (incoming || []).forEach(add);
+  // Drop deleted gaps BEFORE matching by wording, so an old deleted copy can never swallow a fresh entry with the same words.
+  (state.gapTomb || []).forEach(t => byId.delete(t.id));
   const byKey = new Map();
   [...byId.values()].forEach(g => {
     const k = gapKey(g.lang, g.wanted);
@@ -6458,7 +6472,8 @@ function mergeGaps(local, incoming){
     merged.logDates = [...new Set([].concat(base.logDates || [], extra.logDates || []))].sort();
     byKey.set(k, merged);
   });
-  return [...byKey.values()];
+  const dead = new Set((state.gapTomb || []).map(t => t.id));
+  return [...byKey.values()].filter(g => !dead.has(g.id)); // a deletion always wins
 }
 
 // ---------- List + filters ----------
@@ -6595,6 +6610,7 @@ document.getElementById('gapList').addEventListener('click', async (e) => {
   }
   if(act === 'delete'){
     if(!confirm('Delete this gap and its history for good? (Archive keeps it in your records instead.)')) return;
+    gapAddTombs([{ id: g.id, at: new Date().toISOString() }]);
     state.gaps = state.gaps.filter(x => x.id !== g.id); gapExpanded.delete(g.id);
     await saveGaps(); renderGaps(); return;
   }
@@ -7119,7 +7135,9 @@ async function coreRestoreGaps(){
     const data = await res.json();
     throwIfRejected(data);
     if(Array.isArray(data)) throw new Error('your Apps Script doesn\u2019t have the Gaps update yet — paste in the updated script and redeploy first (nothing was sent)');
-    const incoming = (data.entries || []).map(gapFromRow).filter(Boolean);
+    const rowsIn = data.entries || [];
+    gapAddTombs(rowsIn.filter(r => r.status === 'deleted').map(r => ({ id: String(r.id), at: String(r.updatedAt || '') })));
+    const incoming = rowsIn.filter(r => r.status !== 'deleted').map(gapFromRow).filter(Boolean);
     const before = state.gaps.length;
     state.gaps = mergeGaps(state.gaps, incoming);
     await saveGaps();
@@ -7136,7 +7154,7 @@ async function coreBackupGaps(){
   try{
     const post = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow) })
+      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))) })
     });
     throwIfRejected(await post.json());
     return { ok: true, message: `Gaps: ${state.gaps.length} backed up.` };
