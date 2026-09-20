@@ -2887,6 +2887,44 @@ function etaLine(label, remaining, perDay){
   return `→ ${label}: ${fmtEta(days)}, around ${fmtEtaDate(days)}`;
 }
 
+// Distinct words across ALL the text in the bank — every word of every
+// English and Arabic phrase, bolded or not — each counted once. This is the
+// "total vocabulary without repetition" figure the benchmarks and timeline
+// use; the bold totals stay a separate, bolded-only count. Words are cleaned
+// with normalizeBoldKey (case/punctuation, Arabic diacritics/variants/"ال").
+function countUniqueWords(){
+  const result = {};
+  ['en', 'ar'].forEach(lang => {
+    const map = new Map();
+    let total = 0;
+    state.bank.forEach(p => {
+      ensureSrs(p);
+      const added = /^\d{4}-\d{2}-\d{2}$/.test(p.dateAdded || '') ? p.dateAdded : '';
+      wordsOf(p[lang], lang).forEach(raw => {
+        if(!/\p{L}/u.test(raw)) return; // skip bare numbers / symbols
+        const key = normalizeBoldKey(raw, lang);
+        if(!key) return;
+        total++;
+        const rec = map.get(key);
+        if(rec){
+          rec.count++;
+          if(added && (!rec.first || added < rec.first)) rec.first = added;
+        } else {
+          map.set(key, { label: raw, count: 1, first: added });
+        }
+      });
+    });
+    const recs = [...map.values()];
+    result[lang] = {
+      total,
+      unique: map.size,
+      top: recs.filter(r => r.count > 1).sort((a, b) => b.count - a.count).slice(0, 12),
+      firstDates: recs.map(r => r.first).filter(Boolean)
+    };
+  });
+  return result;
+}
+
 let hsDetailsOpen = false;
 function timelineHtml(lang, u, b){
   const spk = VOCAB_BENCHMARKS[lang].speaking;
@@ -2909,35 +2947,36 @@ function timelineHtml(lang, u, b){
   html += `<p class="hs-eta hs-alt">At ${PACE_SCENARIOS.join(' / ')} new words a day: ` + (b.next ? `${escapeHtml(b.next.label)} in ${scen(toNext)} · ` : '') + `${escapeHtml(spk.label.toLowerCase())} in ${scen(toTarget)}</p>`;
   return html;
 }
-function hsDetailsHtml(entries, uniq){
+function hsDetailsHtml(boldEntries, boldUniq, words){
   const block = (lang, label) => {
-    const u = uniq[lang];
-    const b = vocabBenchmarkFor(lang, u.unique);
-    const merged = Math.max(0, entries[lang] - u.unique);
-    const chips = u.repeats.slice(0, 40).map(r =>
+    const w = words[lang];
+    const b = vocabBenchmarkFor(lang, w.unique);
+    const merged = Math.max(0, w.total - w.unique);
+    const chips = w.top.map(r =>
       `<span class="hs-chip" ${lang === 'ar' ? 'dir="rtl"' : ''}>${escapeHtml(r.label)} ×${r.count}</span>`).join('');
     return `<h4>${label}</h4>
-      <p class="hs-sum">${entries[lang]} bold entries → ${u.unique} unique (${merged} repeat${merged === 1 ? '' : 's'} merged)</p>
+      <p class="hs-sum">${w.total.toLocaleString()} words across your phrases → <strong>${w.unique.toLocaleString()} unique</strong> (${merged.toLocaleString()} repeat${merged === 1 ? '' : 's'} merged)</p>
       <p class="hs-bench">Guide: <strong>${b.cur.label}</strong> range${b.next ? ` · ${b.togo.toLocaleString()} more to reach ${b.next.label} (${b.next.from.toLocaleString()})` : ' · top of this scale reached'}</p>
       <div class="hs-bar"><i style="width:${Math.max(0, Math.min(100, b.pct))}%"></i></div>
-      ${timelineHtml(lang, u, b)}
-      <div class="hs-repeats">${chips || '<span class="hs-note">No repeats yet.</span>'}${u.repeats.length > 40 ? `<span class="hs-note"> …and ${u.repeats.length - 40} more</span>` : ''}</div>`;
+      ${timelineHtml(lang, w, b)}
+      <p class="hs-sum">Bolded: ${boldEntries[lang].toLocaleString()} bold entr${boldEntries[lang] === 1 ? 'y' : 'ies'} → ${boldUniq[lang].unique.toLocaleString()} unique bolded</p>
+      <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>`;
   };
   return block('en', 'English') + block('ar', 'Arabic')
     + `<p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.en.source)}</p><p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.ar.source)}</p>`
     + '<p class="hs-src">Speaking target: English ≈3,000 word families covers ~95% of everyday spoken English, and 5,000–7,000 covers ~98% (Nation 2006; Adolphs &amp; Schmitt 2003). Arabic 3,000 is a loose estimate — no comparable coverage study. Pace ETAs assume you keep the same rate; they are projections, not promises.</p>'
-    + '<p class="hs-note">Unique = distinct words/terms after ignoring case, punctuation, Arabic diacritics and a leading “ال”. Different forms of a word (renew / renewed) still count separately.</p>';
+    + '<p class="hs-note">Unique words = every distinct word in your phrases, bolded or not, ignoring case, punctuation, Arabic diacritics and a leading “ال”. Different forms of a word (renew / renewed) still count separately, and small words like “the” count too.</p>';
 }
 
 function renderHeaderStats(){
   const el = document.getElementById('headerStats');
   if(!el) return;
   const totals = countBoldWordsByLang();
-  const uniq = countUniqueBoldWords();
+  const words = countUniqueWords();
   el.innerHTML = `<div class="hs-row"><span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words</div>`
-    + `<div class="hs-row"><span class="hs-num">${uniq.en.unique}</span> EN unique words<span class="hs-sep">·</span><span class="hs-num">${uniq.ar.unique}</span> AR unique words`
+    + `<div class="hs-row" title="Every distinct word across all your phrases, bolded or not"><span class="hs-num">${words.en.unique.toLocaleString()}</span> EN unique words<span class="hs-sep">·</span><span class="hs-num">${words.ar.unique.toLocaleString()}</span> AR unique words`
     + `<button type="button" class="hs-toggle" id="hsToggleBtn" aria-expanded="${hsDetailsOpen}">${hsDetailsOpen ? 'hide details ▴' : 'details ▾'}</button></div>`
-    + (hsDetailsOpen ? `<div class="hs-details" id="hsDetails">${hsDetailsHtml(totals, uniq)}</div>` : '');
+    + (hsDetailsOpen ? `<div class="hs-details" id="hsDetails">${hsDetailsHtml(totals, countUniqueBoldWords(), words)}</div>` : '');
 }
 document.addEventListener('click', (e)=>{
   if(e.target && e.target.id === 'hsToggleBtn'){
