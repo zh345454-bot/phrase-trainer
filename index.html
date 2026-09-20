@@ -450,11 +450,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="field-row">
         <div class="field">
           <label>English</label>
-          <input type="text" id="bankEn" placeholder="e.g. Let's walk through the quarterly figures">
+          <input type="text" id="bankEn" placeholder="e.g. deadline">
         </div>
         <div class="field">
           <label>Arabic</label>
-          <input type="text" id="bankAr" dir="rtl" placeholder="مثال: لنستعرض الأرقام الفصلية">
+          <input type="text" id="bankAr" dir="rtl" placeholder="مثال: مكتب">
         </div>
       </div>
       <div class="field-row">
@@ -463,14 +463,22 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           <input type="text" id="bankCat" placeholder="e.g. Meetings, Economic terms, Small talk">
         </div>
       </div>
+      <label style="display:flex; align-items:center; gap:6px; font-weight:normal; margin-bottom:8px;">
+        <input type="checkbox" id="bankAllowMultiWord" style="width:auto;">
+        This is a deliberate multi-word phrase
+      </label>
       <button class="primary" id="addBankBtn">Add to bank</button>
 
       <details class="quick-add">
         <summary>Add several at once instead</summary>
         <div class="field">
           <label>One phrase per line — English | Arabic | Category (Arabic and category are optional)</label>
-          <textarea id="quickAddArea" placeholder="Let's review the quarterly figures | دعنا نستعرض الأرقام الفصلية | Economic terminology&#10;Could you clarify that? | | Meetings"></textarea>
+          <textarea id="quickAddArea" placeholder="deadline | مهلة | Economic terminology&#10;clarify | | Meetings"></textarea>
         </div>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:normal; margin-bottom:8px;">
+          <input type="checkbox" id="quickAddAllowMultiWord" style="width:auto;">
+          Allow multi-word phrases in this batch
+        </label>
         <button class="primary" id="quickAddBankBtn">Add all lines</button>
         <div class="status-msg" id="quickAddStatus"></div>
       </details>
@@ -754,6 +762,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div class="field" style="margin-bottom:10px;">
         <label>Your writing</label>
         <textarea id="gcInput" placeholder="اكتب جملة أو فقرة هنا للتصحيح..." style="min-height:90px;"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Context / what you're trying to say (optional)</label>
+        <textarea id="gcContext" placeholder="e.g. I want to say a skill is only fully built by finishing a university degree — secondary school alone isn't enough. Make sure the corrected sentence's logic reflects that." style="min-height:56px;"></textarea>
+        <div class="count-note" style="margin-top:4px;">Use this when the grammar itself might be fine but the wording doesn't quite land your intended meaning — the correction will also adjust word choice and logic to match what you describe here, not just fix mistakes.</div>
       </div>
       <div class="card-actions" style="flex-wrap:wrap;">
         <button class="primary" id="gcCheckBtn">Check my grammar</button>
@@ -2140,11 +2153,53 @@ function isDuplicatePhrase(en, ar){
   return state.bank.some(p => (nEn && normPhrase(p.en) === nEn) || (nAr && (p.ar||'').trim() === nAr));
 }
 
+// Single-word-by-default rule: new phrases should normally be exactly one
+// word per language, so the Bank stays a vocabulary bank rather than
+// silently filling up with full sentences. Every place a phrase gets saved
+// (the manual Add form, bulk quick-add, Voice practice's and Grammar
+// check's "Save to phrase bank") checks this and offers a "this is a
+// deliberate multi-word phrase" checkbox to override it — for idioms or
+// fixed expressions where only the combination carries the specific meaning
+// you actually want.
+function isSingleWord(text){
+  const clean = stripBold(text || '').trim();
+  if(!clean) return true;
+  return clean.split(/\s+/).filter(Boolean).length <= 1;
+}
+
+// Human-readable reason a save was blocked, or '' if it can go through
+// without ticking the checkbox. Most multi-word text isn't someone pasting
+// a whole sentence — it's just that one language needs more than one word
+// to say what the other says in a single word (e.g. English "deadline" vs
+// a two-word Arabic equivalent). That asymmetry is let through
+// automatically, with zero manual confirmation, because the single-word
+// side is itself proof this is one concept, not a run-on phrase.
+// Confirmation is only asked for when there's no such evidence: both sides
+// are multi-word (looks like a full sentence in both languages), or a
+// multi-word side has no single-word counterpart to vouch for it (only one
+// side was filled in at all).
+function multiWordViolationMessage(en, ar){
+  const enBad = en && !isSingleWord(en);
+  const arBad = ar && !isSingleWord(ar);
+  if(!enBad && !arBad) return '';
+  const onlyOneSideBad = enBad !== arBad; // exactly one of the two is multi-word
+  const otherSideIsSingleWord = enBad ? (ar && isSingleWord(ar)) : (en && isSingleWord(en));
+  if(onlyOneSideBad && otherSideIsSingleWord) return ''; // auto-pass: a normal translation-length gap
+  const sides = [enBad ? 'English' : null, arBad ? 'Arabic' : null].filter(Boolean).join(' and ');
+  const isPlural = enBad && arBad;
+  return `The ${sides} side${isPlural ? 's' : ''} of this phrase ${isPlural ? 'have' : 'has'} more than one word${onlyOneSideBad ? ', with no single-word side to confirm it\'s one concept' : ''}. Tick "This is a deliberate multi-word phrase" to save it anyway, or edit it down to a single word.`;
+}
+
 document.getElementById('addBankBtn').addEventListener('click', async ()=>{
   const en = document.getElementById('bankEn').value.trim();
   const ar = document.getElementById('bankAr').value.trim();
   const category = document.getElementById('bankCat').value.trim();
+  const allowMultiWord = document.getElementById('bankAllowMultiWord').checked;
   if(!en && !ar){ return; }
+  if(!allowMultiWord){
+    const violation = multiWordViolationMessage(en, ar);
+    if(violation){ alert(violation); return; }
+  }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
   await saveBank();
@@ -2152,6 +2207,7 @@ document.getElementById('addBankBtn').addEventListener('click', async ()=>{
   document.getElementById('bankEn').value = '';
   document.getElementById('bankAr').value = '';
   document.getElementById('bankCat').value = '';
+  document.getElementById('bankAllowMultiWord').checked = false;
   renderBank();
 });
 
@@ -2159,15 +2215,18 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   const raw = document.getElementById('quickAddArea').value;
   const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
   const statusEl = document.getElementById('quickAddStatus');
+  const allowMultiWord = document.getElementById('quickAddAllowMultiWord').checked;
   if(lines.length === 0){ statusEl.textContent = 'Nothing to add.'; return; }
   let added = 0;
   let skipped = 0;
+  let rejected = 0;
   lines.forEach(line=>{
     const parts = line.split('|').map(s=>s.trim());
     const en = parts[0] || '';
     const ar = parts[1] || '';
     const category = parts[2] || '';
     if(!en && !ar) return;
+    if(!allowMultiWord && multiWordViolationMessage(en, ar)){ rejected++; return; }
     if(isDuplicatePhrase(en, ar)){ skipped++; return; }
     state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
     added++;
@@ -2175,8 +2234,11 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   await saveBank();
   if(added) countTask('addPhrase', added);
   document.getElementById('quickAddArea').value = '';
+  document.getElementById('quickAddAllowMultiWord').checked = false;
   statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
-    + (skipped ? ', skipped ' + skipped + ' already in your bank.' : '.');
+    + (skipped ? ', skipped ' + skipped + ' already in your bank' : '')
+    + (rejected ? ', skipped ' + rejected + ' with more than one word — tick "Allow multi-word phrases in this batch" to include them' : '')
+    + '.';
   renderBank();
 });
 
@@ -3464,6 +3526,7 @@ let vpRecorder = null, vpChunks = [], vpTimerInt = null, vpStartedAt = 0;
 // translations, to save into the bilingual phrase bank as one entry. Reset
 // whenever a fresh recording comes in or the transcript is discarded.
 let vpBankDraft = { en: '', ar: '' };
+let vpBankDraftAllowMultiWord = false;
 let vpLastTranscript = null;
 
 // Language metadata for Voice practice. "ai" is the name handed to the AI
@@ -3845,6 +3908,7 @@ async function vpTranscribe(blob){
     }
     vpLastTranscript = { text: data.text, lang };
     vpBankDraft = { en: '', ar: '' };
+    vpBankDraftAllowMultiWord = false;
     countTask('voicePractice'); // one finished recording = one turn (empty / failed ones don't count)
     vpRenderTranscript();
     vpRenderModelPanel(lang);
@@ -3972,6 +4036,7 @@ function vpSetBankDraft(lang, text){
 
 function vpClearBankDraft(){
   vpBankDraft = { en: '', ar: '' };
+  vpBankDraftAllowMultiWord = false;
   vpRenderBankDraftPanel();
 }
 
@@ -3979,12 +4044,17 @@ async function vpSaveBankDraft(){
   const en = (vpBankDraft.en || '').trim();
   const ar = (vpBankDraft.ar || '').trim();
   if(!en && !ar) return;
+  if(!vpBankDraftAllowMultiWord){
+    const violation = multiWordViolationMessage(en, ar);
+    if(violation){ alert(violation); return; }
+  }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Voice practice', practiceCount: 0, lastPracticed: null, starred: false });
   await saveBank();
   renderBank(); renderStarred();
   countTask('addPhrase');
   vpBankDraft = { en: '', ar: '' };
+  vpBankDraftAllowMultiWord = false;
   vpRenderBankDraftPanel(true);
 }
 
@@ -4008,6 +4078,12 @@ function vpRenderBankDraftPanel(justSaved){
         ${sideHtml('Arabic', ar, true)}
       </div>
       <div class="card-actions" style="margin-top:10px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
+          <input type="checkbox" id="vpAllowMultiWord" style="width:auto;" ${vpBankDraftAllowMultiWord ? 'checked' : ''}>
+          This is a deliberate multi-word phrase
+        </label>
+      </div>
+      <div class="card-actions" style="margin-top:6px; flex-wrap:wrap;">
         <button class="primary" id="vpSaveBankDraftBtn" ${hasAny ? '' : 'disabled'}>Save to phrase bank</button>
         <button class="ghost" id="vpClearBankDraftBtn" ${hasAny ? '' : 'disabled'}>Clear</button>
       </div>
@@ -4018,6 +4094,8 @@ function vpRenderBankDraftPanel(justSaved){
   if(saveBtn) saveBtn.addEventListener('click', vpSaveBankDraft);
   const clearBtn = document.getElementById('vpClearBankDraftBtn');
   if(clearBtn) clearBtn.addEventListener('click', vpClearBankDraft);
+  const allowBox = document.getElementById('vpAllowMultiWord');
+  if(allowBox) allowBox.addEventListener('change', e => { vpBankDraftAllowMultiWord = e.target.checked; });
 }
 
 function vpRenderTranscript(){
@@ -4060,6 +4138,7 @@ function vpRenderTranscript(){
   document.getElementById('vpDiscardBtn').addEventListener('click', ()=>{
     vpLastTranscript = null;
     vpBankDraft = { en: '', ar: '' };
+    vpBankDraftAllowMultiWord = false;
     document.getElementById('vpResult').innerHTML = '';
   });
   const vpUseBtn = document.querySelector('[data-vp-use][data-vp-use-source="transcript"]');
@@ -4074,6 +4153,7 @@ function vpRenderTranscript(){
   if(sendBtn) sendBtn.addEventListener('click', ()=>{
     document.getElementById('gcInput').value = document.getElementById('vpTranscriptBox').value;
     document.getElementById('gcLang').value = L.ai;
+    document.getElementById('gcContext').value = ''; // a context note from an earlier, unrelated check shouldn't silently steer this transcript's correction
     document.getElementById('gcInput').scrollIntoView({ behavior:'smooth', block:'center' });
   });
   const googleBtn = document.getElementById('vpGoogleBtn');
@@ -4329,9 +4409,12 @@ function renderDrills(){
   renderDailyPlan();
 }
 
-async function checkGrammar(text, lang){
+async function checkGrammar(text, lang, context){
+  const contextBlock = (context && context.trim())
+    ? `\n\nThe learner also gave this context for what they're trying to say: "${context.trim()}"\nUse it to guide word choice, not just grammar — if the wording is grammatically fine but doesn't clearly express this intended meaning or logic, correct the wording itself so the final sentence unmistakably reflects it. Don't add facts or claims beyond what the context describes.`
+    : '';
   const system = `You are a patient ${lang} grammar tutor for a language learner. Given a piece of ${lang} text they wrote, correct any grammar, spelling, word-order, or (for Arabic) i'rab / agreement mistakes.
-${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." : ""}
+${lang === 'Arabic' ? "Add full tashkeel (diacritics) to the corrected Arabic." : ""}${contextBlock}
 Respond with ONLY a JSON object, no markdown fences, no extra text, in exactly this shape:
 {"corrected": "the fully corrected text", "category": "a short 2-4 word grammar topic label for the main type of mistake found, e.g. 'Verb conjugation', 'Case endings (i'rab)', 'Agreement', 'Word order', 'Preposition usage', 'Vocabulary/spelling' — use an empty string if no mistakes were found", "notes": [{"original": "the wrong fragment", "fixed": "the corrected fragment", "explanation": "short reason, one sentence"}]}
 If the text has no mistakes, return the same text as "corrected", an empty string for "category", and an empty notes array.`;
@@ -4359,6 +4442,7 @@ let freshGrammarResult = null;
 // so there's no third language to worry about. Reset whenever a fresh check
 // runs, so a leftover draft from a previous check can't get mixed in.
 let gcBankDraft = { en: '', ar: '' };
+let gcBankDraftAllowMultiWord = false;
 
 function gcSetBankDraft(lang, text){
   const clean = (text || '').trim();
@@ -4369,6 +4453,7 @@ function gcSetBankDraft(lang, text){
 
 function gcClearBankDraft(){
   gcBankDraft = { en: '', ar: '' };
+  gcBankDraftAllowMultiWord = false;
   gcRenderBankDraftPanel();
 }
 
@@ -4376,12 +4461,17 @@ async function gcSaveBankDraft(){
   const en = (gcBankDraft.en || '').trim();
   const ar = (gcBankDraft.ar || '').trim();
   if(!en && !ar) return;
+  if(!gcBankDraftAllowMultiWord){
+    const violation = multiWordViolationMessage(en, ar);
+    if(violation){ alert(violation); return; }
+  }
   if(isDuplicatePhrase(en, ar) && !confirm('This looks like it\'s already in your bank. Add it again anyway?')) return;
   state.bank.unshift({ id: uid(), en, ar, category: 'Grammar check', practiceCount: 0, lastPracticed: null, starred: false });
   await saveBank();
   renderBank(); renderStarred();
   countTask('addPhrase');
   gcBankDraft = { en: '', ar: '' };
+  gcBankDraftAllowMultiWord = false;
   gcRenderBankDraftPanel(true);
 }
 
@@ -4405,6 +4495,12 @@ function gcRenderBankDraftPanel(justSaved){
         ${sideHtml('Arabic', ar, true)}
       </div>
       <div class="card-actions" style="margin-top:10px; flex-wrap:wrap;">
+        <label style="display:flex; align-items:center; gap:6px; font-weight:normal;">
+          <input type="checkbox" id="gcAllowMultiWord" style="width:auto;" ${gcBankDraftAllowMultiWord ? 'checked' : ''}>
+          This is a deliberate multi-word phrase
+        </label>
+      </div>
+      <div class="card-actions" style="margin-top:6px; flex-wrap:wrap;">
         <button class="primary" id="gcSaveBankDraftBtn" ${hasAny ? '' : 'disabled'}>Save to phrase bank</button>
         <button class="ghost" id="gcClearBankDraftBtn" ${hasAny ? '' : 'disabled'}>Clear</button>
       </div>
@@ -4415,6 +4511,8 @@ function gcRenderBankDraftPanel(justSaved){
   if(saveBtn) saveBtn.addEventListener('click', gcSaveBankDraft);
   const clearBtn = document.getElementById('gcClearBankDraftBtn');
   if(clearBtn) clearBtn.addEventListener('click', gcClearBankDraft);
+  const allowBox = document.getElementById('gcAllowMultiWord');
+  if(allowBox) allowBox.addEventListener('change', e => { gcBankDraftAllowMultiWord = e.target.checked; });
 }
 
 async function translateGrammarText(text, fromLang){
@@ -4573,6 +4671,7 @@ document.getElementById('gcGoogleBtn').addEventListener('click', ()=>{
 document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   const input = document.getElementById('gcInput').value.trim();
   const lang = document.getElementById('gcLang').value;
+  const context = document.getElementById('gcContext').value.trim();
   const otherLang = lang === 'Arabic' ? 'English' : 'Arabic';
   const resultBox = document.getElementById('gcResult');
   if(!input) return;
@@ -4580,9 +4679,10 @@ document.getElementById('gcCheckBtn').addEventListener('click', async ()=>{
   btn.disabled = true;
   resultBox.innerHTML = '<div class="status-msg">Checking...</div>';
   try{
-    const result = await checkGrammar(input, lang);
+    const result = await checkGrammar(input, lang, context);
     freshGrammarResult = { corrected: result.corrected || '', translation: '' };
     gcBankDraft = { en: '', ar: '' };
+    gcBankDraftAllowMultiWord = false;
     const langCode = lang === 'Arabic' ? 'ar' : 'en';
     const notesHtml = (result.notes && result.notes.length)
       ? '<ul class="grammar-notes">' + result.notes.map(n =>
