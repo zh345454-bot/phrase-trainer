@@ -2153,41 +2153,71 @@ function isDuplicatePhrase(en, ar){
   return state.bank.some(p => (nEn && normPhrase(p.en) === nEn) || (nAr && (p.ar||'').trim() === nAr));
 }
 
-// Single-word-by-default rule: new phrases should normally be exactly one
-// word per language, so the Bank stays a vocabulary bank rather than
-// silently filling up with full sentences. Every place a phrase gets saved
-// (the manual Add form, bulk quick-add, Voice practice's and Grammar
-// check's "Save to phrase bank") checks this and offers a "this is a
-// deliberate multi-word phrase" checkbox to override it — for idioms or
-// fixed expressions where only the combination carries the specific meaning
-// you actually want.
+// One-new-word rule: a phrase can have as many words as it needs, as long
+// as exactly ONE of them is genuinely new (not already sitting anywhere in
+// the bank, in that language). The other words are just ordinary, already-
+// known words filling out the grammar. This keeps the Bank a vocabulary bank
+// — one new word learned per entry — without forcing everything down to a
+// single word. Every place a phrase gets saved (the manual Add form, bulk
+// quick-add, Voice practice's and Grammar check's "Save to phrase bank")
+// checks this, and offers a "this is a deliberate multi-word phrase"
+// checkbox to override it — for idioms or fixed expressions where several
+// new words only carry the meaning you want together.
 function isSingleWord(text){
   const clean = stripBold(text || '').trim();
   if(!clean) return true;
   return clean.split(/\s+/).filter(Boolean).length <= 1;
 }
 
+// Every distinct bare word already used anywhere in the bank, for one
+// language — the "already known" pool that new words are measured against.
+function bankWordSet(lang){
+  const set = new Set();
+  state.bank.forEach(p => wordsOf(lang === 'ar' ? p.ar : p.en, lang).forEach(w => set.add(w)));
+  return set;
+}
+
+// The distinct words in `text` that are NOT already in the bank, in the
+// order they appear. A word repeated inside the phrase itself counts once.
+function newWordsIn(text, lang, knownSet){
+  const known = knownSet || bankWordSet(lang);
+  const seen = new Set();
+  const out = [];
+  wordsOf(text, lang).forEach(w => {
+    if(!known.has(w) && !seen.has(w)){ seen.add(w); out.push(w); }
+  });
+  return out;
+}
+
 // Human-readable reason a save was blocked, or '' if it can go through
-// without ticking the checkbox. Most multi-word text isn't someone pasting
-// a whole sentence — it's just that one language needs more than one word
-// to say what the other says in a single word (e.g. English "deadline" vs
-// a two-word Arabic equivalent). That asymmetry is let through
-// automatically, with zero manual confirmation, because the single-word
-// side is itself proof this is one concept, not a run-on phrase.
-// Confirmation is only asked for when there's no such evidence: both sides
-// are multi-word (looks like a full sentence in both languages), or a
-// multi-word side has no single-word counterpart to vouch for it (only one
-// side was filled in at all).
+// without ticking the checkbox. A side is fine on its own if it is a single
+// word, or if it is a longer phrase with exactly one new word. A side that
+// is longer AND has zero or several new words is "bad" — but two things
+// still let it through with no confirmation: (1) it is the only bad side
+// and the other side is itself fine (single word, or exactly one new word),
+// because that side is proof this is one concept and the length gap is just
+// a translation-length difference (e.g. English "deadline" vs a two-word
+// Arabic equivalent); otherwise (2) the user ticks the override checkbox.
 function multiWordViolationMessage(en, ar){
-  const enBad = en && !isSingleWord(en);
-  const arBad = ar && !isSingleWord(ar);
-  if(!enBad && !arBad) return '';
-  const onlyOneSideBad = enBad !== arBad; // exactly one of the two is multi-word
-  const otherSideIsSingleWord = enBad ? (ar && isSingleWord(ar)) : (en && isSingleWord(en));
-  if(onlyOneSideBad && otherSideIsSingleWord) return ''; // auto-pass: a normal translation-length gap
-  const sides = [enBad ? 'English' : null, arBad ? 'Arabic' : null].filter(Boolean).join(' and ');
-  const isPlural = enBad && arBad;
-  return `The ${sides} side${isPlural ? 's' : ''} of this phrase ${isPlural ? 'have' : 'has'} more than one word${onlyOneSideBad ? ', with no single-word side to confirm it\'s one concept' : ''}. Tick "This is a deliberate multi-word phrase" to save it anyway, or edit it down to a single word.`;
+  const sides = [
+    { label: 'English', lang: 'en', text: en },
+    { label: 'Arabic',  lang: 'ar', text: ar }
+  ];
+  sides.forEach(s => {
+    s.filled = !!s.text;
+    s.single = s.filled && isSingleWord(s.text);
+    s.newWords = (s.filled && !s.single) ? newWordsIn(s.text, s.lang) : null;
+    s.ok = s.filled && (s.single || s.newWords.length === 1);
+    s.bad = s.filled && !s.ok;
+  });
+  const bad = sides.filter(s => s.bad);
+  if(bad.length === 0) return '';
+  const other = sides.find(s => !s.bad);
+  if(bad.length === 1 && other && other.ok) return ''; // auto-pass: a normal translation-length gap
+  const describe = s => s.newWords.length === 0
+    ? `the ${s.label} side has no new words (every word is already in your bank)`
+    : `the ${s.label} side has ${s.newWords.length} new words (${s.newWords.join(', ')})`;
+  return `A phrase can have several words, but only one of them should be new to your bank: ${bad.map(describe).join(', and ')}. Tick "This is a deliberate multi-word phrase" to save it anyway, or trim it so exactly one word is new.`;
 }
 
 // Splits text into bare words for "already known" comparisons: bold
@@ -2284,7 +2314,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   document.getElementById('quickAddAllowMultiWord').checked = false;
   statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
     + (skipped ? ', skipped ' + skipped + ' already in your bank' : '')
-    + (rejected ? ', skipped ' + rejected + ' with more than one word — tick "Allow multi-word phrases in this batch" to include them' : '')
+    + (rejected ? ', skipped ' + rejected + ' without exactly one new word — tick "Allow multi-word phrases in this batch" to include them' : '')
     + (knownWordRejected ? ', skipped ' + knownWordRejected + ' whose word is already used elsewhere in your bank' : '')
     + '.';
   renderBank();
