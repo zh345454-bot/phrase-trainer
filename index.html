@@ -92,6 +92,37 @@ header.top .sub{
   .header-stats .hs-sep{ margin:0 5px; }
 }
 
+/* Second stats row (unique words) + expandable details, kept in the same
+   right-aligned block as the bold totals so the header stays one tidy unit. */
+.header-stats .hs-row{ line-height:1.7; }
+.header-stats .hs-toggle{
+  background:none; border:none; padding:0 0 0 8px; margin:0;
+  font-family:inherit; font-size:inherit; letter-spacing:inherit;
+  color:var(--brass-deep); cursor:pointer; text-decoration:underline;
+  text-underline-offset:2px;
+}
+.header-stats .hs-details{
+  margin:6px 0 0 auto; width:min(520px,100%); text-align:left;
+  border:1px solid var(--line); background:var(--paper);
+  padding:10px 12px; font-size:12px; letter-spacing:0; color:var(--ink);
+}
+.header-stats .hs-details h4{ margin:0 0 2px; font-size:12px; color:var(--brass-deep); }
+.header-stats .hs-details .hs-sum{ margin:0 0 4px; color:var(--ink-soft); }
+.header-stats .hs-details .hs-repeats{
+  max-height:96px; overflow-y:auto; margin:0 0 10px; line-height:1.9;
+}
+.header-stats .hs-details .hs-chip{
+  display:inline-block; border:1px solid var(--line); padding:0 6px; margin:0 4px 4px 0;
+}
+.header-stats .hs-details .hs-note{ margin:0; font-size:11px; color:var(--ink-soft); }
+/* Benchmark line + progress bar toward the next vocabulary milestone. */
+.header-stats .hs-details .hs-bench{ margin:0 0 3px; }
+.header-stats .hs-details .hs-bar{ height:4px; background:var(--line); margin:0 0 10px; }
+.header-stats .hs-details .hs-bar > i{ display:block; height:100%; background:var(--brass); }
+.header-stats .hs-details .hs-eta{ margin:0 0 2px; }
+.header-stats .hs-details .hs-alt{ color:var(--ink-soft); font-size:11px; margin-bottom:10px; }
+.header-stats .hs-details .hs-src{ margin:0 0 8px; font-size:11px; color:var(--ink-soft); }
+
 nav.tabs{
   display:flex;
   gap:2px;
@@ -2153,16 +2184,15 @@ function isDuplicatePhrase(en, ar){
   return state.bank.some(p => (nEn && normPhrase(p.en) === nEn) || (nAr && (p.ar||'').trim() === nAr));
 }
 
-// One-new-word rule: a phrase can have as many words as it needs, as long
-// as exactly ONE of them is genuinely new (not already sitting anywhere in
-// the bank, in that language). The other words are just ordinary, already-
-// known words filling out the grammar. This keeps the Bank a vocabulary bank
-// — one new word learned per entry — without forcing everything down to a
-// single word. Every place a phrase gets saved (the manual Add form, bulk
-// quick-add, Voice practice's and Grammar check's "Save to phrase bank")
-// checks this, and offers a "this is a deliberate multi-word phrase"
-// checkbox to override it — for idioms or fixed expressions where several
-// new words only carry the meaning you want together.
+// New-word rule: a phrase or a whole pasted sentence can have as many words
+// as it needs. It is accepted automatically as long as it contains at least
+// one word that isn't already somewhere in the bank — the app finds that
+// out itself, so there's nothing to tick. What gets stopped is text with
+// NOTHING new in it (every word is already in the bank), since saving it
+// adds nothing to learn. Every place a phrase gets saved (the manual Add
+// form, bulk quick-add, Voice practice's and Grammar check's "Save to phrase
+// bank") runs this check, and keeps a "this is a deliberate multi-word
+// phrase" checkbox as the override for saving something with nothing new.
 function isSingleWord(text){
   const clean = stripBold(text || '').trim();
   if(!clean) return true;
@@ -2177,47 +2207,52 @@ function bankWordSet(lang){
   return set;
 }
 
-// The distinct words in `text` that are NOT already in the bank, in the
-// order they appear. A word repeated inside the phrase itself counts once.
-function newWordsIn(text, lang, knownSet){
+// The new terms in `text`: each is a run of one or more consecutive words
+// that aren't in the bank yet (so "washing machine" is one term), returned
+// as arrays of words in the order they appear. The same term appearing twice
+// is only listed once.
+function newTermsIn(text, lang, knownSet){
   const known = knownSet || bankWordSet(lang);
+  const terms = [];
   const seen = new Set();
-  const out = [];
-  wordsOf(text, lang).forEach(w => {
-    if(!known.has(w) && !seen.has(w)){ seen.add(w); out.push(w); }
-  });
-  return out;
+  let run = [];
+  const flush = () => {
+    if(!run.length) return;
+    const key = run.join(' ');
+    if(!seen.has(key)){ seen.add(key); terms.push(run); }
+    run = [];
+  };
+  wordsOf(text, lang).forEach(w => { if(known.has(w)) flush(); else run.push(w); });
+  flush();
+  return terms;
 }
 
-// Human-readable reason a save was blocked, or '' if it can go through
-// without ticking the checkbox. A side is fine on its own if it is a single
-// word, or if it is a longer phrase with exactly one new word. A side that
-// is longer AND has zero or several new words is "bad" — but two things
-// still let it through with no confirmation: (1) it is the only bad side
-// and the other side is itself fine (single word, or exactly one new word),
-// because that side is proof this is one concept and the length gap is just
-// a translation-length difference (e.g. English "deadline" vs a two-word
-// Arabic equivalent); otherwise (2) the user ticks the override checkbox.
-function multiWordViolationMessage(en, ar){
+// For a phrase's English and Arabic sides, finds the new terms on each side.
+// The phrase "has something new" if either filled side has at least one.
+function analyzePhraseSides(en, ar){
   const sides = [
     { label: 'English', lang: 'en', text: en },
     { label: 'Arabic',  lang: 'ar', text: ar }
   ];
   sides.forEach(s => {
     s.filled = !!s.text;
-    s.single = s.filled && isSingleWord(s.text);
-    s.newWords = (s.filled && !s.single) ? newWordsIn(s.text, s.lang) : null;
-    s.ok = s.filled && (s.single || s.newWords.length === 1);
-    s.bad = s.filled && !s.ok;
+    s.terms = s.filled ? newTermsIn(s.text, s.lang) : [];
   });
-  const bad = sides.filter(s => s.bad);
-  if(bad.length === 0) return '';
-  const other = sides.find(s => !s.bad);
-  if(bad.length === 1 && other && other.ok) return ''; // auto-pass: a normal translation-length gap
-  const describe = s => s.newWords.length === 0
-    ? `the ${s.label} side has no new words (every word is already in your bank)`
-    : `the ${s.label} side has ${s.newWords.length} new words (${s.newWords.join(', ')})`;
-  return `A phrase can have several words, but only one of them should be new to your bank: ${bad.map(describe).join(', and ')}. Tick "This is a deliberate multi-word phrase" to save it anyway, or trim it so exactly one word is new.`;
+  const hasNew = sides.some(s => s.terms.length > 0);
+  return { sides, hasNew };
+}
+
+// Human-readable reason a save was blocked, or '' if it can go through
+// without ticking the checkbox.
+function multiWordViolationMessage(en, ar){
+  if(!en && !ar) return '';
+  if(analyzePhraseSides(en, ar).hasNew) return '';
+  return 'There is no new word in this phrase — every word in it is already in your bank. Tick "This is a deliberate multi-word phrase" to save it anyway.';
+}
+
+// For the batch add: '' if the line has something new, 'none' if it doesn't.
+function multiWordViolationKind(en, ar){
+  return multiWordViolationMessage(en, ar) ? 'none' : '';
 }
 
 // Splits text into bare words for "already known" comparisons: bold
@@ -2228,7 +2263,7 @@ function wordsOf(text, lang){
   const clean = stripBold(text || '').trim();
   const normalized = lang === 'ar' ? stripTashkeel(clean) : clean.toLowerCase();
   return normalized.split(/\s+/)
-    .map(w => w.replace(/^[.,!?;:"'()\-–—]+|[.,!?;:"'()\-–—]+$/g, ''))
+    .map(w => w.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, ''))
     .filter(Boolean);
 }
 
@@ -2294,7 +2329,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   if(lines.length === 0){ statusEl.textContent = 'Nothing to add.'; return; }
   let added = 0;
   let skipped = 0;
-  let rejected = 0;
+  let noNewWordRejected = 0;
   let knownWordRejected = 0;
   lines.forEach(line=>{
     const parts = line.split('|').map(s=>s.trim());
@@ -2302,9 +2337,9 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
     const ar = parts[1] || '';
     const category = parts[2] || '';
     if(!en && !ar) return;
-    if(!allowMultiWord && multiWordViolationMessage(en, ar)){ rejected++; return; }
-    if(alreadyKnownWordMessage(en, ar)){ knownWordRejected++; return; }
     if(isDuplicatePhrase(en, ar)){ skipped++; return; }
+    if(!allowMultiWord && multiWordViolationKind(en, ar)){ noNewWordRejected++; return; }
+    if(alreadyKnownWordMessage(en, ar)){ knownWordRejected++; return; }
     state.bank.unshift({ id: uid(), en, ar, category, practiceCount: 0, lastPracticed: null });
     added++;
   });
@@ -2314,7 +2349,7 @@ document.getElementById('quickAddBankBtn').addEventListener('click', async ()=>{
   document.getElementById('quickAddAllowMultiWord').checked = false;
   statusEl.textContent = 'Added ' + added + ' phrase' + (added===1?'':'s') + ' to the bank'
     + (skipped ? ', skipped ' + skipped + ' already in your bank' : '')
-    + (rejected ? ', skipped ' + rejected + ' without exactly one new word — tick "Allow multi-word phrases in this batch" to include them' : '')
+    + (noNewWordRejected ? ', skipped ' + noNewWordRejected + ' with no new word (everything in them is already in your bank) — tick "Allow multi-word phrases in this batch" to include them' : '')
     + (knownWordRejected ? ', skipped ' + knownWordRejected + ' whose word is already used elsewhere in your bank' : '')
     + '.';
   renderBank();
@@ -2730,12 +2765,186 @@ function countBoldWordsByLang(){
   });
   return totals;
 }
+// Normalised comparison key for the unique-word count, so trivial spelling
+// differences don't inflate it: case and edge punctuation are ignored in
+// English; in Arabic, diacritics, tatweel, alef/ya/ta-marbuta variants and a
+// leading "ال" are ignored. Different word FORMS (renew / renewed) still
+// count separately — this is a distinct-spelling count, not a lemma count.
+function normalizeBoldKey(seg, lang){
+  const clean = stripBold(seg || '').trim();
+  if(!clean) return '';
+  const cleanEdges = w => w.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
+  if(lang === 'ar'){
+    return stripTashkeel(clean).replace(/ـ/g, '').split(/\s+/).map(cleanEdges).filter(Boolean).map(w => {
+      w = w.replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+      if(w.startsWith('ال') && w.length - 2 >= 3) w = w.slice(2);
+      return w;
+    }).join(' ');
+  }
+  return clean.toLowerCase().split(/\s+/).map(cleanEdges).filter(Boolean).join(' ');
+}
+
+// Distinct bolded words/terms across the WHOLE bank, per language, each
+// counted once no matter how many phrases it's bolded in. Also keeps how
+// often each repeated term appeared, for the details panel.
+function countUniqueBoldWords(){
+  const result = {};
+  ['en', 'ar'].forEach(lang => {
+    const map = new Map();
+    state.bank.forEach(p => {
+      ensureSrs(p);
+      const added = /^\d{4}-\d{2}-\d{2}$/.test(p.dateAdded || '') ? p.dateAdded : '';
+      extractBoldSegments(p[lang]).forEach(seg => {
+        const key = normalizeBoldKey(seg, lang);
+        if(!key) return;
+        const rec = map.get(key);
+        if(rec){
+          rec.count++;
+          if(added && (!rec.first || added < rec.first)) rec.first = added;
+        } else {
+          map.set(key, { label: seg, count: 1, first: added });
+        }
+      });
+    });
+    result[lang] = {
+      unique: map.size,
+      repeats: [...map.values()].filter(r => r.count > 1).sort((a, b) => b.count - a.count),
+      firstDates: [...map.values()].map(r => r.first).filter(Boolean)
+    };
+  });
+  return result;
+}
+
+// Vocabulary milestones shown in the header details. `from` is the unique-
+// word count where each stage starts. These are rough published guides, NOT
+// a test result: the bank total only counts words bolded here, so it can sit
+// below real vocabulary. Edit the numbers freely — the panel reads them live.
+const VOCAB_BENCHMARKS = {
+  en: {
+    source: 'English: Milton & Alexiou (2009) X-Lex bands, in lemmas — indicative only; other research sets CEFR levels higher (Nation: C2 ≈ 7,000–9,000 word families).',
+    speaking: { label: 'Comfortable speaking', target: 3000 },
+    stages: [
+      { label: 'A1', from: 0 }, { label: 'A2', from: 1500 }, { label: 'B1', from: 2750 },
+      { label: 'B2', from: 3250 }, { label: 'C1', from: 3750 }, { label: 'C2', from: 4500 }
+    ]
+  },
+  ar: {
+    source: 'Arabic: no CEFR-aligned vocabulary scale exists yet, so this follows Mat Taib’s (2006) three teaching stages (≈1,000–1,500 / 1,500–2,500 / 2,500–3,500 words). Loose guide only.',
+    speaking: { label: 'Comfortable speaking', target: 3000 },
+    stages: [
+      { label: 'Starter', from: 0 }, { label: 'Beginner', from: 1000 }, { label: 'Intermediate', from: 1500 },
+      { label: 'Advanced', from: 2500 }, { label: 'Full working range', from: 3500 }
+    ]
+  }
+};
+// Where a unique-word count sits on a language's milestone list.
+function vocabBenchmarkFor(lang, count){
+  const stages = VOCAB_BENCHMARKS[lang].stages;
+  let idx = 0;
+  stages.forEach((st, i) => { if(count >= st.from) idx = i; });
+  const cur = stages[idx];
+  const next = stages[idx + 1] || null;
+  const pct = next ? Math.round(((count - cur.from) / (next.from - cur.from)) * 100) : 100;
+  return { cur, next, togo: next ? next.from - count : 0, pct };
+}
+
+// ---- Timeline projection ----------------------------------------------
+// Pace = how many NEW unique words you've been adding per day, worked out
+// from when each word first entered the bank (the phrase's dateAdded). It
+// uses the last 30 days once there's that much history, otherwise the whole
+// history if there's at least a week of it. A big one-day paste inflates it,
+// so the basis is always shown next to the number.
+const PACE_SCENARIOS = [5, 10, 20]; // "what if I add N new words a day"
+function vocabPaceFor(firstDates){
+  if(!firstDates.length) return null;
+  const today = todayStr();
+  const earliest = firstDates.reduce((a, b) => (a < b ? a : b));
+  const history = daysBetween(earliest, today) + 1;
+  if(history >= 30){
+    const cutoff = addDays(today, -29);
+    const recent = firstDates.filter(d => d >= cutoff).length;
+    return { perDay: recent / 30, basis: 'last 30 days' };
+  }
+  if(history >= 7) return { perDay: firstDates.length / history, basis: `since your first entry, ${history} days ago` };
+  return null;
+}
+// "185 days (≈ 6 months)" / "1,020 days (≈ 2.8 years)".
+function fmtEta(days){
+  const d = Math.max(1, Math.ceil(days));
+  if(d < 60) return `${d} day${d === 1 ? '' : 's'}`;
+  if(d < 730) return `${d.toLocaleString()} days (≈ ${Math.round(d / 30.4)} months)`;
+  return `${d.toLocaleString()} days (≈ ${(d / 365).toFixed(1)} years)`;
+}
+function fmtEtaDate(days){
+  const dt = new Date(addDays(todayStr(), Math.ceil(days)) + 'T00:00:00');
+  return dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+// One "→ reaching X (N words) — ..." line for a remaining gap and a pace.
+function etaLine(label, remaining, perDay){
+  if(remaining <= 0) return `✓ ${label} reached`;
+  if(!perDay) return `→ ${label}: no new words in this period, so no estimate yet`;
+  const days = remaining / perDay;
+  return `→ ${label}: ${fmtEta(days)}, around ${fmtEtaDate(days)}`;
+}
+
+let hsDetailsOpen = false;
+function timelineHtml(lang, u, b){
+  const spk = VOCAB_BENCHMARKS[lang].speaking;
+  const toTarget = spk.target - u.unique;
+  const toNext = b.next ? b.next.from - u.unique : 0;
+  const pace = vocabPaceFor(u.firstDates);
+  const spkName = `${spk.label} (${spk.target.toLocaleString()})`;
+  const nextName = b.next ? `${b.next.label} (${b.next.from.toLocaleString()})` : '';
+  let html = '';
+  if(pace){
+    const pd = pace.perDay;
+    html += `<p class="hs-eta">Your pace: <strong>${pd.toFixed(1)}</strong> new unique words/day (${escapeHtml(pace.basis)})</p>`;
+    if(b.next) html += `<p class="hs-eta">${escapeHtml(etaLine(nextName, toNext, pd))}</p>`;
+    html += `<p class="hs-eta">${escapeHtml(etaLine(spkName, toTarget, pd))}</p>`;
+  } else {
+    html += `<p class="hs-eta">Your pace: not enough history yet — add words for about a week to get an estimate. The scenarios below don't need it.</p>`;
+  }
+  const short = d => { d = Math.max(1, Math.ceil(d)); return d < 60 ? d + ' d' : d < 730 ? Math.round(d / 30.4) + ' mo' : (d / 365).toFixed(1) + ' yr'; };
+  const scen = (remaining) => remaining <= 0 ? 'reached' : PACE_SCENARIOS.map(n => short(remaining / n)).join(' / ');
+  html += `<p class="hs-eta hs-alt">At ${PACE_SCENARIOS.join(' / ')} new words a day: ` + (b.next ? `${escapeHtml(b.next.label)} in ${scen(toNext)} · ` : '') + `${escapeHtml(spk.label.toLowerCase())} in ${scen(toTarget)}</p>`;
+  return html;
+}
+function hsDetailsHtml(entries, uniq){
+  const block = (lang, label) => {
+    const u = uniq[lang];
+    const b = vocabBenchmarkFor(lang, u.unique);
+    const merged = Math.max(0, entries[lang] - u.unique);
+    const chips = u.repeats.slice(0, 40).map(r =>
+      `<span class="hs-chip" ${lang === 'ar' ? 'dir="rtl"' : ''}>${escapeHtml(r.label)} ×${r.count}</span>`).join('');
+    return `<h4>${label}</h4>
+      <p class="hs-sum">${entries[lang]} bold entries → ${u.unique} unique (${merged} repeat${merged === 1 ? '' : 's'} merged)</p>
+      <p class="hs-bench">Guide: <strong>${b.cur.label}</strong> range${b.next ? ` · ${b.togo.toLocaleString()} more to reach ${b.next.label} (${b.next.from.toLocaleString()})` : ' · top of this scale reached'}</p>
+      <div class="hs-bar"><i style="width:${Math.max(0, Math.min(100, b.pct))}%"></i></div>
+      ${timelineHtml(lang, u, b)}
+      <div class="hs-repeats">${chips || '<span class="hs-note">No repeats yet.</span>'}${u.repeats.length > 40 ? `<span class="hs-note"> …and ${u.repeats.length - 40} more</span>` : ''}</div>`;
+  };
+  return block('en', 'English') + block('ar', 'Arabic')
+    + `<p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.en.source)}</p><p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.ar.source)}</p>`
+    + '<p class="hs-src">Speaking target: English ≈3,000 word families covers ~95% of everyday spoken English, and 5,000–7,000 covers ~98% (Nation 2006; Adolphs &amp; Schmitt 2003). Arabic 3,000 is a loose estimate — no comparable coverage study. Pace ETAs assume you keep the same rate; they are projections, not promises.</p>'
+    + '<p class="hs-note">Unique = distinct words/terms after ignoring case, punctuation, Arabic diacritics and a leading “ال”. Different forms of a word (renew / renewed) still count separately.</p>';
+}
+
 function renderHeaderStats(){
   const el = document.getElementById('headerStats');
   if(!el) return;
   const totals = countBoldWordsByLang();
-  el.innerHTML = `<span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words`;
+  const uniq = countUniqueBoldWords();
+  el.innerHTML = `<div class="hs-row"><span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words</div>`
+    + `<div class="hs-row"><span class="hs-num">${uniq.en.unique}</span> EN unique words<span class="hs-sep">·</span><span class="hs-num">${uniq.ar.unique}</span> AR unique words`
+    + `<button type="button" class="hs-toggle" id="hsToggleBtn" aria-expanded="${hsDetailsOpen}">${hsDetailsOpen ? 'hide details ▴' : 'details ▾'}</button></div>`
+    + (hsDetailsOpen ? `<div class="hs-details" id="hsDetails">${hsDetailsHtml(totals, uniq)}</div>` : '');
 }
+document.addEventListener('click', (e)=>{
+  if(e.target && e.target.id === 'hsToggleBtn'){
+    hsDetailsOpen = !hsDetailsOpen;
+    renderHeaderStats();
+  }
+});
 
 // ---------- Google Sheet sync ----------
 // ---------- Sheet request helpers (attach the shared secret, if set) ----------
