@@ -487,6 +487,29 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .dash-warn{ border-left:4px solid #B33A2E; background:#FBEDEA; padding:8px 12px; margin:8px 0; font-size:13px; }
 .dash-info{ border-left:4px solid var(--line); background:#F4F1E8; padding:8px 12px; margin:8px 0; font-size:13px; }
 .dash-review li{ margin:5px 0; font-size:13.5px; }
+/* ---------- Hours & skills log ---------- */
+.hrs-clock{ font-size:34px; font-weight:700; font-variant-numeric:tabular-nums; margin:6px 0; }
+.hrs-clock.paused{ color:var(--ink-soft); }
+.hrs-card{ border:1px solid var(--line); background:var(--panel); padding:12px 14px; margin:10px 0; }
+.hrs-card h3{ margin:0 0 6px; font-size:15px; }
+.hrs-chips{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+.hrs-chips button{ padding:4px 10px; font-size:12.5px; }
+.hrs-bar{ height:10px; background:var(--line); margin:6px 0; }
+.hrs-bar > i{ display:block; height:100%; background:var(--brass-deep); }
+.hrs-bar > i.est{ background:#B9A26A; }
+.hrs-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.hrs-sess{ display:flex; justify-content:space-between; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.hrs-bad{ color:#B33A2E; font-weight:700; text-decoration:line-through; }
+.hrs-exp{ color:var(--teal); font-weight:600; }
+.hrs-miss{ background:#FBEDEA; color:#B33A2E; padding:0 3px; }
+.hrs-extra{ background:#F4F1E8; color:var(--ink-soft); padding:0 3px; text-decoration:line-through; }
+.hrs-read{ font-size:19px; line-height:1.9; border:1px solid var(--line); background:#FFFDF7; padding:12px 14px; margin:8px 0; max-height:55vh; overflow-y:auto; }
+.hrs-chat{ border:1px solid var(--line); background:#FFFDF7; padding:10px 12px; margin:8px 0; max-height:50vh; overflow-y:auto; }
+.hrs-chat .them{ margin:8px 0; padding:6px 10px; background:#F4F1E8; }
+.hrs-chat .you{ margin:8px 0; padding:6px 10px; background:var(--teal-soft); }
+.hrs-tpl{ border:2px solid var(--ink); padding:12px 14px; margin:10px 0; background:var(--panel); }
+.hrs-find{ border:1px dashed var(--line); background:#FFFDF7; padding:8px 10px; margin:8px 0; }
+.hrs-find input{ width:100%; box-sizing:border-box; }
 .gap-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
 .gap-table th, .gap-table td{ text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
 .gap-table th{ color:var(--ink-soft); font-weight:600; }
@@ -569,6 +592,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="gaps">Gaps</button>
     <button class="tab-btn" data-view="speaking">Speaking</button>
+    <button class="tab-btn" data-view="hours" id="hrsTabBtn">Hours</button>
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
@@ -874,6 +898,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-speaking">
     <div class="panel"><div id="spkRoot"></div></div>
     <div class="panel"><div id="spkSync"></div></div>
+  </section>
+
+  <section class="view" id="view-hours">
+    <div class="panel"><div id="hrsRoot"></div></div>
+    <div class="panel"><div id="hrsSync"></div></div>
   </section>
 
   <section class="view" id="view-drills">
@@ -1310,6 +1339,13 @@ async function loadState(){
   state.gapTomb = lsGet('gapTomb', []);   // ids of deleted gaps, so a sync can't bring them back
   if(!Array.isArray(state.gapTomb)) state.gapTomb = [];
   state.uiLang = lsGet('uiLang', 'en');
+  state.hours = lsGet('hours', null) || {};
+  if(!Array.isArray(state.hours.sessions)) state.hours.sessions = [];
+  if(!state.hours.remote) state.hours.remote = {};      // other devices' daily minutes, from the Sheet
+  if(!state.hours.selfSeen) state.hours.selfSeen = {};  // (date|lang) keys this device has written itself
+  if(!state.hours.targets) state.hours.targets = { en: { hours: 500 }, ar: { hours: 1000 } };
+  if(!state.hours.inputTarget) state.hours.inputTarget = 45;
+  if(!state.hours.deviceId){ state.hours.deviceId = 'd' + Math.random().toString(36).slice(2, 9); lsSet('hours', state.hours); }
   state.spk = lsGet('speaking', { patterns: [], cycles: [] });
   if(!Array.isArray(state.spk.patterns)) state.spk.patterns = [];
   if(!Array.isArray(state.spk.cycles)) state.spk.cycles = [];
@@ -1510,6 +1546,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'gaps') renderGaps();
     if(btn.dataset.view === 'today') renderDashboard();
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
+    if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
     if(btn.dataset.view === 'practice') renderTodayStrip();
   });
 });
@@ -3666,6 +3703,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreSyncGaps());
   statusEl.textContent = 'Syncing speaking cycles (merge, then back up)...';
   results.push(await coreSyncSpeaking());
+  statusEl.textContent = 'Syncing hours...';
+  results.push(await coreSyncHours());
   statusEl.textContent = 'Syncing drill progress...';
   results.push(await coreSyncDrills());
 
@@ -3699,7 +3738,7 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
     return;
   }
   const counts = 'bank: ' + state.bank.length + ' phrases, grammar: ' + state.grammar.length + ' entries, Qur\'an: ' + state.quran.length + ' entries';
-  if(!confirm('(Your speaking gaps and speaking cycles are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
+  if(!confirm('(Your speaking gaps, speaking cycles and hours log are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
   btn.disabled = true;
   syncBtn.disabled = true;
   const origLabel = btn.textContent;
@@ -3718,6 +3757,8 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   results.push(await coreRestoreGaps());
   statusEl.textContent = 'Merging speaking cycles...';
   results.push(await coreRestoreSpeaking());
+  statusEl.textContent = 'Reading hours...';
+  results.push(await coreRestoreHours());
   statusEl.textContent = 'Catching up drill progress...';
   results.push(await coreRestoreDrills());
 
@@ -3769,7 +3810,8 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     gaps: state.gaps,
     gapTomb: state.gapTomb || [],
     gapMeta: state.gapMeta,
-    speaking: state.spk
+    speaking: state.spk,
+    hours: Object.assign({}, state.hours, { deviceId: undefined })   // the device id stays with the device
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -3793,7 +3835,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
   try{
     const text = await file.text();
     const payload = JSON.parse(text);
-    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran) && !Array.isArray(payload.gaps) && !(payload.speaking && Array.isArray(payload.speaking.cycles)))){
+    if(!payload || (!Array.isArray(payload.bank) && !Array.isArray(payload.log) && !Array.isArray(payload.grammar) && !Array.isArray(payload.quran) && !Array.isArray(payload.gaps) && !(payload.speaking && Array.isArray(payload.speaking.cycles)) && !(payload.hours && Array.isArray(payload.hours.sessions)))){
       throw new Error('This file doesn\'t look like a Phrase Trainer backup.');
     }
     const summary = `bank: ${payload.bank ? payload.bank.length : 0}, log: ${payload.log ? payload.log.length : 0}, grammar: ${payload.grammar ? payload.grammar.length : 0}, quran: ${payload.quran ? payload.quran.length : 0}`;
@@ -3814,6 +3856,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
       }
     }
     if(payload.speaking && Array.isArray(payload.speaking.cycles)) state.spk = mergeSpk(state.spk, payload.speaking); // merged, never replaced
+    if(payload.hours && Array.isArray(payload.hours.sessions)){ mergeHours(state.hours, payload.hours); hrsSave(); }
     await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps(); await saveSpk();
     renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps(); renderSpeaking();
     renderGcStarResults(); renderGcDateResults();
@@ -6866,7 +6909,7 @@ function renderGapReview(){
   const blanked = gapReplaceTarget(own, target, g.lang, '_____');
   const dir = g.lang === 'ar' ? 'rtl' : 'ltr', odir = g.lang === 'ar' ? 'ltr' : 'rtl';
   let cue = '';
-  if(blanked) cue += `<div class="gap-cue" dir="${dir}">${escapeHtml(blanked)}</div>`;
+  if(blanked && blanked.replace(/[_\s.!?؟]/g, '').length) cue += `<div class="gap-cue" dir="${dir}">${escapeHtml(blanked)}</div>`;
   if(other) cue += `<div class="gap-cue" dir="${odir}">${escapeHtml(other)}</div>`;
   if(!cue){
     cue = g.said ? `<div class="gap-cue">You said “${escapeHtml(g.said)}” — what was the word or phrase you were missing?</div>`
@@ -7691,6 +7734,7 @@ document.addEventListener('click', (e) => {
   lsSet('uiLang', state.uiLang);
   spkOpenStep = null; spkLast = {};
   renderSpeaking();
+  if(typeof renderHours === 'function') renderHours();
   if(typeof renderDashboard === 'function') renderDashboard();
 });
 // One-line status of each language's cycle, shown at the top of Drills.
@@ -7870,6 +7914,11 @@ function dashOutstanding(lang){
   const st = spkStatus(lang);
   if(!st.c) items.push({ key: 'spk', title: `Start your first ${LANG_NAMES[lang]} speaking cycle`, detail: 'Five steps over a week; step 1 is a 1–2 minute talk on an unfamiliar topic.', min: DASH_STEP_MIN[0], view: 'speaking', lang });
   else if(!st.complete) items.push({ key: 'spk', title: `${LANG_NAMES[lang]} speaking cycle — next: ${SPK_STEPS[st.current].title.replace(/^Step \d — /, '')}`, detail: `Cycle ${st.c.n}, day ${st.dayN}, step ${st.current + 1} of 5.`, min: DASH_STEP_MIN[st.current], view: 'speaking', lang });
+  const dtot = hrsDayTotals(lang, todayStr()), inputMin = Math.round(dtot.listening + dtot.reading);
+  if(inputMin < state.hours.inputTarget){
+    const rem = state.hours.inputTarget - inputMin;
+    items.push({ key: 'input', title: `${LANG_NAMES[lang]} listening / reading: ${rem} min to go`, detail: 'Input is the biggest missing piece for high-level proficiency. Start the timer, or log offline time.', min: rem, view: 'hours', lang });
+  }
   ['voicePractice', 'writeCheck', 'addPhrase'].forEach(k => {
     const def = DAILY_TASK_DEFS[k], done = getTaskProgress(k).completed;
     if(done < def.target) items.push({ key: k, title: `${def.title}: ${def.target - done} more`, detail: `${done}/${def.target} today.`, min: (def.target - done) * 2, view: k === 'voicePractice' || k === 'writeCheck' ? 'practice' : 'bank' });
@@ -7917,12 +7966,14 @@ function renderDashboard(){
   // ---- today's checklist ----
   const dose = getDailyDoseState();
   const remDue = gapDueSorted().filter(g => !gapSessionDone.has(g.id)).length;
+  const dtot = hrsDayTotals(lang, today), inputMin = Math.round(dtot.listening + dtot.reading);
   const row = (label, doneFlag, status, view, lg) => `<div class="dash-row${doneFlag ? ' done' : ''}" data-dashact="goto" data-view="${view}"${lg ? ' data-lang="' + lg + '"' : ''}><span>${doneFlag ? '✓' : '○'} ${label}</span><span class="st">${status}</span></div>`;
   const tk = k => { const d = DAILY_TASK_DEFS[k], n = getTaskProgress(k).completed; return [n >= d.target, n + '/' + d.target]; };
   const stepText = !st.c ? 'not started' : st.complete ? 'cycle complete' : `step ${st.current + 1} of 5`;
   html += `<h3 style="margin:14px 0 2px;">Today’s checklist</h3><div class="dash-list">
     ${row('Bank review dose', dose.completed >= dose.target, dose.completed + '/' + dose.target, 'review')}
     ${row('Gap reviews', remDue === 0, cs.n + '/' + cs.cap + ' · ' + remDue + ' due', 'gaps')}
+    ${row('Listening + reading (' + LANG_NAMES[lang] + ')', inputMin >= state.hours.inputTarget, inputMin + '/' + state.hours.inputTarget + ' min', 'hours', lang)}
     ${row('Voice practice', tk('voicePractice')[0], tk('voicePractice')[1], 'practice')}
     ${row('Write &amp; check', tk('writeCheck')[0], tk('writeCheck')[1], 'practice')}
     ${row('Add new phrases', tk('addPhrase')[0], tk('addPhrase')[1], 'bank')}
@@ -7946,7 +7997,9 @@ function renderDashboard(){
   const gl = dashGapDue(lang);
   const nowTotal = getDueReviews().length + gl.total;
   const t4 = dashTile('Backlog', `<div class="val">${nowTotal}</div>`, '↓ watch the direction, not the day', `Bank due ${getDueReviews().length} (shared by both languages) + ${LANG_NAMES[lang]} gaps due ${gl.total}${gl.overdue3 ? ' (' + gl.overdue3 + ' overdue over 3 days)' : ''}${bt.pastTotal !== null ? '<br>7 days ago (bank + both languages\u2019 gaps): ' + bt.pastTotal : '<br>Trend needs a week of history.'}`, '');
-  html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}</div>`;
+  const hf = hrsForecast(lang), hpct = Math.min(100, Math.round(hf.doneH / hf.target * 100));
+  const t5 = dashTile('Hours toward target', `<div class="val">${hf.doneH.toFixed(0)} / ${hf.target} h</div>`, '↑ only timed or entered hours count', `${hpct}% · ${hf.text.replace(/<[^>]+>/g, '')}`, goBtn('Open Hours', 'hours', lang));
+  html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}${t5}</div>`;
 
   // ---- corner ----
   const uw = countUniqueWords();
@@ -7980,6 +8033,718 @@ document.getElementById('dashRoot').addEventListener('click', (e) => {
   const b = document.querySelector('.tab-btn[data-view="' + a.dataset.view + '"]'); if(b) b.click();
 });
 
+
+// =====================================================================
+// HOURS & SKILLS LOG — how much time you actually put into each skill, per
+// language, measured against rough hour targets. Two ways to log: a live
+// TIMER, or a manual entry for anything done away from the device.
+// Verified minutes (timer + manual) drive the progress and forecast; minutes
+// the app merely ESTIMATES from other activity are shown separately and never
+// mixed in, so the total cannot be inflated.
+// =====================================================================
+const HRS_SKILLS = ['listening', 'reading', 'speaking', 'writing', 'study'];
+const HRS_SKILL_LABELS = { listening: 'Listening', reading: 'Reading', speaking: 'Speaking', writing: 'Writing', study: 'Study / review' };
+const HRS_REC_MIX = { listening: 0.33, reading: 0.21, speaking: 0.21, writing: 0.08, study: 0.17 };
+const HRS_ACTIVITIES = [
+  { k: 'listening', label: 'Listening (clip / news / podcast)', skill: 'listening', min: 20 },
+  { k: 'shadowing', label: 'Shadowing (repeat aloud)', skill: 'speaking', min: 12 },
+  { k: 'dictation', label: 'Dictation', skill: 'listening', min: 10 },
+  { k: 'reading', label: 'Reading (article / document)', skill: 'reading', min: 20 },
+  { k: 'readsay', label: 'Read, then say it aloud', skill: 'reading', min: 10 },
+  { k: 'register', label: 'Register switch (spoken ↔ formal)', skill: 'speaking', min: 10 },
+  { k: 'roleplay', label: 'Role-play / conversation', skill: 'speaking', min: 15 },
+  { k: 'writing', label: 'Formal writing', skill: 'writing', min: 15 },
+  { k: 'glossary', label: 'Domain glossary study', skill: 'study', min: 10 },
+  { k: 'reallife', label: 'Real-life use (meeting / call)', skill: 'speaking', min: 20 },
+  { k: 'other', label: 'Other', skill: 'study', min: 15 }
+];
+let hrsPending = null;   // a stopped timer waiting to be saved: { activity, title, minutes, startedAt }
+let hrsTick = null;
+function hrsSave(){ lsSet('hours', state.hours); }
+function hrsAct(k){ return HRS_ACTIVITIES.find(a => a.k === k) || HRS_ACTIVITIES[HRS_ACTIVITIES.length - 1]; }
+function hrsKey(date, lang){ return date + '|' + lang; }
+function hrsTimer(){ return lsGet('hoursTimer', null); }
+function hrsElapsedMs(t){ return t ? (t.acc || 0) + (t.running ? Date.now() - t.since : 0) : 0; }
+function hrsFmtClock(ms){ const sec = Math.floor(ms / 1000), h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(s).padStart(2, '0'); }
+function hrsFmtH(min){ return (Math.round(min / 6) / 10).toFixed(1); }   // minutes → hours, 1 decimal
+
+// ---- totals ----
+// One day/language's minutes per skill. This device counts its own sessions; other
+// devices' minutes come from the Sheet (kept per device so nothing double counts).
+function hrsLocalByDev(lang, date){
+  const m = {};
+  state.hours.sessions.forEach(x => {
+    if(x.lang !== lang || x.date !== date) return;
+    const dev = x.dev || state.hours.deviceId;
+    const o = m[dev] || (m[dev] = { listening: 0, reading: 0, speaking: 0, writing: 0, study: 0 });
+    o[x.skill] += x.minutes;
+  });
+  return m;
+}
+function hrsLocalDay(lang, date){ return hrsLocalByDev(lang, date)[state.hours.deviceId] || { listening: 0, reading: 0, speaking: 0, writing: 0, study: 0 }; }
+// One day/language's minutes per skill. Each device is counted once: from this device's
+// own sessions when it has them (including sessions restored from a backup file),
+// otherwise from the Sheet's copy of that device. So nothing double counts.
+function hrsDeviceMaps(lang, date){
+  const key = hrsKey(date, lang), me = state.hours.deviceId, rem = state.hours.remote[key] || {};
+  const local = hrsLocalByDev(lang, date), maps = {};
+  new Set([...Object.keys(local), ...Object.keys(rem), me]).forEach(dev => {
+    if(local[dev]) maps[dev] = local[dev];
+    else if(dev === me) maps[dev] = state.hours.selfSeen[key] ? {} : (rem[me] || {});   // deleted here → 0; reinstall → recover
+    else maps[dev] = rem[dev] || {};
+  });
+  return maps;
+}
+function hrsDayTotals(lang, date){
+  const maps = hrsDeviceMaps(lang, date);
+  const out = { listening: 0, reading: 0, speaking: 0, writing: 0, study: 0 };
+  Object.values(maps).forEach(o => HRS_SKILLS.forEach(k => { out[k] += Number(o[k]) || 0; }));
+  out.total = HRS_SKILLS.reduce((n, k) => n + out[k], 0);
+  return out;
+}
+function hrsDates(lang){
+  const set = new Set();
+  state.hours.sessions.forEach(x => { if(x.lang === lang) set.add(x.date); });
+  Object.keys(state.hours.remote).forEach(k => { const [d, l] = k.split('|'); if(l === lang) set.add(d); });
+  return [...set].sort();
+}
+function hrsRange(lang, from, to){
+  const o = { listening: 0, reading: 0, speaking: 0, writing: 0, study: 0, total: 0 };
+  hrsDates(lang).filter(d => d >= from && d <= to).forEach(d => { const t = hrsDayTotals(lang, d); HRS_SKILLS.forEach(k => o[k] += t[k]); o.total += t.total; });
+  return o;
+}
+// Minutes the app can only ESTIMATE from other activity (2 min per logged practice,
+// 1 min per gap review, seconds you entered for Speaking-cycle runs).
+function hrsEstimated(lang, from, to){
+  let study = 0, speaking = 0;
+  state.log.forEach(l => { if(l.lang === lang && l.date >= from && l.date <= to) study += 2 * (l.count || 1); });
+  state.gaps.forEach(g => { if(g.lang === lang) (g.attempts || []).forEach(a => { if(a.d >= from && a.d <= to) study += 1; }); });
+  spkCycles(lang).forEach(c => ['cold', 'rep1', 'rep2', 'transfer'].forEach(k => { const r = c[k]; if(r && r.date >= from && r.date <= to) speaking += (r.secs || 0) / 60; }));
+  return { study, speaking, total: study + speaking };
+}
+function hrsForecast(lang){
+  const today = todayStr(), target = state.hours.targets[lang].hours;
+  const all = hrsRange(lang, '0000-00-00', today), doneH = all.total / 60;
+  const dates = hrsDates(lang);
+  const info = { doneH, target, remaining: Math.max(0, target - doneH), text: '' };
+  if(doneH >= target){ info.text = 'Target reached in logged hours — set a higher one, and check the level with an outside test.'; return info; }
+  if(!dates.length || daysBetween(dates[0], today) < 13){ info.text = 'Not enough history to forecast yet — log for two weeks first.'; return info; }
+  const weeks = [0, 1, 2, 3].map(i => hrsRange(lang, addDays(today, -6 - 7 * i), addDays(today, -7 * i)).total / 60);
+  const avg = weeks.reduce((a, b) => a + b, 0) / 4, lo = Math.max(Math.min(...weeks), avg * 0.6), hi = Math.max(...weeks, avg * 1.2);
+  if(avg < 0.5){ info.text = 'Your logged pace over the last 4 weeks is too low to forecast.'; return info; }
+  const wk = h => Math.ceil(info.remaining / h);
+  info.perWeek = avg;
+  info.text = `At your last-4-week pace of about ${avg.toFixed(1)} h/week: roughly <strong>${wk(hi)}–${wk(lo)} weeks</strong> to go (${Math.round(wk(hi) / 4.3)}–${Math.round(wk(lo) / 4.3)} months). A rough range, not a promise.`;
+  return info;
+}
+
+// ---- timer ----
+function hrsStart(){
+  const lang = uiLang(), act = document.getElementById('hrsAct').value, title = (document.getElementById('hrsTitle').value || '').trim();
+  lsSet('hoursTimer', { lang, activity: act, title, acc: 0, since: Date.now(), running: true });
+  renderHours(); hrsBadge();
+}
+function hrsPauseResume(){
+  const t = hrsTimer(); if(!t) return;
+  if(t.running){ t.acc = hrsElapsedMs(t); t.running = false; } else { t.since = Date.now(); t.running = true; }
+  lsSet('hoursTimer', t); renderHours(); hrsBadge();
+}
+function hrsStop(){
+  const t = hrsTimer(); if(!t) return;
+  const ms = hrsElapsedMs(t);
+  hrsPending = { lang: t.lang, activity: t.activity, title: t.title, minutes: Math.max(1, Math.round(ms / 60000)), startedAt: new Date(Date.now() - ms).toISOString() };
+  lsSet('hoursTimer', null); hrsBadge(); renderHours();
+}
+function hrsBadge(){
+  const b = document.getElementById('hrsTabBtn'), t = hrsTimer();
+  if(b) b.textContent = t ? (t.running ? 'Hours ⏱' : 'Hours ⏸') : 'Hours';
+}
+function hrsStartTick(){
+  if(hrsTick) clearInterval(hrsTick);
+  hrsTick = setInterval(() => {
+    const el = document.getElementById('hrsClock'), t = hrsTimer();
+    if(el && t){ el.textContent = hrsFmtClock(hrsElapsedMs(t)); el.classList.toggle('paused', !t.running); }
+    else if(!t){ clearInterval(hrsTick); hrsTick = null; }
+  }, 1000);
+}
+
+// ---- saving ----
+async function hrsSaveSession(form){
+  const v = k => (form.querySelector(`[data-hf="${k}"]`) || {}).value || '';
+  const lang = (hrsPending && hrsPending.lang) || uiLang(), actKey = v('activity'), act = hrsAct(actKey);
+  const minutes = Math.round(parseFloat(v('minutes')) * 10) / 10, date = v('date') || todayStr();
+  const msg = form.querySelector('[data-hstatus]');
+  const bad = t => { msg.textContent = t; msg.className = 'status-msg err'; };
+  if(!(minutes > 0) || minutes > 720) return bad('Enter the minutes (more than 0, at most 720).');
+  if(date > todayStr()) return bad('That date is in the future.');
+  if(date < addDays(todayStr(), -60) && !confirm('That is more than 60 days ago. Log it anyway?')) return;
+  const skill = actKey === 'other' ? (v('skill') || 'study') : act.skill;
+  const words = parseInt(v('words'), 10) || 0;
+  const sess = { id: uid(), dev: state.hours.deviceId, date, lang, skill, activity: actKey, title: v('title').trim(), minutes, source: hrsPending ? 'timer' : 'manual',
+                 rating: parseInt(v('rating'), 10) || 0, words, note: v('note').trim(), startedAt: hrsPending ? hrsPending.startedAt : '', updatedAt: new Date().toISOString() };
+  if(hrsPending && hrsPending.res) sess.res = hrsPending.res;   // results of a guided activity (dictation accuracy, reading speed…)
+  const nw = v('newwords').split(/[\n,؛;]+/).map(x => x.trim()).filter(Boolean);
+  sess.newWords = nw.length;
+  state.hours.sessions.push(sess);
+  state.hours.selfSeen[hrsKey(date, lang)] = true;
+  if(nw.length){
+    nw.forEach(w => captureGap({ lang, wanted: w, source: (act.label.split(' (')[0]) + (sess.title ? ': ' + sess.title : '') }));
+    await saveGaps(); renderGaps();
+  }
+  hrsSave(); hrsPending = null;
+  renderHours();
+  gapToastMsg(`Logged ${minutes} min of ${HRS_SKILL_LABELS[skill].toLowerCase()} (${LANG_NAMES[lang]}).${nw.length ? ' ' + nw.length + ' new word' + (nw.length === 1 ? '' : 's') + ' added to Gaps.' : ''}`);
+  if(typeof renderDashboard === 'function') renderDashboard();
+}
+
+// ---- rendering ----
+function hrsFormHtml(){
+  const p = hrsPending, lang = (p && p.lang) || uiLang();
+  const defAct = p ? p.activity : 'listening';
+  return `<div class="hrs-card" data-hform>
+    <h3>${p ? '⏹ Timer stopped — check and save' : 'Log without the timer (done away from the device)'}</h3>
+    <p class="gap-mini">${p ? 'The minutes below come from the timer; change them if needed.' : 'Use this for anything you did offline — a podcast in the car, a book, a meeting. Enter the minutes yourself.'}</p>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="flex:2;min-width:180px;"><label class="gap-mini">Activity</label><select data-hf="activity">${HRS_ACTIVITIES.map(a => `<option value="${a.k}"${a.k === defAct ? ' selected' : ''}>${a.label}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:110px;"><label class="gap-mini">Minutes</label><input type="number" min="1" max="720" step="1" data-hf="minutes" value="${p ? p.minutes : ''}" placeholder="e.g. 25"></div>
+      <div style="flex:1;min-width:130px;"><label class="gap-mini">Date</label><input type="date" data-hf="date" value="${todayStr()}" max="${todayStr()}"></div>
+    </div>
+    ${p ? '' : '<div class="hrs-chips">' + [10, 15, 20, 30, 45, 60, 90].map(m => `<button class="ghost" type="button" data-hrsact="chip" data-m="${m}">${m} min</button>`).join('') + '</div>'}
+    <label class="gap-mini">What was it? (title, channel, book…)</label><input type="text" data-hf="title" value="${escapeHtml(p ? p.title : '')}" placeholder="e.g. Saudi news bulletin">
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:140px;"><label class="gap-mini">How well did you follow it? (optional)</label><select data-hf="rating">${[['0','—'],['1','1 – barely'],['2','2 – some'],['3','3 – about half'],['4','4 – most'],['5','5 – nearly all']].map(([v, l]) => `<option value="${v}"${p && String(p.rating || 0) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:140px;"><label class="gap-mini">Words read (reading only, optional)</label><input type="number" min="0" data-hf="words" value="${p && p.words ? p.words : ''}" placeholder="for reading speed"></div>
+      <div style="flex:1;min-width:140px;"><label class="gap-mini">Skill (only if “Other”)</label><select data-hf="skill">${HRS_SKILLS.map(k => `<option value="${k}">${HRS_SKILL_LABELS[k]}</option>`).join('')}</select></div>
+    </div>
+    <label class="gap-mini">New words to remember (one per line or comma-separated) — added to Gaps</label>
+    <textarea data-hf="newwords" style="min-height:60px;width:100%;box-sizing:border-box;" ${lang === 'ar' ? 'dir="rtl"' : ''} placeholder="${lang === 'ar' ? 'كلمات جديدة…' : 'new words…'}">${escapeHtml(p && p.newwords ? p.newwords : '')}</textarea>
+    <label class="gap-mini">Note (optional)</label><input type="text" data-hf="note" value="${escapeHtml(p && p.note ? p.note : '')}">
+    <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-hrsact="save">Save session</button>${p ? '<button class="ghost" type="button" data-hrsact="discard">Discard</button>' : ''}</div>
+    <div class="status-msg" data-hstatus></div></div>`;
+}
+function renderHours(){
+  const root = document.getElementById('hrsRoot');
+  if(!root) return;
+  const lang = uiLang(), today = todayStr(), t = hrsTimer();
+  const fc = hrsForecast(lang), target = state.hours.targets[lang].hours;
+  const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
+  let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
+    <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
+  // timer
+  if(t){
+    const act = hrsAct(t.activity);
+    html += `<div class="hrs-card"><h3>⏱ Timer running — ${escapeHtml(act.label)} · ${LANG_NAMES[t.lang]}${t.title ? ' · ' + escapeHtml(t.title) : ''}</h3>
+      <div class="hrs-clock${t.running ? '' : ' paused'}" id="hrsClock">${hrsFmtClock(hrsElapsedMs(t))}</div>
+      <div class="card-actions"><button class="ghost" type="button" data-hrsact="pause">${t.running ? 'Pause' : 'Resume'}</button><button class="primary" type="button" data-hrsact="stop">Stop &amp; log</button></div>
+      <p class="gap-mini">The timer keeps running if you lock the phone or close the page — it is based on the start time. Forgot to stop? Stop it, then correct the minutes before saving.</p></div>`;
+    hrsStartTick();
+  } else if(!hrsPending){
+    html += `<div class="hrs-card"><h3>Start a timed session</h3>
+      <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;"><div style="flex:2;min-width:180px;"><label class="gap-mini">Activity</label><select id="hrsAct">${HRS_ACTIVITIES.map(a => `<option value="${a.k}">${a.label} · ~${a.min} min</option>`).join('')}</select></div>
+        <div style="flex:2;min-width:180px;"><label class="gap-mini">What are you using? (optional)</label><input type="text" id="hrsTitle" placeholder="title, channel, book…"></div></div>
+      <div id="hrsFindHolder">${hrsFindHtml(hrsFindKind('listening'), lang)}</div>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-hrsact="start">▶ Start timer</button></div></div>`;
+  }
+  html += hrsTplHtml();
+  html += hrsFormHtml();
+  // today
+  html += `<div class="hrs-card"><h3>Today (${LANG_NAMES[lang]})</h3>
+    <div class="hrs-grid">${HRS_SKILLS.map(k => `<div><span class="gap-mini">${HRS_SKILL_LABELS[k]}</span><div style="font-size:18px;font-weight:700;">${Math.round(day[k])} min</div></div>`).join('')}</div>
+    <div class="gap-mini" style="margin-top:6px;">Logged today: <strong>${Math.round(day.total)} min</strong>${estDay.total ? ` · plus about ${Math.round(estDay.total)} min estimated from other activity (not counted)` : ''}. Input today (listening + reading): <strong>${Math.round(day.listening + day.reading)}/${state.hours.inputTarget} min</strong>.</div></div>`;
+  // progress
+  const pct = Math.min(100, Math.round(fc.doneH / target * 100)), estPct = Math.min(100 - pct, Math.round(estAll.total / 60 / target * 100));
+  html += `<div class="hrs-card"><h3>Progress toward target (${LANG_NAMES[lang]})</h3>
+    <div class="gap-mini">Target: <input type="number" min="50" step="50" data-hrsact="target" value="${target}" style="width:90px;display:inline-block;"> hours (rough guide for reaching professional working level from your starting point — edit it)</div>
+    <div class="hrs-bar"><i style="width:${pct}%"></i></div>
+    <div><strong>${fc.doneH.toFixed(1)} h</strong> logged (timed + entered) of ${target} h — <strong>${pct}%</strong>. <span class="gap-mini">Extra ≈ ${(estAll.total / 60).toFixed(1)} h estimated from other activity, not counted.</span></div>
+    <p class="gap-mini" style="margin:6px 0 0;">${fc.text}</p></div>`;
+  // by skill
+  const tot28 = w28.total;
+  html += `<div class="hrs-card"><h3>Your mix, last 28 days</h3><table class="gap-table"><tr><th>Skill</th><th>Hours</th><th>Your share</th><th>Aim for about</th></tr>
+    ${HRS_SKILLS.map(k => `<tr><td>${HRS_SKILL_LABELS[k]}</td><td>${hrsFmtH(w28[k])}</td><td>${tot28 ? Math.round(w28[k] / tot28 * 100) + '%' : '—'}</td><td>${Math.round(HRS_REC_MIX[k] * 100)}%</td></tr>`).join('')}</table>`;
+  if(tot28 >= 300){
+    const low = HRS_SKILLS.filter(k => w28[k] / tot28 < HRS_REC_MIX[k] * 0.5);
+    html += low.length ? `<div class="spk-caution"><strong>Unbalanced:</strong> ${low.map(k => HRS_SKILL_LABELS[k].toLowerCase() + ' is only ' + Math.round(w28[k] / tot28 * 100) + '% of your logged time').join('; ')}. High-level proficiency needs all of them — especially listening and reading input.</div>`
+      : '<div class="gap-mini">Your mix is reasonably balanced.</div>';
+  } else html += '<div class="gap-mini">Log at least 5 hours over 28 days before reading the mix.</div>';
+  html += '<div class="gap-mini">The mix is my suggested split, not a scientific rule.</div></div>';
+  // recent sessions
+  const recent = state.hours.sessions.filter(x => x.lang === lang).sort((a, b) => (b.date + b.updatedAt).localeCompare(a.date + a.updatedAt)).slice(0, 15);
+  html += `<div class="hrs-card"><h3>Recent sessions (this device)</h3>${recent.length ? recent.map(x => `<div class="hrs-sess"><span>${x.date} · <strong>${x.minutes} min</strong> · ${escapeHtml(hrsAct(x.activity).label.split(' (')[0])}${x.title ? ' — ' + escapeHtml(x.title) : ''}${x.words && x.minutes ? ' · ' + Math.round(x.words / x.minutes) + ' wpm' : ''}${x.rating ? ' · ' + x.rating + '/5' : ''} <span class="gap-mini">(${x.source})</span>${x.note ? '<br><span class="gap-mini">' + escapeHtml(x.note) + '</span>' : ''}</span><button class="ghost" type="button" data-hrsact="del" data-id="${x.id}">Delete</button></div>`).join('') : '<div class="empty">Nothing logged yet.</div>'}</div>`;
+  root.innerHTML = html;
+}
+document.getElementById('hrsRoot').addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-hrsact]');
+  if(!a) return;
+  const act = a.dataset.hrsact;
+  if(act === 'start'){ hrsStart(); return; }
+  if(act === 'pause'){ hrsPauseResume(); return; }
+  if(act === 'stop'){ hrsStop(); return; }
+  if(act === 'discard'){ hrsPending = null; renderHours(); return; }
+  if(act === 'chip'){ const f = a.closest('[data-hform]'); f.querySelector('[data-hf="minutes"]').value = a.dataset.m; return; }
+  if(act === 'save'){ await hrsSaveSession(a.closest('[data-hform]')); return; }
+  if(act === 'del'){
+    if(!confirm('Delete this session?')) return;
+    const x = state.hours.sessions.find(z => z.id === a.dataset.id);
+    if(x){ state.hours.selfSeen[hrsKey(x.date, x.lang)] = true; state.hours.sessions = state.hours.sessions.filter(z => z.id !== x.id); hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
+    return;
+  }
+});
+document.getElementById('hrsRoot').addEventListener('change', (e) => {
+  if(e.target.dataset.hrsact === 'target'){
+    const h = parseInt(e.target.value, 10);
+    if(h >= 50){ state.hours.targets[uiLang()].hours = h; hrsSave(); renderHours(); }
+  }
+  if(e.target.dataset.hf === 'activity'){ /* skill picker only matters for "Other" */ }
+});
+
+
+// =====================================================================
+// GUIDED ACTIVITIES — dictation, timed reading, role-play, register switch,
+// domain glossary. Each one times itself and ends by filling in the ordinary
+// "save session" form, so the minutes land in the hours log the same way.
+// The app cannot fetch or play audio or articles: you bring the material.
+// =====================================================================
+const HRS_TEMPLATES = [
+  { k: 'dictation', label: 'Dictation — type what you hear, get an accuracy score', act: 'dictation', ai: false },
+  { k: 'reading', label: 'Timed reading — reading speed and questions', act: 'reading', ai: false },
+  { k: 'roleplay', label: 'Role-play — an AI counterpart (needs a Gemini key)', act: 'roleplay', ai: true },
+  { k: 'register', label: 'Register switch — spoken vs formal (AI check optional)', act: 'register', ai: false },
+  { k: 'glossary', label: 'Domain glossary — formal phrases for your field (needs a Gemini key)', act: 'glossary', ai: true }
+];
+const HRS_SCENARIOS = ['Briefing a senior official on a policy issue', 'Answering tough questions at a press conference', 'Negotiating terms with a foreign delegation', 'Chairing a meeting that has gone off-topic', 'Phoning a ministry to ask for an urgent approval', 'Presenting a proposal to a sceptical committee'];
+const HRS_SITUATIONS = ['Decline a meeting request politely', 'Ask for a deadline extension', 'Report a delay to your superior', 'Thank a delegation for its hospitality', 'Object to a proposal without offending anyone', 'Confirm the agreed actions at the end of a meeting', 'Apologise for a mistake in a report', 'Request an official document', 'Introduce yourself and your role to a visiting official', 'Ask a colleague to attend on your behalf', 'Summarise a problem in two sentences', 'Propose a compromise'];
+const HRS_FIELDS = ['Public policy and governance', 'Economics and finance', 'Law and regulation', 'Islamic finance', 'Commodities and agriculture', 'Diplomacy and protocol', 'Public administration'];
+let hrsTpl = null;    // the open guided activity: { k, phase, lang, t0, data }
+function hrsAiOk(){ return getGeminiKeys().length > 0; }
+function hrsJson(out){ const a = out.indexOf('{'), b = out.lastIndexOf('}'); if(a < 0 || b < a) throw new Error('The AI reply wasn\u2019t in the expected format.'); return JSON.parse(out.slice(a, b + 1)); }
+function hrsElapsedMin(){ return Math.max(1, Math.round((Date.now() - hrsTpl.t0) / 60000)); }
+function hrsNormWord(w, lang){
+  let x = (w || '').trim().replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
+  if(lang === 'ar') x = stripTashkeel(x).replace(/ـ/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي'); else x = x.toLowerCase();
+  return x;
+}
+function hrsWordList(text, lang){ return (text || '').replace(/\n/g, ' ').split(/\s+/).map(w => ({ raw: w, n: hrsNormWord(w, lang) })).filter(o => o.n); }
+// Word-level comparison of the reference and what you typed (longest common subsequence).
+function hrsDiff(ref, hyp){
+  const n = ref.length, m = hyp.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for(let i = n - 1; i >= 0; i--) for(let j = m - 1; j >= 0; j--) dp[i][j] = ref[i].n === hyp[j].n ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ops = []; let i = 0, j = 0;
+  while(i < n && j < m){
+    if(ref[i].n === hyp[j].n){ ops.push({ t: 'ok', r: ref[i], h: hyp[j] }); i++; j++; }
+    else if(dp[i + 1][j] >= dp[i][j + 1]){ ops.push({ t: 'del', r: ref[i] }); i++; }
+    else { ops.push({ t: 'ins', h: hyp[j] }); j++; }
+  }
+  while(i < n) ops.push({ t: 'del', r: ref[i++] });
+  while(j < m) ops.push({ t: 'ins', h: hyp[j++] });
+  // Pair up each run of consecutive mistakes in order: the i-th missing word with the i-th extra word = one wrong word.
+  const out = [];
+  for(let k = 0; k < ops.length; ){
+    if(ops[k].t === 'ok'){ out.push(ops[k]); k++; continue; }
+    const dels = [], inss = [];
+    while(k < ops.length && ops[k].t !== 'ok'){ (ops[k].t === 'del' ? dels : inss).push(ops[k]); k++; }
+    const pairs = Math.min(dels.length, inss.length);
+    for(let i = 0; i < pairs; i++) out.push({ t: 'sub', r: dels[i].r, h: inss[i].h });
+    dels.slice(pairs).forEach(o => out.push(o));
+    inss.slice(pairs).forEach(o => out.push(o));
+  }
+  return out;
+}
+function hrsSentenceWith(text, word){
+  const parts = (text || '').split(/(?<=[.!?\u061F\n])\s*/);
+  const lg = (hrsTpl && hrsTpl.lang) || uiLang(), w = hrsNormWord(word, lg);
+  return (parts.find(x => hrsWordList(x, lg).some(o => o.n === w)) || '').trim();
+}
+function hrsTplCardHtml(){
+  return `<div class="hrs-card"><h3>Guided activities</h3>
+    <p class="gap-mini">Templates that time themselves, then log the minutes for you. You bring the audio or text; the app cannot fetch it.</p>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;"><div style="flex:3;min-width:220px;"><select id="hrsTplSel">${HRS_TEMPLATES.map(t => `<option value="${t.k}">${t.label}</option>`).join('')}</select></div>
+    <div style="flex:0 0 auto;"><button class="primary" type="button" data-tplact="open">Open</button></div></div></div>`;
+}
+function hrsTplHtml(){
+  if(!hrsTpl) return hrsTplCardHtml();
+  const lang = hrsTpl.lang, rtl = lang === 'ar' ? ' dir="rtl"' : '', d = hrsTpl.data, k = hrsTpl.k;
+  const cancel = '<button class="ghost" type="button" data-tplact="cancel">Cancel</button>';
+  const status = '<div class="status-msg" data-tstatus></div>';
+  let h = `<div class="hrs-tpl" data-tpl>`;
+  if(k === 'dictation'){
+    h += `<h3>Dictation — ${LANG_NAMES[lang]}</h3>`;
+    if(hrsTpl.phase === 'setup') h += `<p class="gap-mini">Use a clip of about a minute that <strong>has a transcript</strong> (news sites, podcasts). Paste the reference text below — it is hidden as soon as you start — then listen and type what you hear. Up to about 300 words.</p>
+      ${hrsFindHtml('dictation', lang)}
+      <label class="gap-mini">Source (title)</label><input type="text" data-tf="title" placeholder="e.g. news bulletin, 1 min">
+      <label class="gap-mini">Reference transcript (paste it, then don’t read it)</label><textarea data-tf="ref"${rtl} style="width:100%;min-height:100px;box-sizing:border-box;"></textarea>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="dictstart">Start — hide the reference</button>${cancel}</div>${status}`;
+    else if(hrsTpl.phase === 'write') h += `<p class="gap-mini">Timer running. Play the clip (as many times as you need) and type what you hear.</p>
+      <textarea data-tf="hyp"${rtl} style="width:100%;min-height:140px;box-sizing:border-box;" placeholder="Type here…"></textarea>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="dictcheck">Check my dictation</button>${cancel}</div>${status}`;
+    else {
+      const ops = d.ops, ok = ops.filter(o => o.t === 'ok').length, refN = d.refN, errs = ops.filter(o => o.t !== 'ok').length;
+      h += `<div class="spk-metrics"><strong>${refN ? Math.round(ok / refN * 100) : 0}%</strong> of the ${refN} reference words correct · <strong>${errs}</strong> error${errs === 1 ? '' : 's'} (${ops.filter(o => o.t === 'sub').length} wrong, ${ops.filter(o => o.t === 'del').length} missing, ${ops.filter(o => o.t === 'ins').length} extra)</div>
+        <div class="hrs-read" style="font-size:17px;"${rtl}>${ops.map(o => o.t === 'ok' ? escapeHtml(o.r.raw) : o.t === 'sub' ? `<span class="hrs-bad">${escapeHtml(o.h.raw)}</span> <span class="hrs-exp">${escapeHtml(o.r.raw)}</span>` : o.t === 'del' ? `<span class="hrs-miss">${escapeHtml(o.r.raw)}</span>` : `<span class="hrs-extra">${escapeHtml(o.h.raw)}</span>`).join(' ')}</div>
+        <p class="gap-mini"><span class="hrs-bad">wrong</span> → <span class="hrs-exp">expected</span> · <span class="hrs-miss">missed</span> · <span class="hrs-extra">extra</span>. Accuracy compares words after ignoring case, punctuation${lang === 'ar' ? ', tashkeel and alef/ya spelling variants' : ''}.</p>
+        <div class="card-actions"><button class="ghost" type="button" data-tplact="dictgaps">Add missed / wrong words to Gaps</button><button class="primary" type="button" data-tplact="dictfinish">Finish &amp; log the time</button></div>${status}`;
+    }
+  } else if(k === 'reading'){
+    h += `<h3>Timed reading — ${LANG_NAMES[lang]}</h3>`;
+    if(hrsTpl.phase === 'setup') h += `<p class="gap-mini">Paste the text you will read (an article, a section of a document). The app counts the words and times you.</p>
+      ${hrsFindHtml('reading', lang)}
+      <label class="gap-mini">Title / source</label><input type="text" data-tf="title">
+      <label class="gap-mini">Text</label><textarea data-tf="text"${rtl} style="width:100%;min-height:140px;box-sizing:border-box;"></textarea>
+      <div class="card-actions" style="margin-top:8px;">${hrsAiOk() ? '<label class="gap-mini" style="display:flex;gap:6px;align-items:center;"><input type="checkbox" data-tf="qs" checked style="width:auto;"> also make 3 comprehension questions with AI</label>' : ''}<button class="primary" type="button" data-tplact="readstart">Start reading</button>${cancel}</div>${status}`;
+    else if(hrsTpl.phase === 'read') h += `<p class="gap-mini">Timer running — ${d.words} words. Read at your normal pace, then press Done.</p><div class="hrs-read"${rtl}>${escapeHtml(d.text).replace(/\n/g, '<br>')}</div>
+      <div class="card-actions"><button class="primary" type="button" data-tplact="readdone">Done reading</button>${cancel}</div>${status}`;
+    else h += `<div class="spk-metrics">${d.words} words in ${(d.ms / 60000).toFixed(1)} min = <strong>${Math.round(d.words / (d.ms / 60000))} words/min</strong></div>
+      ${d.qs ? `<p class="gap-mini"><strong>Answer these from memory, without looking back:</strong></p><ol style="margin:4px 0 8px 18px;font-size:14px;"${rtl}>${d.qs.map(q => '<li>' + escapeHtml(q.q) + '</li>').join('')}</ol><details><summary class="gap-mini">Show suggested answers</summary><ol style="margin:4px 0 8px 18px;font-size:13px;"${rtl}>${d.qs.map(q => '<li>' + escapeHtml(q.a) + '</li>').join('')}</ol></details>` : '<p class="gap-mini">Now say a one-minute summary aloud without looking at the text.</p>'}
+      <label class="gap-mini">Words I did not know (one per line — added to Gaps)</label><textarea data-tf="unk"${rtl} style="width:100%;min-height:60px;box-sizing:border-box;"></textarea>
+      <label class="gap-mini">How much did you understand?</label><select data-tf="rating"><option value="1">1 – barely</option><option value="2">2 – some</option><option value="3" selected>3 – about half</option><option value="4">4 – most</option><option value="5">5 – nearly all</option></select>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="readfinish">Finish &amp; log the time</button></div>${status}`;
+  } else if(k === 'roleplay'){
+    h += `<h3>Role-play — ${LANG_NAMES[lang]}</h3>`;
+    if(hrsTpl.phase === 'setup') h += `<p class="gap-mini">An AI plays the other side. Answer as you would in the real meeting. It never corrects you during the conversation; you get feedback at the end.</p>
+      <label class="gap-mini">Scenario</label><select data-tf="scenario">${HRS_SCENARIOS.map(x => `<option>${x}</option>`).join('')}</select>
+      <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:160px;"><label class="gap-mini">Register</label><select data-tf="register">${lang === 'ar' ? '<option value="formal Modern Standard Arabic">Formal Modern Standard Arabic</option><option value="professional Saudi spoken Arabic">Professional Saudi spoken Arabic</option>' : '<option value="formal, official English">Formal / official</option><option value="neutral professional English">Neutral professional</option>'}</select></div>
+      <div style="flex:1;min-width:160px;"><label class="gap-mini">Counterpart</label><select data-tf="push"><option value="cooperative">Cooperative</option><option value="firm" selected>Firm</option><option value="hard, challenging and sometimes interrupting">Hard — challenges you</option></select></div></div>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="rpstart">Begin</button>${cancel}</div>${status}`;
+    else if(hrsTpl.phase === 'talk') h += `<div class="gap-mini">${escapeHtml(d.scenario)} · ${d.turns} of your turns so far</div>
+      <div class="hrs-chat"${rtl}>${d.log.map(m => `<div class="${m.who}"><strong>${m.who === 'you' ? 'You' : 'Counterpart'}:</strong> ${escapeHtml(m.text)}</div>`).join('')}</div>
+      <textarea data-tf="say"${rtl} style="width:100%;min-height:70px;box-sizing:border-box;" placeholder="Your reply… (your phone’s voice typing works here)"></textarea>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="rpsend">Send</button><button class="ghost" type="button" data-tplact="rpend">End &amp; get feedback</button>${cancel}</div>${status}`;
+    else {
+      const f = d.fb;
+      h += `<div class="spk-caution"><strong>AI feedback — an estimate. Check it.</strong></div>
+        ${f.strengths && f.strengths.length ? '<p class="gap-mini"><strong>Good:</strong> ' + f.strengths.map(escapeHtml).join(' · ') + '</p>' : ''}
+        ${f.register && f.register.length ? '<p class="gap-mini"><strong>Register:</strong> ' + f.register.map(escapeHtml).join(' · ') + '</p>' : ''}
+        ${f.advice ? '<p class="gap-mini"><strong>Next time:</strong> ' + escapeHtml(f.advice) + '</p>' : ''}
+        ${(f.errors || []).map((e, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px;"><input type="checkbox" data-tferr="${i}" ${i < 4 ? 'checked' : ''} style="width:auto;margin-top:3px;"><span${rtl}>“${escapeHtml(e.wrong)}” → <strong>${escapeHtml(e.right)}</strong> <span class="gap-mini">(${escapeHtml(e.pattern)})</span></span></label>`).join('')}
+        <div class="card-actions" style="margin-top:8px;">${(f.errors || []).length ? '<button class="ghost" type="button" data-tplact="rpgaps">Add ticked corrections to Gaps</button>' : ''}<button class="primary" type="button" data-tplact="rpfinish">Finish &amp; log the time</button></div>${status}`;
+    }
+  } else if(k === 'register'){
+    h += `<h3>Register switch — ${LANG_NAMES[lang]}</h3>`;
+    if(hrsTpl.phase === 'setup') h += `${hrsFindHtml('register', lang)}<p class="gap-mini">Say the same message two ways: <strong>${lang === 'ar' ? 'Saudi spoken' : 'neutral conversational'}</strong> and <strong>${lang === 'ar' ? 'formal Modern Standard Arabic' : 'formal / official'}</strong>. Type both, then check.</p>
+      <label class="gap-mini">Situation</label><select data-tf="sit">${HRS_SITUATIONS.map(x => `<option>${x}</option>`).join('')}<option value="__custom">My own situation…</option></select>
+      <input type="text" data-tf="custom" placeholder="only if you chose “My own situation”" style="margin-top:4px;">
+      <label class="gap-mini">${lang === 'ar' ? 'Saudi spoken version' : 'Conversational version'}</label><textarea data-tf="spoken"${rtl} style="width:100%;min-height:70px;box-sizing:border-box;"></textarea>
+      <label class="gap-mini">${lang === 'ar' ? 'Formal (Modern Standard Arabic) version' : 'Formal / official version'}</label><textarea data-tf="formal"${rtl} style="width:100%;min-height:70px;box-sizing:border-box;"></textarea>
+      <div class="card-actions" style="margin-top:8px;">${hrsAiOk() ? '<button class="ghost" type="button" data-tplact="regcheck">✨ Check with AI</button>' : ''}<button class="primary" type="button" data-tplact="regfinish">Finish &amp; log the time</button>${cancel}</div>${status}
+      ${d.fb ? `<div class="spk-caution"><strong>AI feedback — an estimate. Check it.</strong></div>
+        ${(d.fb.formal_issues || []).length ? '<p class="gap-mini"><strong>Formal version:</strong> ' + d.fb.formal_issues.map(escapeHtml).join(' · ') + '</p>' : ''}
+        ${(d.fb.spoken_issues || []).length ? '<p class="gap-mini"><strong>Spoken version:</strong> ' + d.fb.spoken_issues.map(escapeHtml).join(' · ') + '</p>' : ''}
+        <p${rtl}><strong>Model formal:</strong> ${escapeHtml(d.fb.model_formal || '')}<br><strong>Model spoken:</strong> ${escapeHtml(d.fb.model_spoken || '')}</p>
+        ${d.fb.notes ? '<p class="gap-mini">' + escapeHtml(d.fb.notes) + '</p>' : ''}
+        <div class="card-actions"><button class="ghost" type="button" data-tplact="reggaps">Add the model formal version to Gaps</button></div>` : ''}`;
+  } else if(k === 'glossary'){
+    h += `<h3>Domain glossary — ${LANG_NAMES[lang]}</h3>`;
+    if(hrsTpl.phase === 'setup') h += `<p class="gap-mini">The AI drafts formal phrases a senior official would use in a field, with an everyday equivalent and a translation. Tick the ones worth keeping and they go into your phrase bank.</p>
+      <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;"><div style="flex:2;min-width:200px;"><label class="gap-mini">Field</label><select data-tf="field">${HRS_FIELDS.map(x => `<option>${x}</option>`).join('')}<option value="__custom">My own field…</option></select><input type="text" data-tf="custom" placeholder="only if you chose “My own field”" style="margin-top:4px;"></div>
+      <div style="flex:1;min-width:110px;"><label class="gap-mini">How many</label><select data-tf="n"><option>10</option><option selected>15</option><option>20</option></select></div></div>
+      <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-tplact="glgen">✨ Generate</button>${cancel}</div>${status}`;
+    else h += `<div class="spk-caution"><strong>AI draft — check before you keep.</strong> It can invent or misuse terms.</div>
+      ${d.items.map((it, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-size:13.5px;"><input type="checkbox" data-tfgl="${i}" checked style="width:auto;margin-top:4px;"><span><span${rtl}><strong>${escapeHtml(it.phrase)}</strong>${it.plain ? ' <span class="gap-mini">≈ ' + escapeHtml(it.plain) + '</span>' : ''}</span><br><span class="gap-mini">${escapeHtml(it.translation)}</span>${it.example ? '<br><span class="gap-mini"' + rtl + '>' + escapeHtml(it.example) + '</span>' : ''}</span></label>`).join('')}
+      <div class="card-actions"><button class="ghost" type="button" data-tplact="glbank">Add ticked to my phrase bank</button><button class="primary" type="button" data-tplact="glfinish">Finish &amp; log the time</button></div>${status}`;
+  }
+  return h + '</div>';
+}
+function hrsTplFinish(title, note, extra){
+  const minutes = hrsElapsedMin();
+  hrsPending = Object.assign({ lang: hrsTpl.lang, activity: HRS_TEMPLATES.find(t => t.k === hrsTpl.k).act, title: title || '', minutes, startedAt: new Date(hrsTpl.t0).toISOString(), note: note || '' }, extra || {});
+  hrsTpl = null; renderHours();
+}
+function hrsTplSetStatus(msg, err){ const el = document.querySelector('[data-tstatus]'); if(el){ el.textContent = msg; el.className = 'status-msg' + (err ? ' err' : ''); } }
+function hrsTplVal(f){ const el = document.querySelector(`[data-tpl] [data-tf="${f}"]`); return el ? el.value : ''; }
+
+document.getElementById('hrsRoot').addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-tplact]');
+  if(!a) return;
+  const act = a.dataset.tplact;
+  if(act === 'open'){
+    const k = document.getElementById('hrsTplSel').value, lang = uiLang();
+    if(HRS_TEMPLATES.find(t => t.k === k).ai && !hrsAiOk()){ gapToastMsg('This activity needs a Gemini key (Sheet & AI settings).'); return; }
+    hrsTpl = { k, phase: k === 'register' || k === 'glossary' || k === 'roleplay' ? 'setup' : 'setup', lang, t0: Date.now(), data: {} };
+    renderHours(); return;
+  }
+  if(!hrsTpl) return;
+  const lang = hrsTpl.lang, d = hrsTpl.data;
+  if(act === 'cancel'){ hrsTpl = null; renderHours(); return; }
+  // ----- dictation -----
+  if(act === 'dictstart'){
+    const ref = hrsTplVal('ref'), n = hrsWordList(ref, lang).length;
+    if(n < 8){ hrsTplSetStatus('Paste a reference transcript first (at least a few sentences).', true); return; }
+    if(n > 400){ hrsTplSetStatus('That is over 400 words — use a shorter clip (about a minute).', true); return; }
+    d.title = hrsTplVal('title').trim(); d.ref = ref; hrsTpl.phase = 'write'; hrsTpl.t0 = Date.now(); renderHours(); return;
+  }
+  if(act === 'dictcheck'){
+    const hyp = hrsTplVal('hyp');
+    if(hrsWordList(hyp, lang).length < 3){ hrsTplSetStatus('Type what you heard first.', true); return; }
+    const refW = hrsWordList(d.ref, lang);
+    d.hypText = hyp; d.refN = refW.length; d.ops = hrsDiff(refW, hrsWordList(hyp, lang)); hrsTpl.phase = 'result'; renderHours(); return;
+  }
+  if(act === 'dictgaps'){
+    const seen = new Set(); let n = 0;
+    d.ops.filter(o => o.t === 'sub' || o.t === 'del').forEach(o => {
+      if(n >= 10 || seen.has(o.r.n) || o.r.n.length < 2) return; seen.add(o.r.n);
+      const sent = hrsSentenceWith(d.ref, o.r.raw);
+      const r = captureGap({ lang, wanted: o.r.raw.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, ''), said: o.t === 'sub' ? o.h.raw : '', source: 'Dictation' + (d.title ? ': ' + d.title : ''), exEn: lang === 'en' ? sent : '', exAr: lang === 'ar' ? sent : '' });
+      if(r) n++;
+    });
+    await saveGaps(); renderGaps(); hrsTplSetStatus(n ? `Added ${n} word${n === 1 ? '' : 's'} to Gaps (up to 10 at a time).` : 'No missed or wrong words to add.'); return;
+  }
+  if(act === 'dictfinish'){
+    const ok = d.ops.filter(o => o.t === 'ok').length, errs = d.ops.filter(o => o.t !== 'ok').length;
+    hrsTplFinish(d.title, `Dictation: ${Math.round(ok / d.refN * 100)}% of ${d.refN} words correct (${errs} error${errs === 1 ? '' : 's'})`, { res: { dictation: { words: d.refN, correct: ok, errors: errs } } }); return;
+  }
+  // ----- reading -----
+  if(act === 'readstart'){
+    const text = hrsTplVal('text'), words = hrsWordList(text, lang).length;
+    if(words < 30){ hrsTplSetStatus('Paste the text to read (at least about 30 words).', true); return; }
+    d.title = hrsTplVal('title').trim(); d.text = text; d.words = words;
+    const wantQs = hrsAiOk() && (document.querySelector('[data-tpl] [data-tf="qs"]') || {}).checked;
+    if(wantQs){
+      a.disabled = true; a.textContent = 'Preparing questions…';
+      try{
+        const { text: out } = await callGemini('Write 3 short comprehension questions (in ' + LANG_NAMES[lang] + ') about the main points of this text, each with a one-sentence suggested answer. Reply with ONLY JSON: {"qs":[{"q":"","a":""}]}.\n\nTEXT:\n' + text.slice(0, 6000), { system: 'You write reading-comprehension questions. Reply with ONLY one JSON object, no markdown fences.', useSearch: false });
+        d.qs = (hrsJson(out).qs || []).filter(x => x && x.q).slice(0, 3);
+      }catch(err){ d.qs = null; }
+    }
+    hrsTpl.phase = 'read'; hrsTpl.t0 = Date.now(); renderHours(); return;
+  }
+  if(act === 'readdone'){ d.ms = Math.max(5000, Date.now() - hrsTpl.t0); hrsTpl.phase = 'after'; renderHours(); return; }
+  if(act === 'readfinish'){
+    const wpm = Math.round(d.words / (d.ms / 60000)), unk = hrsTplVal('unk'), rating = parseInt(hrsTplVal('rating'), 10) || 0;
+    const mins = Math.max(1, Math.round((Date.now() - hrsTpl.t0) / 60000));
+    hrsPending = { lang, activity: 'reading', title: d.title, minutes: mins, startedAt: new Date(hrsTpl.t0).toISOString(), words: d.words, rating, newwords: unk, note: `Timed reading: ${wpm} words/min`, res: { reading: { words: d.words, wpm } } };
+    hrsTpl = null; renderHours(); return;
+  }
+  // ----- role-play -----
+  const rpSystem = () => `You are role-playing a counterpart in a professional speaking-practice session for a language learner. Stay in role. Reply ONLY with your next spoken line (1-3 sentences) in ${LANG_NAMES[lang]}, using ${d.register}. Never break character, never translate, never correct the learner during the role-play, never mention being an AI. Counterpart style: ${d.push}.`;
+  const rpAsk = async (opening) => {
+    const conv = d.log.map(m => (m.who === 'you' ? 'LEARNER: ' : 'COUNTERPART: ') + m.text).join('\n');
+    const { text } = await callGemini(`Scenario: ${d.scenario}.\n${opening ? 'Begin the conversation with your first line.' : 'Conversation so far:\n' + conv + '\nWrite ONLY the counterpart\u2019s next line.'}`, { system: rpSystem(), useSearch: false });
+    d.log.push({ who: 'them', text: text.trim().replace(/^COUNTERPART:\s*/i, '') });
+  };
+  if(act === 'rpstart'){
+    d.scenario = hrsTplVal('scenario'); d.register = hrsTplVal('register'); d.push = hrsTplVal('push'); d.log = []; d.turns = 0;
+    a.disabled = true; a.textContent = 'Starting…';
+    try{ await rpAsk(true); hrsTpl.phase = 'talk'; hrsTpl.t0 = Date.now(); renderHours(); }
+    catch(err){ a.disabled = false; a.textContent = 'Begin'; hrsTplSetStatus('Could not start: ' + (err && err.message ? err.message : 'AI error') + '.', true); }
+    return;
+  }
+  if(act === 'rpsend'){
+    const say = hrsTplVal('say').trim();
+    if(!say){ hrsTplSetStatus('Type your reply first.', true); return; }
+    d.log.push({ who: 'you', text: say }); d.turns++;
+    a.disabled = true; a.textContent = '…';
+    try{ await rpAsk(false); }catch(err){ d.log.push({ who: 'them', text: '(no reply — ' + (err && err.message ? err.message : 'AI error') + '. Press Send to try again.)' }); }
+    renderHours();
+    const box = document.querySelector('.hrs-chat'); if(box) box.scrollTop = box.scrollHeight;
+    return;
+  }
+  if(act === 'rpend'){
+    if(!d.turns){ hrsTplSetStatus('Say at least one thing first.', true); return; }
+    a.disabled = true; a.textContent = 'Getting feedback…';
+    try{
+      const transcript = d.log.map(m => (m.who === 'you' ? 'LEARNER: ' : 'COUNTERPART: ') + m.text).join('\n');
+      const { text } = await callGemini(`Scenario: ${d.scenario}. Required register: ${d.register}.\nBelow is a spoken-practice role-play in ${LANG_NAMES[lang]}. Judge ONLY the LEARNER lines. Reply with ONLY JSON: {"errors":[{"wrong":"","right":"","sentence":"","pattern":""}],"register":[""],"strengths":[""],"advice":""}. errors = up to 8 clear grammar or word-choice mistakes (wrong = short wrong phrase, right = corrected phrase, sentence = corrected sentence, pattern = short English label); register = comments where the wording was too informal or too stiff for the situation (max 3); strengths = up to 2; advice = one or two sentences.\n\n${transcript}`, { system: 'You are a strict but constructive speaking coach. Reply with ONLY one JSON object, no markdown fences.', useSearch: false });
+      d.fb = hrsJson(text); hrsTpl.phase = 'fb'; renderHours();
+    }catch(err){ a.disabled = false; a.textContent = 'End & get feedback'; hrsTplSetStatus('Feedback failed: ' + (err && err.message ? err.message : 'AI error') + '. You can still finish and log the time.', true); }
+    return;
+  }
+  if(act === 'rpgaps'){
+    const picked = [...document.querySelectorAll('[data-tferr]')].filter(x => x.checked).map(x => (d.fb.errors || [])[parseInt(x.dataset.tferr, 10)]).filter(Boolean);
+    let n = 0;
+    picked.forEach(er => { if(!er.right) return; const r = captureGap({ lang, wanted: er.right, said: er.wrong || '', source: 'Role-play', exEn: lang === 'en' ? (er.sentence || '') : '', exAr: lang === 'ar' ? (er.sentence || '') : '' }); if(r){ r.g.type = 'chunk'; r.g.typeManual = true; gapEnsureTrack(r.g); gapTouch(r.g); n++; } });
+    await saveGaps(); renderGaps(); hrsTplSetStatus(n ? `Added ${n} correction${n === 1 ? '' : 's'} to Gaps.` : 'Tick at least one correction.', !n); return;
+  }
+  if(act === 'rpfinish'){ hrsTplFinish(d.scenario, `Role-play: ${d.scenario} (${d.turns} turns)`, { res: { roleplay: { turns: d.turns } } }); return; }
+  // ----- register switch -----
+  if(act === 'regcheck'){
+    const sit = hrsTplVal('sit') === '__custom' ? (hrsTplVal('custom') || 'my own situation') : hrsTplVal('sit'), spoken = hrsTplVal('spoken').trim(), formal = hrsTplVal('formal').trim();
+    if(!spoken || !formal){ hrsTplSetStatus('Type both versions first.', true); return; }
+    d.sit = sit; d.spokenT = spoken; d.formalT = formal;
+    a.disabled = true; a.textContent = 'Checking…';
+    try{
+      const { text } = await callGemini(`Language: ${LANG_NAMES[lang]}. Situation: ${sit}.\nThe learner wrote this message twice.\nSPOKEN version (${lang === 'ar' ? 'Saudi spoken Arabic' : 'neutral conversational English'}): ${spoken}\nFORMAL version (${lang === 'ar' ? 'formal Modern Standard Arabic' : 'formal official English'}): ${formal}\nReply with ONLY JSON: {"spoken_issues":[""],"formal_issues":[""],"model_formal":"","model_spoken":"","notes":""}. issues = concrete grammar or register problems in that version (max 4 each, empty array if none); model_formal and model_spoken = a natural, correct version of the same message in each register; notes = one sentence on the key difference between the registers here.`, { system: 'You are a language coach who knows register well. Reply with ONLY one JSON object, no markdown fences.', useSearch: false });
+      d.fb = hrsJson(text); renderHours();
+      const s2 = document.querySelector('[data-tpl] [data-tf="spoken"]'), f2 = document.querySelector('[data-tpl] [data-tf="formal"]'), c2 = document.querySelector('[data-tpl] [data-tf="custom"]'), sel = document.querySelector('[data-tpl] [data-tf="sit"]');
+      if(s2) s2.value = spoken; if(f2) f2.value = formal; if(sel && HRS_SITUATIONS.includes(sit)) sel.value = sit; else if(sel){ sel.value = '__custom'; if(c2) c2.value = sit; }
+    }catch(err){ a.disabled = false; a.textContent = '✨ Check with AI'; hrsTplSetStatus('AI check failed: ' + (err && err.message ? err.message : 'error') + '. You can still finish and log the time.', true); }
+    return;
+  }
+  if(act === 'reggaps'){
+    if(!d.fb || !d.fb.model_formal){ hrsTplSetStatus('Nothing to add yet.', true); return; }
+    const r = captureGap({ lang, wanted: d.fb.model_formal, said: d.formalT || d.spokenT || '', source: 'Register switch', exEn: lang === 'en' ? d.fb.model_formal : '', exAr: lang === 'ar' ? d.fb.model_formal : '' });
+    if(r){ r.g.type = 'chunk'; r.g.typeManual = true; r.g.note = d.fb.notes || ''; gapEnsureTrack(r.g); gapTouch(r.g); }
+    await saveGaps(); renderGaps(); hrsTplSetStatus('Added the model formal version to Gaps.'); return;
+  }
+  if(act === 'regfinish'){
+    const sit = hrsTplVal('sit') === '__custom' ? (hrsTplVal('custom') || 'own situation') : hrsTplVal('sit');
+    hrsTplFinish(sit, `Register switch: ${sit}${d.fb ? ' (AI-checked)' : ''}`); return;
+  }
+  // ----- glossary -----
+  if(act === 'glgen'){
+    const field = hrsTplVal('field') === '__custom' ? (hrsTplVal('custom') || '').trim() : hrsTplVal('field'), n = parseInt(hrsTplVal('n'), 10) || 15;
+    if(!field){ hrsTplSetStatus('Name the field.', true); return; }
+    d.field = field; a.disabled = true; a.textContent = 'Generating…';
+    const other = lang === 'ar' ? 'English' : 'Arabic';
+    try{
+      const { text } = await callGemini(`Field: ${field}. Target language: ${LANG_NAMES[lang]} (${lang === 'ar' ? 'formal Modern Standard Arabic, no tashkeel' : 'formal official English'}). Give ${n} useful formal PHRASES or collocations (not single basic words) that a senior official would use in this field. Reply with ONLY JSON: {"items":[{"phrase":"","plain":"","translation":"","example":""}]}. phrase = the formal phrase in ${LANG_NAMES[lang]}; plain = an everyday equivalent in ${LANG_NAMES[lang]}${lang === 'ar' ? ' (Saudi spoken)' : ''} or empty; translation = the meaning in ${other}; example = one formal sentence in ${LANG_NAMES[lang]} using the phrase.`, { system: 'You are a terminologist for official and diplomatic language. Reply with ONLY one JSON object, no markdown fences.', useSearch: false });
+      d.items = (hrsJson(text).items || []).filter(x => x && x.phrase && x.translation).slice(0, 25);
+      if(!d.items.length) throw new Error('No phrases came back.');
+      hrsTpl.phase = 'list'; renderHours();
+    }catch(err){ a.disabled = false; a.textContent = '✨ Generate'; hrsTplSetStatus('Generation failed: ' + (err && err.message ? err.message : 'AI error') + '.', true); }
+    return;
+  }
+  if(act === 'glbank'){
+    const picked = [...document.querySelectorAll('[data-tfgl]')].filter(x => x.checked).map(x => d.items[parseInt(x.dataset.tfgl, 10)]).filter(Boolean);
+    let added = 0, skipped = 0;
+    for(const it of picked){
+      const en = lang === 'ar' ? it.translation : it.phrase, ar = lang === 'ar' ? it.phrase : it.translation;
+      if(isDuplicatePhrase(en, ar) || multiWordViolationMessage(en, ar)){ skipped++; continue; }
+      state.bank.unshift({ id: uid(), en, ar, category: 'Glossary: ' + d.field, practiceCount: 0, lastPracticed: null }); added++;
+    }
+    if(added){ await saveBank(); renderBank(); }
+    hrsTplSetStatus(`Added ${added} to your phrase bank${skipped ? '; skipped ' + skipped + ' already in it or with nothing new' : ''}.`); return;
+  }
+  if(act === 'glfinish'){ hrsTplFinish(d.field, `Domain glossary: ${d.field}`); return; }
+});
+
+// ---------- Find material: search links per activity ----------
+// Opens a web search in a new tab, pre-filled with a sensible query for the chosen
+// activity and language. The app only builds the link — it cannot check that the
+// results have a transcript, captions or a usable text.
+const HRS_FIND = {
+  en: {
+    dictation: ['press conference full transcript video', 'podcast episode with full transcript', 'ministerial statement transcript audio', 'business news bulletin transcript', 'TED talk transcript'],
+    reading: ['policy brief economics pdf', 'central bank speech transcript', 'government white paper summary', 'opinion editorial on trade policy', 'annual report chairman statement'],
+    listening: ['parliamentary debate video captions', 'diplomatic press briefing full video', 'business news 5 minute bulletin', 'interview with a minister full video', 'panel discussion economic policy'],
+    writing: ['formal letter to a ministry example', 'official email templates diplomatic correspondence', 'minutes of meeting sample official'],
+    register: ['formal versus informal English business phrases', 'diplomatic language phrases examples', 'polite ways to disagree in a meeting'],
+    glossary: ['glossary of public policy terms', 'trade and economics terminology official', 'diplomatic protocol vocabulary']
+  },
+  ar: {
+    dictation: ['نشرة الأخبار نص وصوت', 'خطاب رسمي نص كامل فيديو', 'مؤتمر صحفي وزير نص مفرغ', 'بودكاست عربي مع نص مفرغ', 'كلمة ملكية نص كامل'],
+    reading: ['بيان صحفي رسمي وزارة', 'مقال رأي اقتصادي', 'تقرير رؤية 2030', 'ملخص سياسة عامة وزارة الاقتصاد', 'كلمة رئيس مجلس الإدارة التقرير السنوي'],
+    listening: ['نشرة أخبار السعودية اليوم', 'حوار تلفزيوني سياسي كامل', 'مؤتمر صحفي وزارة الخارجية', 'مقابلة مع وزير الاقتصاد', 'ندوة اقتصادية حوار'],
+    writing: ['نموذج خطاب رسمي إلى وزارة', 'صيغ المراسلات الرسمية', 'نموذج محضر اجتماع'],
+    register: ['الفرق بين العامية والفصحى في الاجتماعات الرسمية', 'عبارات دبلوماسية رسمية', 'عبارات الاعتذار الرسمي'],
+    glossary: ['مصطلحات اقتصادية رسمية', 'مصطلحات دبلوماسية وبروتوكول', 'مصطلحات إدارية وقانونية']
+  }
+};
+const HRS_SITES = { en: { label: 'UN press', site: 'press.un.org' }, ar: { label: 'Saudi Press Agency', site: 'spa.gov.sa' } };
+let hrsFindIdx = {};
+function hrsFindKind(act){
+  return { dictation: 'dictation', reading: 'reading', readsay: 'reading', writing: 'writing', register: 'register', roleplay: 'register', glossary: 'glossary' }[act] || 'listening';
+}
+function hrsFindHtml(kind, lang){
+  const list = HRS_FIND[lang][kind] || HRS_FIND[lang].listening, i = hrsFindIdx[lang + kind] || 0;
+  return `<div class="hrs-find" data-fkind="${kind}" data-flang="${lang}">
+    <label class="gap-mini">Find material (opens a web search in a new tab — edit the search first if you like)</label>
+    <input type="text" data-find="q" value="${escapeHtml(list[i % list.length])}" ${lang === 'ar' ? 'dir="auto"' : ''}>
+    <div class="hrs-chips"><button class="ghost" type="button" data-findact="google">Google</button><button class="ghost" type="button" data-findact="youtube">YouTube</button><button class="ghost" type="button" data-findact="news">News</button><button class="ghost" type="button" data-findact="site">${HRS_SITES[lang].label}</button><button class="ghost" type="button" data-findact="idea">↻ Another idea</button></div>
+    <div class="gap-mini">${kind === 'dictation' ? 'For dictation choose something that comes with a transcript or captions you can copy.' : kind === 'reading' ? 'For timed reading pick a text you can copy and paste in.' : 'Links only — the app can’t check what the results contain.'}</div></div>`;
+}
+function hrsFindUrl(act, q, lang){
+  const e = encodeURIComponent;
+  if(act === 'youtube') return 'https://www.youtube.com/results?search_query=' + e(q);
+  if(act === 'news') return 'https://news.google.com/search?q=' + e(q);
+  if(act === 'site') return 'https://www.google.com/search?q=' + e(q + ' site:' + HRS_SITES[lang].site) + '&hl=' + lang;
+  return 'https://www.google.com/search?q=' + e(q) + '&hl=' + lang;
+}
+document.getElementById('hrsRoot').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-findact]');
+  if(!b) return;
+  const box = b.closest('.hrs-find'), input = box.querySelector('[data-find="q"]'), lang = box.dataset.flang, kind = box.dataset.fkind;
+  if(b.dataset.findact === 'idea'){
+    const list = HRS_FIND[lang][kind] || HRS_FIND[lang].listening;
+    hrsFindIdx[lang + kind] = ((hrsFindIdx[lang + kind] || 0) + 1) % list.length;
+    input.value = list[hrsFindIdx[lang + kind]]; return;
+  }
+  const q = (input.value || '').trim();
+  if(!q){ gapToastMsg('Type something to search for.'); return; }
+  window.open(hrsFindUrl(b.dataset.findact, q, lang), '_blank', 'noopener');
+});
+document.getElementById('hrsRoot').addEventListener('change', (e) => {
+  if(e.target.id !== 'hrsAct') return;
+  const holder = document.getElementById('hrsFindHolder');
+  if(holder) holder.innerHTML = hrsFindHtml(hrsFindKind(e.target.value), uiLang());
+});
+
+// ---------- Hours: merge + Sheet sync (pull → merge → push), one row per day per language ----------
+function hrsRowsToPush(){
+  const keys = new Set(Object.keys(state.hours.remote));
+  state.hours.sessions.forEach(x => keys.add(hrsKey(x.date, x.lang)));
+  Object.keys(state.hours.selfSeen).forEach(k => keys.add(k));
+  const rows = [], now = new Date().toISOString();
+  keys.forEach(k => {
+    const [date, lang] = k.split('|');
+    const maps = hrsDeviceMaps(lang, date), out = {};
+    Object.keys(maps).forEach(dev => { const o = {}; HRS_SKILLS.forEach(sk => { o[sk] = Math.round((Number(maps[dev][sk]) || 0) * 10) / 10; }); out[dev] = o; });
+    rows.push({ date, lang, data: JSON.stringify(out), updatedAt: now });
+  });
+  return rows;
+}
+function mergeHours(local, incoming){
+  const byId = new Map();
+  (local.sessions || []).concat(incoming.sessions || []).forEach(x => { if(!x || !x.id) return; const c = byId.get(x.id); if(!c || (x.updatedAt || '') > (c.updatedAt || '')) byId.set(x.id, x); });
+  local.sessions = [...byId.values()];
+  Object.keys(incoming.selfSeen || {}).forEach(k => { local.selfSeen[k] = true; });
+  Object.keys(incoming.remote || {}).forEach(k => { local.remote[k] = Object.assign({}, incoming.remote[k], local.remote[k] || {}); });
+  return local;
+}
+async function coreRestoreHours(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'hours' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    if(Array.isArray(data)) throw new Error('your Apps Script doesn\u2019t have the Hours update yet — paste in the updated script and redeploy first (nothing was sent)');
+    let n = 0;
+    (data.rows || []).forEach(r => {
+      let m; try{ m = JSON.parse(r.data); }catch(e){ return; }
+      const date = String(r.date || '').slice(0, 10), lang = r.lang === 'ar' ? 'ar' : 'en';
+      if(!date || !m || typeof m !== 'object') return;
+      state.hours.remote[hrsKey(date, lang)] = m; n++;
+    });
+    hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard();
+    return { ok: true, incoming: n, message: `Hours: ${n} day-rows read from the Sheet.` };
+  }catch(err){
+    return { ok: false, message: 'Hours restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+async function coreBackupHours(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const rows = hrsRowsToPush();
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'hours_sync', rows }) });
+    throwIfRejected(await post.json());
+    return { ok: true, message: `Hours: ${rows.length} day-rows backed up.` };
+  }catch(err){
+    return { ok: false, message: 'Hours backup failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+async function coreSyncHours(){
+  const r = await coreRestoreHours();
+  if(!r.ok) return r; // e.g. old Apps Script: nothing is sent
+  const b = await coreBackupHours();
+  if(!b.ok) return b;
+  return { ok: true, message: `Hours synced: ${r.incoming} day-rows from the Sheet merged with this device, all backed up.` };
+}
+function renderHrsSync(){
+  const root = document.getElementById('hrsSync');
+  if(!root || root.dataset.ready) return;
+  root.dataset.ready = '1';
+  root.innerHTML = `<h3 style="margin:0 0 4px;">Backup &amp; devices</h3>
+    <p class="gap-mini">Session details (titles, ratings, notes) stay on the device that logged them. The Sheet keeps <strong>one row per day per language</strong> with the minutes per skill from each device, so your hour totals follow you between devices. “Download backup file” keeps the full session list too. Needs the updated Apps Script (an “Hours” tab).</p>
+    <div class="card-actions"><button class="primary" type="button" id="hrsSyncBtn">Sync hours with Sheet</button></div><div class="status-msg" id="hrsSyncStatus"></div>`;
+  document.getElementById('hrsSyncBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('hrsSyncBtn'), st = document.getElementById('hrsSyncStatus');
+    btn.disabled = true; st.textContent = 'Syncing…'; st.className = 'status-msg';
+    const r = await coreSyncHours();
+    st.textContent = r.message; st.className = r.ok ? 'status-msg' : 'status-msg err'; btn.disabled = false;
+  });
+}
 // ---------- Pop-ups: every one gets a ✕ and closes with Esc ----------
 // (The Sheet & AI settings pop-up used to run off-screen with its Cancel
 // button out of reach; .modal now scrolls, and these give a second way out.)
@@ -8018,6 +8783,7 @@ document.addEventListener('keydown', (e) => {
   renderSpeaking();
   renderSpkSync();
   renderDashboard();
+  renderHours(); hrsBadge();
 
   // Silently catch up today's drill progress from another device, if any —
   // best-effort and non-blocking, so a slow/offline sheet never delays the
