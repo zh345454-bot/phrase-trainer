@@ -760,7 +760,9 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         </div>
       </div>
       <button class="primary" id="quickSpeakBtn">Speak</button>
+      <button class="ghost" id="quickVoiceBtn">🎙 Practice in Voice practice</button>
       <button class="ghost" id="quickLogBtn">Log as practiced</button>
+      <div class="status-msg" id="quickSpeakNote"></div>
     </div>
 
     <div class="panel">
@@ -1436,11 +1438,14 @@ function speak(text, lang){
     alert('This browser does not support speech synthesis.');
     return;
   }
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  if(synth.paused) synth.resume();
   const utter = new SpeechSynthesisUtterance(text);
   applyTtsVoice(utter, lang);
   utter.rate = 0.92;
-  window.speechSynthesis.speak(utter);
+  window.__lastUtter = utter;                    // keep a reference so the browser can't garbage-collect it mid-speech
+  setTimeout(() => synth.speak(utter), 60);      // some Android browsers drop an utterance queued in the same tick as cancel()
 }
 
 // Reads a long passage (e.g. a 60-second model text) by queueing it sentence
@@ -1987,8 +1992,11 @@ function searchIncludes(haystack, query){
   return !q || foldSearch(haystack).includes(q);
 }
 
+// Special category value used only by the Practice set picker: everything you've starred.
+const STARRED_CATEGORY = '__starred__';
 function matchesFilter(p, query, category, boldFilter){
-  if(category && p.category !== category) return false;
+  if(category === STARRED_CATEGORY){ if(!p.starred) return false; }
+  else if(category && p.category !== category) return false;
   if(boldFilter){
     const enBold = extractBoldSegments(p.en).length > 0;
     const arBold = extractBoldSegments(p.ar).length > 0;
@@ -2026,10 +2034,13 @@ function updateCategoryDropdowns(){
     // the one place browsing by category size is actually useful; the
     // practice/review pickers stay plain so they don't get crowded.
     const withCounts = id === 'bankCategoryFilter';
-    sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>
+    // The Practice set picker also gets "★ Starred" (with how many are starred) at the top.
+    const starredOpt = id === 'practiceCategoryFilter'
+      ? `<option value="${STARRED_CATEGORY}">★ Starred (${state.bank.filter(p => p.starred).length})</option>` : '';
+    sel.innerHTML = '<option value="">All categories</option>' + starredOpt + cats.map(c=>
       `<option value="${escapeHtml(c)}">${escapeHtml(c)}${withCounts ? ' | ' + counts[c] : ''}</option>`
     ).join('');
-    if(cats.includes(current)) sel.value = current;
+    if(cats.includes(current) || (starredOpt && current === STARRED_CATEGORY)) sel.value = current;
   });
 }
 
@@ -2914,10 +2925,32 @@ document.getElementById('practiceBoldFilter').addEventListener('change', ()=>{
 });
 
 // ---------- Quick practice ----------
+// The language box defaults to English, and Arabic text read with an English voice comes out silent —
+// so the language is checked against the script of the text before speaking.
+function quickPrepare(){
+  const box = document.getElementById('quickText'), sel = document.getElementById('quickLang'), note = document.getElementById('quickSpeakNote');
+  const text = box.value.trim();
+  note.textContent = ''; note.className = 'status-msg';
+  if(!text){ note.textContent = 'Type a phrase first.'; note.className = 'status-msg err'; return null; }
+  const hasAr = /[\u0600-\u06FF\u0750-\u077F]/.test(text), hasLatin = /[A-Za-z]/.test(text);
+  let lang = sel.value;
+  if(hasAr && !hasLatin) lang = 'ar'; else if(hasLatin && !hasAr && lang === 'ar') lang = 'en';
+  if(lang !== sel.value){ sel.value = lang; note.textContent = 'Language switched to ' + (lang === 'ar' ? 'Arabic' : 'English') + ' to match the text.'; }
+  return { text, lang, note };
+}
 document.getElementById('quickSpeakBtn').addEventListener('click', ()=>{
-  const text = document.getElementById('quickText').value.trim();
-  const lang = document.getElementById('quickLang').value;
-  speak(text, lang);
+  const q = quickPrepare(); if(!q) return;
+  if(!('speechSynthesis' in window)){ q.note.textContent = 'This browser cannot speak text aloud.'; q.note.className = 'status-msg err'; return; }
+  if(!ttsVoiceFor(q.lang)){
+    q.note.textContent = (q.note.textContent ? q.note.textContent + ' ' : '') + 'No ' + (q.lang === 'ar' ? 'Arabic' : 'English') + ' voice was found on this device — if you hear nothing, install one in your phone’s Text-to-speech settings.';
+    q.note.className = 'status-msg err';
+  }
+  speak(q.text, q.lang);
+});
+document.getElementById('quickVoiceBtn').addEventListener('click', ()=>{
+  const q = quickPrepare(); if(!q) return;
+  goToTab('grammar');
+  vpUseAsScript(q.lang, q.text);
 });
 document.getElementById('quickLogBtn').addEventListener('click', ()=>{
   const text = document.getElementById('quickText').value.trim();
@@ -3157,7 +3190,7 @@ function vocabBenchmarkFor(lang, count){
 // uses the last 30 days once there's that much history, otherwise the whole
 // history if there's at least a week of it. A big one-day paste inflates it,
 // so the basis is always shown next to the number.
-const PACE_SCENARIOS = [5, 10, 20]; // "what if I add N new words a day"
+const PACE_SCENARIOS = [3, 5, 10]; // "what if I add N new words a day" (3 = a steady small daily intake)
 function vocabPaceFor(firstDates){
   if(!firstDates.length) return null;
   const today = todayStr();
@@ -3279,6 +3312,13 @@ function mergesHtml(w){
   return `<p class="hs-sum">Prefix merges: ${w.merges.length} form${w.merges.length === 1 ? '' : 's'} folded into their bare word — check for wrong ones</p>
     <div class="hs-repeats">${chips}${w.merges.length > 60 ? `<span class="hs-note"> …and ${w.merges.length - 60} more</span>` : ''}</div>`;
 }
+// Same language's level by practice HOURS (the Hours tab), shown next to the saved-WORDS guide so the two scales can be compared.
+function hsHoursLine(lang){
+  try {
+    const f = hrsForecast(lang);
+    return `<p class="hs-bench">By hours (Hours tab): about <strong>${f.levelNow}</strong> · ${Math.round(f.total).toLocaleString()} h counted${f.next ? ` · ${Math.round(f.next.h - f.total).toLocaleString()} h more to reach ${f.next.label} (${f.next.h.toLocaleString()} h)` : ' · top of the hours ladder reached'}</p>`;
+  } catch(e){ return ''; }
+}
 function hsDetailsHtml(boldEntries, boldUniq, words){
   const block = (lang, label) => {
     const w = words[lang];
@@ -3288,13 +3328,15 @@ function hsDetailsHtml(boldEntries, boldUniq, words){
       `<span class="hs-chip" ${lang === 'ar' ? 'dir="rtl"' : ''}>${escapeHtml(r.label)} ×${r.count}</span>`).join('');
     return `<h4>${label}</h4>
       <p class="hs-sum">${w.total.toLocaleString()} words across your phrases → <strong>${w.unique.toLocaleString()} unique</strong> (${merged.toLocaleString()} repeat${merged === 1 ? '' : 's'} merged)</p>
-      <p class="hs-bench">Guide: <strong>${b.cur.label}</strong> range${b.next ? ` · ${b.togo.toLocaleString()} more to reach ${b.next.label} (${b.next.from.toLocaleString()})` : ' · top of this scale reached'}</p>
+      <p class="hs-bench">By saved words: <strong>${b.cur.label}</strong> range${b.next ? ` · ${b.togo.toLocaleString()} more words to reach ${b.next.label} (${b.next.from.toLocaleString()} words)` : ' · top of this scale reached'}</p>
+      ${hsHoursLine(lang)}
       <div class="hs-bar"><i style="width:${Math.max(0, Math.min(100, b.pct))}%"></i></div>
       ${timelineHtml(lang, w, b)}
       <p class="hs-sum">Bolded: ${boldEntries[lang].toLocaleString()} bold entr${boldEntries[lang] === 1 ? 'y' : 'ies'} → ${boldUniq[lang].unique.toLocaleString()} unique bolded</p>
       <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>${mergesHtml(w)}`;
   };
   return block('en', 'English') + block('ar', 'Arabic')
+    + '<p class="hs-note"><strong>Why the two lines can disagree:</strong> “saved words” counts only the distinct words in phrases you put in the bank (not everything you already know), on a vocabulary scale; “hours” counts practice time, on a separate scale (English: Cambridge ranges). They are different yardsticks, so they need not match, and neither proves ability. Use the Hours tab for your overall level and the word count for your speaking-vocabulary target.</p>'
     + `<p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.en.source)}</p><p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.ar.source)}</p>`
     + '<p class="hs-src">Speaking target: English ≈3,000 word families covers ~95% of everyday spoken English, and 5,000–7,000 covers ~98% (Nation 2006; Adolphs &amp; Schmitt 2003). Arabic 3,000 is a loose estimate — no comparable coverage study. Pace ETAs assume you keep the same rate; they are projections, not promises.</p>'
     + '<p class="hs-note">Unique words = every distinct word in your phrases, bolded or not, ignoring case, punctuation, Arabic diacritics, spelling variants of alef / ya / ta marbuta and a leading “ال”. Arabic words with an attached و / ف / ب / ل / ك prefix are merged into the bare word when that word (3+ letters) is already in your bank — the same rules the add-phrase “new word” check uses. Plurals and verb forms still count separately. The bolded line above uses the simpler cleanup without prefix merging.</p>';
