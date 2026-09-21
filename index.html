@@ -8678,37 +8678,132 @@ const HRS_FIND = {
   }
 };
 const HRS_SITES = { en: { label: 'UN press', site: 'press.un.org' }, ar: { label: 'Saudi Press Agency', site: 'spa.gov.sa' } };
+// ---------- Level-aware suggestions (batch 1: data + band helper) ----------
+// Bands follow the level the app already works out from hours: A1–A2 → 'a', B1 → 'b1', B2 → 'b2', C1–C2 → 'c'.
+// Research basis: input works best when about 95–98% of the words are already known, so beginners get everyday
+// topics, B1 gets simple economics, B2+ gets news/policy. Arabic suggestions are Modern Standard Arabic (MSA) throughout.
+// The 'c' band reuses the original lists in HRS_FIND above.
+const HRS_BANDS = ['a', 'b1', 'b2', 'c'];
+const HRS_BAND_LABEL = { a: 'A1–A2', b1: 'B1', b2: 'B2', c: 'C1–C2' };
+const HRS_FIND_LV = {
+  en: {
+    a: {
+      listening: ['English listening for beginners slow with subtitles', 'simple English conversation A1 A2 with transcript', 'beginner English introducing yourself and family', 'English at the shop and restaurant for beginners', 'easy English short stories slow listening'],
+      reading: ['graded reader A1 short story English', 'easy English reading for beginners short texts', 'A2 English reading practice everyday life', 'simple English news for beginners text', 'beginner English text about family and work'],
+      dictation: ['English dictation for beginners with audio and text', 'slow English listening with transcript A2', 'simple dialogues with transcript beginner English', 'easy English podcast with transcript for beginners'],
+      writing: ['simple email to a friend example beginner English', 'how to write about yourself beginner English', 'short message templates for beginners English'],
+      register: ['polite phrases in English for beginners', 'formal and informal greetings in English', 'how to ask politely in English'],
+      glossary: ['basic English vocabulary family food shopping', 'A1 A2 English word list everyday', 'English words for work and office for beginners']
+    },
+    b1: {
+      listening: ['learning english news slow speed', 'economics explained simply English video captions', 'what is inflation explained simply', 'personal budget basics English listening', '6 minute english economy'],
+      reading: ['simple English news article about prices', 'B1 English reading economy article', 'what is a central bank simple explanation', 'easy English article about jobs and salaries', 'simplified news English intermediate'],
+      dictation: ['6 minute english transcript economy', 'learning english news transcript intermediate', 'simple economics podcast with transcript', 'business english listening B1 transcript'],
+      writing: ['simple formal email example B1 English', 'request information email example English', 'short professional apology email example'],
+      register: ['formal versus informal English business phrases', 'polite ways to disagree in a meeting', 'email openings and closings professional English'],
+      glossary: ['basic economics vocabulary list English', 'banking and finance vocabulary B1', 'inflation interest rate GDP simple definitions']
+    },
+    b2: {
+      listening: ['business news 5 minute bulletin', 'economic news explained interview captions', 'central bank rate decision explained video captions', 'interview with an economist full video captions', 'public policy explainer video'],
+      reading: ['economics news article opinion', 'government budget policy explainer article', 'central bank statement summary', 'trade policy news analysis', 'company annual report summary'],
+      dictation: ['business news bulletin transcript', 'podcast episode with full transcript economy', 'TED talk transcript economics', 'press conference economy transcript'],
+      writing: ['formal letter to a ministry example', 'business email templates professional', 'minutes of meeting sample'],
+      register: ['formal versus informal English business phrases', 'diplomatic language phrases examples', 'polite ways to disagree in a meeting'],
+      glossary: ['glossary of economics terms official', 'trade and economics terminology', 'public finance vocabulary glossary']
+    }
+  },
+  ar: {
+    a: {
+      listening: ['محادثات يومية بالعربية الفصحى للمبتدئين', 'تعلم العربية للمبتدئين حوار قصير مع نص', 'العربية للمبتدئين التعارف والأسرة والتسوق', 'الأرقام والأسعار في السوق بالعربية للمبتدئين', 'قصة قصيرة سهلة بالعربية مع الصوت'],
+      reading: ['قصص قصيرة للمبتدئين بالعربية مع التشكيل', 'نصوص قراءة سهلة للمبتدئين بالتشكيل', 'قصة للأطفال بالعربية الفصحى المبسطة', 'قراءة عربية للمبتدئين المستوى الأول', 'نص عن الأسرة والبيت للمبتدئين'],
+      dictation: ['إملاء للمبتدئين بالعربية مع النص والصوت', 'حوار قصير بالعربية للمبتدئين نص مفرغ', 'قصة قصيرة بالعربية الفصحى مع النص والصوت', 'محادثة في المطعم بالعربية الفصحى مع النص'],
+      writing: ['نموذج رسالة قصيرة إلى صديق بالعربية للمبتدئين', 'كيف أعرّف بنفسي بالعربية كتابة', 'نموذج بطاقة تهنئة بالعربية'],
+      register: ['تحيات ومجاملات يومية بالعربية الفصحى', 'عبارات الشكر والمجاملة بالعربية الفصحى', 'كيف أطلب بأدب بالعربية'],
+      glossary: ['مفردات الأسرة والبيت بالعربية', 'مفردات الطعام والتسوق بالعربية', 'مفردات العمل اليومي للمبتدئين']
+    },
+    b1: {
+      listening: ['أخبار مبسطة بالعربية الفصحى بطيئة', 'شرح مبسط للاقتصاد بالعربية', 'ما هو التضخم شرح بسيط', 'الميزانية الشخصية شرح بسيط بالعربية', 'الأسعار والرواتب أخبار مبسطة'],
+      reading: ['اقتصاد مبسط مقال قصير بالعربية', 'مقال قصير عن الأسعار والتضخم', 'أخبار مبسطة عن الاقتصاد بالعربية', 'ما هو البنك المركزي مقال بسيط', 'مقال سهل عن الوظائف والرواتب'],
+      dictation: ['أخبار قصيرة بالعربية الفصحى نص مفرغ', 'نشرة اقتصادية قصيرة نص وصوت', 'شرح بسيط عن العرض والطلب نص مفرغ', 'بودكاست عربي مبسط مع نص مفرغ'],
+      writing: ['نموذج بريد إلكتروني رسمي قصير بالعربية', 'طلب معلومات من شركة نموذج رسالة', 'نموذج رسالة اعتذار رسمية قصيرة'],
+      register: ['الفرق بين الرسمي وغير الرسمي في العربية المكتوبة', 'عبارات افتتاح الرسائل الرسمية بالعربية', 'صيغ الشكر والاعتذار الرسمية'],
+      glossary: ['مصطلحات اقتصادية أساسية بالعربية', 'مفردات البنوك والمال بالعربية', 'مصطلحات الأسعار والتضخم والدخل']
+    },
+    b2: {
+      listening: ['نشرة أخبار اقتصادية بالعربية الفصحى', 'مقابلة مع خبير اقتصادي حوار', 'شرح السياسة العامة بالعربية فيديو', 'برنامج اقتصادي حواري بالفصحى', 'تقرير عن السياسة المالية والنقدية'],
+      reading: ['مقال رأي اقتصادي', 'ملخص سياسة عامة وزارة الاقتصاد', 'تقرير اقتصادي مبسط عن الميزانية', 'أخبار الاقتصاد والتجارة اليوم', 'مقال عن السياسة النقدية'],
+      dictation: ['نشرة الأخبار الاقتصادية نص وصوت', 'بودكاست اقتصادي عربي مع نص مفرغ', 'مقابلة مع خبير اقتصادي نص مفرغ', 'تقرير إخباري اقتصادي نص كامل'],
+      writing: ['نموذج خطاب رسمي إلى وزارة', 'صيغ المراسلات الرسمية', 'نموذج محضر اجتماع'],
+      register: ['الفرق بين العامية والفصحى في الاجتماعات الرسمية', 'عبارات دبلوماسية رسمية', 'عبارات الاعتذار الرسمي'],
+      glossary: ['مصطلحات اقتصادية رسمية', 'مصطلحات السياسة المالية والنقدية', 'مصطلحات إدارية وقانونية']
+    }
+  }
+};
+// Site button per band (Google "site:" search). C1–C2 keeps the original HRS_SITES entry.
+const HRS_SITES_LV = {
+  en: { a: { label: 'VOA Learning English', site: 'learningenglish.voanews.com' }, b1: { label: 'BBC Learning English', site: 'bbc.co.uk/learningenglish' }, b2: { label: 'BBC News', site: 'bbc.co.uk/news' } },
+  ar: { a: { label: 'Al Jazeera Learning', site: 'learning.aljazeera.net' }, b1: { label: 'Al Jazeera Learning', site: 'learning.aljazeera.net' }, b2: { label: 'Al Jazeera', site: 'aljazeera.net' } }
+};
+// Which band applies now: the level reached by hours (start + logged), per language.
+let hrsBandShift = {};   // per language: -1 / 0 / +1 band, set by "Too hard" / "Too easy" (kept until the page is reloaded)
+function hrsBand(lang){
+  let lv = '';
+  try { lv = hrsForecast(lang).levelNow || ''; } catch(e) {}
+  const auto = { A1: 'a', A2: 'a', B1: 'b1', B2: 'b2', C1: 'c', C2: 'c' }[lv] || 'a';   // 'below A1' → 'a'
+  const i = Math.max(0, Math.min(HRS_BANDS.length - 1, HRS_BANDS.indexOf(auto) + (hrsBandShift[lang] || 0)));
+  return HRS_BANDS[i];
+}
+// The list for a language + activity kind + band; falls back to the original lists if anything is missing.
+function hrsFindList(lang, kind, band){
+  const lv = HRS_FIND_LV[lang] && HRS_FIND_LV[lang][band];
+  const own = lv && lv[kind];
+  if(own && own.length) return own;
+  if(band === 'c' || !lv) return HRS_FIND[lang][kind] || HRS_FIND[lang].listening;
+  return lv.listening || HRS_FIND[lang].listening;
+}
+function hrsFindSite(lang, band){
+  return (HRS_SITES_LV[lang] && HRS_SITES_LV[lang][band]) || HRS_SITES[lang];
+}
 let hrsFindIdx = {};
 function hrsFindKind(act){
   return { dictation: 'dictation', reading: 'reading', readsay: 'reading', writing: 'writing', register: 'register', roleplay: 'register', glossary: 'glossary' }[act] || 'listening';
 }
 function hrsFindHtml(kind, lang){
-  const list = HRS_FIND[lang][kind] || HRS_FIND[lang].listening, i = hrsFindIdx[lang + kind] || 0;
-  return `<div class="hrs-find" data-fkind="${kind}" data-flang="${lang}">
-    <label class="gap-mini">Find material (opens a web search in a new tab — edit the search first if you like)</label>
+  const band = hrsBand(lang), list = hrsFindList(lang, kind, band), i = hrsFindIdx[lang + kind + band] || 0, site = hrsFindSite(lang, band);
+  return `<div class="hrs-find" data-fkind="${kind}" data-flang="${lang}" data-fband="${band}">
+    <label class="gap-mini">Find material for your level (<strong>${HRS_BAND_LABEL[band]}</strong>) — opens a web search in a new tab, edit the search first if you like</label>
     <input type="text" data-find="q" value="${escapeHtml(list[i % list.length])}" ${lang === 'ar' ? 'dir="auto"' : ''}>
-    <div class="hrs-chips"><button class="ghost" type="button" data-findact="google">Google</button><button class="ghost" type="button" data-findact="youtube">YouTube</button><button class="ghost" type="button" data-findact="news">News</button><button class="ghost" type="button" data-findact="site">${HRS_SITES[lang].label}</button><button class="ghost" type="button" data-findact="idea">↻ Another idea</button></div>
-    <div class="gap-mini">${kind === 'dictation' ? 'For dictation choose something that comes with a transcript or captions you can copy.' : kind === 'reading' ? 'For timed reading pick a text you can copy and paste in.' : 'Links only — the app can’t check what the results contain.'}</div></div>`;
+    <div class="hrs-chips"><button class="ghost" type="button" data-findact="google">Google</button><button class="ghost" type="button" data-findact="youtube">YouTube</button><button class="ghost" type="button" data-findact="news">News</button><button class="ghost" type="button" data-findact="site">${site.label}</button><button class="ghost" type="button" data-findact="idea">↻ Another idea</button></div>
+    <div class="gap-mini">${kind === 'dictation' ? 'For dictation choose something that comes with a transcript or captions you can copy.' : kind === 'reading' ? 'For timed reading pick a text you can copy and paste in.' : 'Links only — the app can’t check what the results contain.'}</div>
+    <div class="gap-mini" style="margin-top:4px;"><strong>Rule of thumb:</strong> if you don’t know about 1 word in 20, it’s too hard — step down. Aim to know at least 19 of every 20.${hrsBandShift[lang] ? ' <em>(Adjusted by hand: ' + (hrsBandShift[lang] > 0 ? 'one band up' : 'one band down') + '.)</em>' : ''}</div>
+    <div class="hrs-chips"><button class="ghost" type="button" data-findact="easier"${HRS_BANDS.indexOf(band) === 0 ? ' disabled' : ''}>↓ Too hard — easier</button><button class="ghost" type="button" data-findact="harder"${HRS_BANDS.indexOf(band) === HRS_BANDS.length - 1 ? ' disabled' : ''}>↑ Too easy — harder</button>${hrsBandShift[lang] ? '<button class="ghost" type="button" data-findact="auto">Back to my level</button>' : ''}</div></div>`;
 }
-function hrsFindUrl(act, q, lang){
+function hrsFindUrl(act, q, lang, band){
   const e = encodeURIComponent;
   if(act === 'youtube') return 'https://www.youtube.com/results?search_query=' + e(q);
   if(act === 'news') return 'https://news.google.com/search?q=' + e(q);
-  if(act === 'site') return 'https://www.google.com/search?q=' + e(q + ' site:' + HRS_SITES[lang].site) + '&hl=' + lang;
+  if(act === 'site') return 'https://www.google.com/search?q=' + e(q + ' site:' + hrsFindSite(lang, band).site) + '&hl=' + lang;
   return 'https://www.google.com/search?q=' + e(q) + '&hl=' + lang;
 }
 document.getElementById('hrsRoot').addEventListener('click', (e) => {
   const b = e.target.closest('[data-findact]');
   if(!b) return;
-  const box = b.closest('.hrs-find'), input = box.querySelector('[data-find="q"]'), lang = box.dataset.flang, kind = box.dataset.fkind;
+  const box = b.closest('.hrs-find'), input = box.querySelector('[data-find="q"]'), lang = box.dataset.flang, kind = box.dataset.fkind, band = box.dataset.fband || hrsBand(lang);
+  if(['easier', 'harder', 'auto'].includes(b.dataset.findact)){
+    const step = b.dataset.findact === 'easier' ? -1 : b.dataset.findact === 'harder' ? 1 : null;
+    const auto = HRS_BANDS.indexOf(band) - (hrsBandShift[lang] || 0);      // band the hours alone would give
+    const want = step === null ? 0 : (hrsBandShift[lang] || 0) + step;
+    hrsBandShift[lang] = Math.max(-auto, Math.min(HRS_BANDS.length - 1 - auto, want));
+    box.outerHTML = hrsFindHtml(kind, lang); return;
+  }
   if(b.dataset.findact === 'idea'){
-    const list = HRS_FIND[lang][kind] || HRS_FIND[lang].listening;
-    hrsFindIdx[lang + kind] = ((hrsFindIdx[lang + kind] || 0) + 1) % list.length;
-    input.value = list[hrsFindIdx[lang + kind]]; return;
+    const list = hrsFindList(lang, kind, band), key = lang + kind + band;
+    hrsFindIdx[key] = ((hrsFindIdx[key] || 0) + 1) % list.length;
+    input.value = list[hrsFindIdx[key]]; return;
   }
   const q = (input.value || '').trim();
   if(!q){ gapToastMsg('Type something to search for.'); return; }
-  window.open(hrsFindUrl(b.dataset.findact, q, lang), '_blank', 'noopener');
+  window.open(hrsFindUrl(b.dataset.findact, q, lang, band), '_blank', 'noopener');
 });
 document.getElementById('hrsRoot').addEventListener('change', (e) => {
   if(e.target.id !== 'hrsAct') return;
