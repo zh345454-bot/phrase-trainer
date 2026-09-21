@@ -8284,11 +8284,21 @@ function renderHours(){
   const { l: lad } = hrsLadder(lang);
   const pct = fc.target > 0 ? Math.min(100, Math.round(fc.doneH / fc.target * 100)) : 100, estPct = 0;
   html += `<div class="hrs-card"><h3>Progress and levels (${LANG_NAMES[lang]})</h3>
-    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-      <div style="flex:1;min-width:150px;"><label class="gap-mini">My level when I started logging</label>
+    <style>
+      .hrs-setup{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end; margin:8px 0 14px; padding:12px; background:#FFFDF7; border:1px solid var(--line); }
+      .hrs-setup .hs-field{ display:flex; flex-direction:column; gap:5px; min-width:0; }
+      .hrs-setup .hs-wide{ grid-column:1 / -1; }
+      .hrs-setup label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft); line-height:1.3; }
+      .hrs-setup select, .hrs-setup input{ width:100%; min-width:0; height:42px; padding:0 10px; font-family:'Inter',sans-serif; font-size:15px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:0; }
+      .hrs-setup select:focus, .hrs-setup input:focus{ outline:2px solid var(--brass); outline-offset:-1px; border-color:var(--brass); }
+      .hrs-setup .hs-goal select{ font-weight:700; color:var(--teal); border-color:var(--teal); }
+      @media (min-width:640px){ .hrs-setup{ grid-template-columns:2fr 1.4fr 1fr; } .hrs-setup .hs-wide{ grid-column:auto; } }
+    </style>
+    <div class="hrs-setup">
+      <div class="hs-field hs-wide"><label>My level when I started logging</label>
         <select data-hrsact="startlevel"><option value="">— set from a level —</option>${lad.steps.map(x => `<option value="${x.label}">${x.label} (≈${x.h} h)</option>`).join('')}</select></div>
-      <div style="flex:1;min-width:130px;"><label class="gap-mini">…or my starting hours from zero</label><input type="number" min="0" step="10" data-hrsact="start" value="${lad.start}"></div>
-      <div style="flex:1;min-width:120px;"><label class="gap-mini">Goal level</label><select data-hrsact="goal">${lad.steps.map(x => `<option value="${x.label}"${x.label === lad.goal ? ' selected' : ''}>${x.label}</option>`).join('')}</select></div></div>
+      <div class="hs-field"><label>…or my starting hours</label><input type="number" inputmode="numeric" min="0" step="10" data-hrsact="start" value="${lad.start}"></div>
+      <div class="hs-field hs-goal"><label>Goal level</label><select data-hrsact="goal">${lad.steps.map(x => `<option value="${x.label}"${x.label === lad.goal ? ' selected' : ''}>${x.label}</option>`).join('')}</select></div></div>
     <div class="hrs-bar"><i style="width:${pct}%"></i></div>
     <div><strong>${fc.doneH.toFixed(1)} h</strong> logged since you started (timed + entered) of ${Math.round(fc.target)} h to the goal — <strong>${pct}%</strong>. By hours you are at about <strong>${fc.levelNow}</strong>. <span class="gap-mini">Extra ≈ ${(estAll.total / 60).toFixed(1)} h estimated from other activity, not counted.</span></div>
     <p class="gap-mini" style="margin:6px 0 0;">${fc.text}</p>
