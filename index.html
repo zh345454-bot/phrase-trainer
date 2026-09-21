@@ -1343,7 +1343,7 @@ async function loadState(){
   if(!Array.isArray(state.hours.sessions)) state.hours.sessions = [];
   if(!state.hours.remote) state.hours.remote = {};      // other devices' daily minutes, from the Sheet
   if(!state.hours.selfSeen) state.hours.selfSeen = {};  // (date|lang) keys this device has written itself
-  if(!state.hours.targets) state.hours.targets = { en: { hours: 500 }, ar: { hours: 1000 } };
+  if(!state.hours.ladder) state.hours.ladder = hrsDefaultLadder();
   if(!state.hours.inputTarget) state.hours.inputTarget = 45;
   if(!state.hours.deviceId){ state.hours.deviceId = 'd' + Math.random().toString(36).slice(2, 9); lsSet('hours', state.hours); }
   state.spk = lsGet('speaking', { patterns: [], cycles: [] });
@@ -7997,8 +7997,8 @@ function renderDashboard(){
   const gl = dashGapDue(lang);
   const nowTotal = getDueReviews().length + gl.total;
   const t4 = dashTile('Backlog', `<div class="val">${nowTotal}</div>`, '↓ watch the direction, not the day', `Bank due ${getDueReviews().length} (shared by both languages) + ${LANG_NAMES[lang]} gaps due ${gl.total}${gl.overdue3 ? ' (' + gl.overdue3 + ' overdue over 3 days)' : ''}${bt.pastTotal !== null ? '<br>7 days ago (bank + both languages\u2019 gaps): ' + bt.pastTotal : '<br>Trend needs a week of history.'}`, '');
-  const hf = hrsForecast(lang), hpct = Math.min(100, Math.round(hf.doneH / hf.target * 100));
-  const t5 = dashTile('Hours toward target', `<div class="val">${hf.doneH.toFixed(0)} / ${hf.target} h</div>`, '↑ only timed or entered hours count', `${hpct}% · ${hf.text.replace(/<[^>]+>/g, '')}`, goBtn('Open Hours', 'hours', lang));
+  const hf = hrsForecast(lang), hpct = hf.target > 0 ? Math.min(100, Math.round(hf.doneH / hf.target * 100)) : 100;
+  const t5 = dashTile('Hours toward goal', `<div class="val">${hf.doneH.toFixed(0)} / ${Math.round(hf.target)} h</div>`, '↑ only timed or entered hours count', `${hpct}% to ${hf.goalLabel} · by hours about ${hf.levelNow}${hf.next ? ' · next ' + hf.next.label + ' in ~' + Math.round(hf.next.h - hf.total) + ' h' : ''}`, goBtn('Open Hours', 'hours', lang));
   html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}${t5}</div>`;
 
   // ---- corner ----
@@ -8042,6 +8042,17 @@ document.getElementById('dashRoot').addEventListener('click', (e) => {
 // the app merely ESTIMATES from other activity are shown separately and never
 // mixed in, so the total cannot be inflated.
 // =====================================================================
+// Hour LEVELS per language: cumulative guided hours from zero for each level. English uses the
+// midpoints of Cambridge English's published ranges (A2 180–200, B1 350–400, B2 500–600, C1 700–800,
+// C2 1,000–1,200). Arabic has no such published ladder, so it uses the same pattern scaled so that
+// C1 matches the US Foreign Service Institute's ~2,200 class hours for professional working level —
+// MY estimate, not a published Arabic scale. Every number is editable in the Hours tab.
+function hrsDefaultLadder(){
+  return {
+    en: { start: 550, goal: 'C2', steps: [{ label: 'A1', h: 95 }, { label: 'A2', h: 190 }, { label: 'B1', h: 375 }, { label: 'B2', h: 550 }, { label: 'C1', h: 750 }, { label: 'C2', h: 1100 }] },
+    ar: { start: 1100, goal: 'C1', steps: [{ label: 'A1', h: 280 }, { label: 'A2', h: 560 }, { label: 'B1', h: 1100 }, { label: 'B2', h: 1610 }, { label: 'C1', h: 2200 }, { label: 'C2', h: 3230 }] }
+  };
+}
 const HRS_SKILLS = ['listening', 'reading', 'speaking', 'writing', 'study'];
 const HRS_SKILL_LABELS = { listening: 'Listening', reading: 'Reading', speaking: 'Speaking', writing: 'Writing', study: 'Study / review' };
 const HRS_REC_MIX = { listening: 0.33, reading: 0.21, speaking: 0.21, writing: 0.08, study: 0.17 };
@@ -8122,19 +8133,37 @@ function hrsEstimated(lang, from, to){
   spkCycles(lang).forEach(c => ['cold', 'rep1', 'rep2', 'transfer'].forEach(k => { const r = c[k]; if(r && r.date >= from && r.date <= to) speaking += (r.secs || 0) / 60; }));
   return { study, speaking, total: study + speaking };
 }
+function hrsLadder(lang){
+  const l = state.hours.ladder[lang];
+  const goalStep = l.steps.find(x => x.label === l.goal) || l.steps[l.steps.length - 1];
+  return { l, goalH: goalStep.h, goalLabel: goalStep.label };
+}
+// Where the hours put you, what the next level needs, and a pace-based range for both.
 function hrsForecast(lang){
-  const today = todayStr(), target = state.hours.targets[lang].hours;
+  const today = todayStr(), { l, goalH, goalLabel } = hrsLadder(lang);
   const all = hrsRange(lang, '0000-00-00', today), doneH = all.total / 60;
+  const total = l.start + doneH, target = Math.max(0, goalH - l.start);
+  const reachedSteps = l.steps.filter(x => x.h <= total), levelNow = reachedSteps.length ? reachedSteps[reachedSteps.length - 1].label : 'below ' + l.steps[0].label;
+  const nextStep = l.steps.find(x => x.h > total) || null;
+  const info = { doneH, target, remaining: Math.max(0, goalH - total), total, levelNow, next: nextStep, goalLabel, goalH, text: '' };
   const dates = hrsDates(lang);
-  const info = { doneH, target, remaining: Math.max(0, target - doneH), text: '' };
-  if(doneH >= target){ info.text = 'Target reached in logged hours — set a higher one, and check the level with an outside test.'; return info; }
-  if(!dates.length || daysBetween(dates[0], today) < 13){ info.text = 'Not enough history to forecast yet — log for two weeks first.'; return info; }
-  const weeks = [0, 1, 2, 3].map(i => hrsRange(lang, addDays(today, -6 - 7 * i), addDays(today, -7 * i)).total / 60);
-  const avg = weeks.reduce((a, b) => a + b, 0) / 4, lo = Math.max(Math.min(...weeks), avg * 0.6), hi = Math.max(...weeks, avg * 1.2);
-  if(avg < 0.5){ info.text = 'Your logged pace over the last 4 weeks is too low to forecast.'; return info; }
-  const wk = h => Math.ceil(info.remaining / h);
-  info.perWeek = avg;
-  info.text = `At your last-4-week pace of about ${avg.toFixed(1)} h/week: roughly <strong>${wk(hi)}–${wk(lo)} weeks</strong> to go (${Math.round(wk(hi) / 4.3)}–${Math.round(wk(lo) / 4.3)} months). A rough range, not a promise.`;
+  let pace = null;
+  if(dates.length && daysBetween(dates[0], today) >= 13){
+    const weeks = [0, 1, 2, 3].map(i => hrsRange(lang, addDays(today, -6 - 7 * i), addDays(today, -7 * i)).total / 60);
+    const avg = weeks.reduce((a, b) => a + b, 0) / 4;
+    if(avg >= 0.5) pace = { avg, lo: Math.max(Math.min(...weeks), avg * 0.6), hi: Math.max(...weeks, avg * 1.2) };
+  }
+  info.perWeek = pace ? pace.avg : 0;
+  const range = h => pace ? `roughly <strong>${Math.ceil(h / pace.hi)}–${Math.ceil(h / pace.lo)} weeks</strong> (${Math.round(h / pace.hi / 4.3)}–${Math.round(h / pace.lo / 4.3)} months)` : null;
+  const parts = [];
+  if(total >= goalH) parts.push(`Goal (${goalLabel}) reached by hours — set a higher goal, and confirm the level with an outside test.`);
+  else {
+    if(nextStep) parts.push(`Next level <strong>${nextStep.label}</strong> is about <strong>${Math.round(nextStep.h - total)} h</strong> away${pace ? ' — ' + range(nextStep.h - total) : ''}.`);
+    if(!nextStep || nextStep.label !== goalLabel) parts.push(`Goal <strong>${goalLabel}</strong>: about <strong>${Math.round(goalH - total)} h</strong> to go${pace ? ' — ' + range(goalH - total) : ''}.`);
+  }
+  if(!pace) parts.push(dates.length && daysBetween(dates[0], today) >= 13 ? 'Your logged pace over the last 4 weeks is too low to forecast.' : 'Not enough history to forecast a date yet — log for two weeks first.');
+  else parts.push(`Pace: about ${pace.avg.toFixed(1)} h/week over the last 4 weeks. A rough range, not a promise.`);
+  info.text = parts.join(' ');
   return info;
 }
 
@@ -8226,7 +8255,7 @@ function renderHours(){
   const root = document.getElementById('hrsRoot');
   if(!root) return;
   const lang = uiLang(), today = todayStr(), t = hrsTimer();
-  const fc = hrsForecast(lang), target = state.hours.targets[lang].hours;
+  const fc = hrsForecast(lang);
   const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
   let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
     <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
@@ -8251,13 +8280,21 @@ function renderHours(){
   html += `<div class="hrs-card"><h3>Today (${LANG_NAMES[lang]})</h3>
     <div class="hrs-grid">${HRS_SKILLS.map(k => `<div><span class="gap-mini">${HRS_SKILL_LABELS[k]}</span><div style="font-size:18px;font-weight:700;">${Math.round(day[k])} min</div></div>`).join('')}</div>
     <div class="gap-mini" style="margin-top:6px;">Logged today: <strong>${Math.round(day.total)} min</strong>${estDay.total ? ` · plus about ${Math.round(estDay.total)} min estimated from other activity (not counted)` : ''}. Input today (listening + reading): <strong>${Math.round(day.listening + day.reading)}/${state.hours.inputTarget} min</strong>.</div></div>`;
-  // progress
-  const pct = Math.min(100, Math.round(fc.doneH / target * 100)), estPct = Math.min(100 - pct, Math.round(estAll.total / 60 / target * 100));
-  html += `<div class="hrs-card"><h3>Progress toward target (${LANG_NAMES[lang]})</h3>
-    <div class="gap-mini">Target: <input type="number" min="50" step="50" data-hrsact="target" value="${target}" style="width:90px;display:inline-block;"> hours (rough guide for reaching professional working level from your starting point — edit it)</div>
+  // progress + levels ladder
+  const { l: lad } = hrsLadder(lang);
+  const pct = fc.target > 0 ? Math.min(100, Math.round(fc.doneH / fc.target * 100)) : 100, estPct = 0;
+  html += `<div class="hrs-card"><h3>Progress and levels (${LANG_NAMES[lang]})</h3>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:150px;"><label class="gap-mini">My level when I started logging</label>
+        <select data-hrsact="startlevel"><option value="">— set from a level —</option>${lad.steps.map(x => `<option value="${x.label}">${x.label} (≈${x.h} h)</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:130px;"><label class="gap-mini">…or my starting hours from zero</label><input type="number" min="0" step="10" data-hrsact="start" value="${lad.start}"></div>
+      <div style="flex:1;min-width:120px;"><label class="gap-mini">Goal level</label><select data-hrsact="goal">${lad.steps.map(x => `<option value="${x.label}"${x.label === lad.goal ? ' selected' : ''}>${x.label}</option>`).join('')}</select></div></div>
     <div class="hrs-bar"><i style="width:${pct}%"></i></div>
-    <div><strong>${fc.doneH.toFixed(1)} h</strong> logged (timed + entered) of ${target} h — <strong>${pct}%</strong>. <span class="gap-mini">Extra ≈ ${(estAll.total / 60).toFixed(1)} h estimated from other activity, not counted.</span></div>
-    <p class="gap-mini" style="margin:6px 0 0;">${fc.text}</p></div>`;
+    <div><strong>${fc.doneH.toFixed(1)} h</strong> logged since you started (timed + entered) of ${Math.round(fc.target)} h to the goal — <strong>${pct}%</strong>. By hours you are at about <strong>${fc.levelNow}</strong>. <span class="gap-mini">Extra ≈ ${(estAll.total / 60).toFixed(1)} h estimated from other activity, not counted.</span></div>
+    <p class="gap-mini" style="margin:6px 0 0;">${fc.text}</p>
+    <table class="gap-table" style="margin-top:8px;"><tr><th>Level</th><th>Hours from zero</th><th>Still to go</th><th></th></tr>
+    ${lad.steps.map((x, i) => { const left = x.h - fc.total; return `<tr><td>${x.label}${x.label === lad.goal ? ' <strong>(goal)</strong>' : ''}</td><td><input type="number" min="0" step="10" data-hrsact="stephours" data-idx="${i}" value="${x.h}" style="width:80px;"></td><td>${left <= 0 ? '—' : Math.round(left) + ' h'}</td><td>${left <= 0 ? '✓ reached' : (fc.next && fc.next.label === x.label ? '← next' : '')}</td></tr>`; }).join('')}</table>
+    <div class="spk-caution" style="margin-top:8px;"><strong>How to read this.</strong> Levels by hours are typical <em>guided learning hours from zero</em>, so your level here is an estimate from your starting point plus logged hours — your real level can differ a lot. ${lang === 'en' ? 'English hours are the midpoints of Cambridge English’s published ranges.' : 'The Arabic ladder is <strong>my estimate</strong>: the English pattern scaled so C1 matches the ~2,200 class hours the US Foreign Service Institute gives for professional working level (for native English speakers). No published Arabic hour ladder exists.'} Confirm real progress with an outside test and a human check.</div></div>`;
   // by skill
   const tot28 = w28.total;
   html += `<div class="hrs-card"><h3>Your mix, last 28 days</h3><table class="gap-table"><tr><th>Skill</th><th>Hours</th><th>Your share</th><th>Aim for about</th></tr>
@@ -8291,11 +8328,11 @@ document.getElementById('hrsRoot').addEventListener('click', async (e) => {
   }
 });
 document.getElementById('hrsRoot').addEventListener('change', (e) => {
-  if(e.target.dataset.hrsact === 'target'){
-    const h = parseInt(e.target.value, 10);
-    if(h >= 50){ state.hours.targets[uiLang()].hours = h; hrsSave(); renderHours(); }
-  }
-  if(e.target.dataset.hf === 'activity'){ /* skill picker only matters for "Other" */ }
+  const a = e.target.dataset.hrsact, lad = state.hours.ladder[uiLang()];
+  if(a === 'startlevel' && e.target.value){ const st = lad.steps.find(x => x.label === e.target.value); if(st){ lad.start = st.h; hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); } }
+  if(a === 'start'){ const h = parseFloat(e.target.value); if(h >= 0){ lad.start = h; hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); } }
+  if(a === 'goal'){ lad.goal = e.target.value; hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
+  if(a === 'stephours'){ const h = parseFloat(e.target.value), i = parseInt(e.target.dataset.idx, 10); if(h >= 0 && lad.steps[i]){ lad.steps[i].h = h; hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); } }
 });
 
 
