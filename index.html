@@ -3669,7 +3669,8 @@ async function coreBackupBank(){
           station: p.srs.station, reps: p.srs.reps,
           nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
           hotLayerDone: (p.hotLayerDone || []).join(';'),
-          starred: p.starred ? 'Yes' : '', starredAt: p.starredAt || ''
+          starred: p.starred ? 'Yes' : '', starredAt: p.starredAt || '',
+          applied: p.applied ? 'Yes' : '', appliedAt: p.appliedAt || ''
         };
       }) })
     });
@@ -3776,6 +3777,8 @@ async function coreRestoreBank(){
       hotLayerDone: p.hotLayerDone ? String(p.hotLayerDone).split(';').filter(Boolean).map(Number) : [],
       starred: p.starred === 'Yes' || p.starred === true,
       starredAt: p.starredAt || null,
+      applied: p.applied === 'Yes' || p.applied === true,
+      appliedAt: p.appliedAt || null,
       srs: {
         station: parseInt(p.station, 10) || 1,
         reps: parseInt(p.reps, 10) || 0,
