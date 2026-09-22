@@ -1464,13 +1464,22 @@ function speak(text, lang){
     return;
   }
   const synth = window.speechSynthesis;
-  synth.cancel();
-  if(synth.paused) synth.resume();
+  // iOS Safari (and some Android WebViews) only allow speak() to fire when it is called
+  // SYNCHRONOUSLY inside the click handler that started it — a setTimeout/await in between
+  // silently drops it, which is very likely why "Speak" looked unresponsive. So cancel() and
+  // speak() below happen back-to-back, no delay, still inside the original click.
   const utter = new SpeechSynthesisUtterance(text);
   applyTtsVoice(utter, lang);
   utter.rate = 0.92;
-  window.__lastUtter = utter;                    // keep a reference so the browser can't garbage-collect it mid-speech
-  setTimeout(() => synth.speak(utter), 60);      // some Android browsers drop an utterance queued in the same tick as cancel()
+  window.__lastUtter = utter;   // keep a reference so the browser can't garbage-collect it mid-speech
+  synth.cancel();
+  if(synth.paused) synth.resume();
+  synth.speak(utter);
+  // Fallback for the Android engines that DO drop an utterance queued in the same tick as
+  // cancel(): if nothing actually starts within half a second, try once more with a delay.
+  const started = { yes: false };
+  utter.onstart = () => { started.yes = true; };
+  setTimeout(() => { if(!started.yes && !synth.speaking) synth.speak(utter); }, 500);
 }
 
 // Reads a long passage (e.g. a 60-second model text) by queueing it sentence
@@ -2085,6 +2094,7 @@ function phraseCardHtml(p, opts){
   const showEdit = opts && opts.showEdit;
   const showStarredDays = opts && opts.showStarredDays && p.starred;
   const showApplied = opts && opts.showApplied;
+  const showSentenceBuild = opts && opts.showSentenceBuild && (extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length);
   const starredLine = showStarredDays ? `<div class="due-meta">${escapeHtml(daysStarredLabel(p.starredAt))}</div>` : '';
   return `
     <div class="phrase-texts">
@@ -2101,6 +2111,7 @@ function phraseCardHtml(p, opts){
       ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
       ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
       ${showApplied ? `<button class="ghost${p.applied ? ' starred' : ''}" data-apply="${p.id}" title="Mark as used in real life, not just reviewed">${p.applied ? '✓ Applied' : 'Mark applied'}</button>` : ''}
+      ${showSentenceBuild ? `<button class="ghost" data-sbcard="${p.id}" title="Practice making a brand-new sentence with the bolded word in this phrase">🧩 Build a sentence</button>` : ''}
       ${showEdit ? `<button class="ghost" data-edit-phrase="${p.id}" title="Edit text, incl. bold">✎ Edit</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
@@ -2429,11 +2440,11 @@ function renderPracticeList(items, boldFilter){
       pCard.className = 'bold-row-wrap';
       pCard.innerHTML = boldRowHtml(p, boldFilter, {
         expandedIds: practiceExpandedIds, scope: 'practice',
-        cardOpts: { showLog: true, showMeta: true, showQuickReview: true, showEdit: true }
+        cardOpts: { showLog: true, showMeta: true, showQuickReview: true, showEdit: true, showSentenceBuild: true }
       });
     } else {
       pCard.className = 'phrase-card';
-      pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true, showEdit: true });
+      pCard.innerHTML = phraseCardHtml(p, { showLog: true, showMeta: true, showQuickReview: true, showEdit: true, showSentenceBuild: true });
     }
     practiceList.appendChild(pCard);
   });
@@ -2769,6 +2780,7 @@ document.addEventListener('click', async (e)=>{
     if(p){
       p.applied = !p.applied;
       p.appliedAt = p.applied ? new Date().toISOString() : null;
+      renderHeaderStats();
       await saveBank();
       renderStarred();
     }
@@ -3043,6 +3055,18 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
 // sentence-build rep on a phrase counts toward the daily bank-review dose whenever that phrase
 // was actually due — it never inflates the dose by manufacturing extra "due" reps.
 let sbCurrentId = null, sbRevealed = false, sbDraft = '';
+// Set when a specific card's "🧩 Build a sentence" button is pressed — that one phrase is
+// practised immediately, ignoring the normal starred+due queue, then cleared so the panel
+// goes back to its usual queue behaviour.
+let sbForcedId = null;
+function sbOpenForPhrase(id){
+  const p = state.bank.find(x => x.id === id);
+  if(!p || !(extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length)) return;
+  sbForcedId = id; sbCurrentId = null; sbRevealed = false; sbDraft = '';
+  renderSentenceBuild();
+  const panel = document.getElementById('sbBox');
+  if(panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 function sbPool(){
   state.bank.forEach(ensureSrs);
   return state.bank.filter(p => p.starred && (extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length));
@@ -3061,25 +3085,26 @@ function sbWordFor(p){
 function renderSentenceBuild(){
   const box = document.getElementById('sbBox');
   if(!box) return;
+  const forced = sbForcedId ? state.bank.find(x => x.id === sbForcedId) : null;
   const queue = sbQueue();
-  if(!queue.length){
+  const p = forced || queue[0];
+  if(!p){
     box.innerHTML = '<div class="empty">No starred phrase with a bold word is due right now — star a bolded phrase, or come back when one is due.</div>';
     return;
   }
-  const p = queue[0];
   if(sbCurrentId !== p.id){ sbCurrentId = p.id; sbRevealed = false; sbDraft = ''; }
   const w = sbWordFor(p);
   const dir = w.lang === 'ar' ? 'rtl' : 'ltr';
   const orig = [p.en ? escapeHtml(p.en) : '', p.ar ? `<span dir="rtl">${escapeHtml(p.ar)}</span>` : ''].filter(Boolean).join(' — ');
   box.innerHTML = `
     <div class="due-card"><div class="phrase-texts">
-      <div class="due-meta">${queue.length} due · build a new sentence using this word (${w.lang === 'ar' ? 'Arabic' : 'English'}):</div>
+      <div class="due-meta">${forced ? 'From your practice set' : queue.length + ' due'} · build a new sentence using this word (${w.lang === 'ar' ? 'Arabic' : 'English'}):</div>
       <div class="phrase-en" ${dir === 'rtl' ? 'dir="rtl"' : ''} style="font-weight:700; font-size:18px;">${escapeHtml(w.word)}</div>
       <div class="field" style="margin:10px 0;">
         <label>Your sentence — don't reuse the original phrase</label>
         <textarea id="sbInput" ${dir === 'rtl' ? 'dir="rtl"' : ''} style="min-height:70px; width:100%;">${escapeHtml(sbDraft)}</textarea>
       </div>
-      <div class="card-actions"><button class="ghost" id="sbShowOrigBtn" type="button">${sbRevealed ? 'Hide' : 'Show'} original phrase</button></div>
+      <div class="card-actions"><button class="ghost" id="sbShowOrigBtn" type="button">${sbRevealed ? 'Hide' : 'Show'} original phrase</button>${forced ? '<button class="ghost" id="sbBackToQueueBtn" type="button">‹ Back to due queue</button>' : ''}</div>
       ${sbRevealed ? `<div class="due-meta" style="margin-top:8px;">Original: ${orig}</div>` : ''}
     </div>
     <div class="rating-row">
@@ -3093,6 +3118,7 @@ function renderSentenceBuild(){
 document.getElementById('sbBox').addEventListener('input', e=>{ if(e.target.id === 'sbInput') sbDraft = e.target.value; });
 document.getElementById('sbBox').addEventListener('click', async e=>{
   if(e.target.id === 'sbShowOrigBtn'){ sbRevealed = !sbRevealed; renderSentenceBuild(); return; }
+  if(e.target.id === 'sbBackToQueueBtn'){ sbForcedId = null; sbCurrentId = null; sbRevealed = false; sbDraft = ''; renderSentenceBuild(); return; }
   const rateVal = e.target.dataset.sbrate;
   if(rateVal){
     const p = state.bank.find(x=>x.id === sbCurrentId);
@@ -3105,9 +3131,16 @@ document.getElementById('sbBox').addEventListener('click', async e=>{
       renderDailyPlan();
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
     }
-    sbCurrentId = null; sbRevealed = false; sbDraft = '';
+    sbForcedId = null; sbCurrentId = null; sbRevealed = false; sbDraft = '';
     renderSentenceBuild();
   }
+});
+
+// A "🧩 Build a sentence" button on any bold-word practice card jumps straight into
+// Sentence build for that one word, bypassing the usual starred+due queue.
+document.getElementById('practiceList').addEventListener('click', e=>{
+  const btn = e.target.closest('[data-sbcard]');
+  if(btn) sbOpenForPhrase(btn.dataset.sbcard);
 });
 
 // ---------- Session log ----------
@@ -3493,12 +3526,21 @@ function hsDetailsHtml(boldEntries, boldUniq, words){
     + '<p class="hs-note">Unique words = every distinct word in your phrases, bolded or not, ignoring case, punctuation, Arabic diacritics, spelling variants of alef / ya / ta marbuta and a leading “ال”. Arabic words with an attached و / ف / ب / ل / ك prefix are merged into the bare word when that word (3+ letters) is already in your bank — the same rules the add-phrase “new word” check uses. Plurals and verb forms still count separately. The bolded line above uses the simpler cleanup without prefix merging.</p>';
 }
 
+// Phrases you've marked "Applied" (used in real life, not just reviewed) — counted per
+// language side of the phrase, so a bilingual phrase can count toward both.
+function countAppliedByLang(){
+  let en = 0, ar = 0;
+  state.bank.forEach(p => { if(!p.applied) return; if(p.en) en++; if(p.ar) ar++; });
+  return { en, ar };
+}
 function renderHeaderStats(){
   const el = document.getElementById('headerStats');
   if(!el) return;
   const totals = countBoldWordsByLang();
   const words = countUniqueWords();
-  el.innerHTML = `<div class="hs-row"><span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words</div>`
+  const applied = countAppliedByLang();
+  el.innerHTML = `<div class="hs-row" title="Phrases marked Applied — used in real life, not just reviewed (Starred tab)"><span class="hs-num">${applied.en}</span> EN applied<span class="hs-sep">·</span><span class="hs-num">${applied.ar}</span> AR applied</div>`
+    + `<div class="hs-row"><span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words</div>`
     + `<div class="hs-row" title="Every distinct word across all your phrases, bolded or not"><span class="hs-num">${words.en.unique.toLocaleString()}</span> EN unique words<span class="hs-sep">·</span><span class="hs-num">${words.ar.unique.toLocaleString()}</span> AR unique words`
     + `<button type="button" class="hs-toggle" id="hsToggleBtn" aria-expanded="${hsDetailsOpen}">${hsDetailsOpen ? 'hide details ▴' : 'details ▾'}</button></div>`
     + (hsDetailsOpen ? `<div class="hs-details" id="hsDetails">${hsDetailsHtml(totals, countUniqueBoldWords(), words)}</div>` : '');
