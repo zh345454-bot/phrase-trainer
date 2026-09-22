@@ -326,6 +326,7 @@ button.recording{ background:#9B2C2C !important; border-color:#9B2C2C !important
 .toolbar{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
 .toolbar .field{ flex:1; min-width:150px; }
 .count-note{ font-size:12px; color:var(--ink-soft); margin:2px 0 10px; }
+.count-note.warn{ color:var(--brass-deep); font-weight:600; }
 textarea{ min-height:90px; resize:vertical; font-family:'Inter',sans-serif; }
 details.quick-add{ margin-top:2px; }
 details.quick-add summary{ cursor:pointer; font-size:12.5px; color:var(--teal); font-weight:600; margin-bottom:10px; }
@@ -717,6 +718,23 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="en">English</option>
           </select>
         </div>
+        <div class="field" style="max-width:180px;">
+          <label>Bold words</label>
+          <select id="starredBoldFilter">
+            <option value="">All phrases</option>
+            <option value="any">Any bold word</option>
+            <option value="en">Bold in English</option>
+            <option value="ar">Bold in Arabic</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label>Applied</label>
+          <select id="starredAppliedFilter">
+            <option value="">All (applied + not yet)</option>
+            <option value="yes">Applied only</option>
+            <option value="no">Not yet applied</option>
+          </select>
+        </div>
       </div>
       <div class="field-row">
         <div class="field" style="max-width:170px;">
@@ -728,6 +746,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           <input type="number" id="starredMaxDays" min="0" placeholder="e.g. 90">
         </div>
       </div>
+      <div class="count-note" id="starredCapNote"></div>
       <div class="field-row" id="starredBulkBar" style="display:none; align-items:center; gap:12px;">
         <label class="star-select-wrap" style="font-size:13px;"><input type="checkbox" id="starredSelectAll"> Select all visible</label>
         <button class="ghost" id="starredUnstarSelectedBtn" disabled>☆ Unstar selected</button>
@@ -814,6 +833,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         </div>
       </div>
       <div id="practiceList"></div>
+    </div>
+
+    <div class="panel">
+      <h2>🧩 Sentence build (starred bold words)</h2>
+      <div class="count-note" style="margin-bottom:10px;">Takes a bold word from a starred phrase that's due for review — build a brand-new sentence with it, then rate yourself. Counts toward today's bank review dose, same as Review.</div>
+      <div id="sbBox"></div>
     </div>
 
     <div class="panel">
@@ -1552,7 +1577,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'today') renderDashboard();
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
     if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
-    if(btn.dataset.view === 'practice') renderTodayStrip();
+    if(btn.dataset.view === 'practice'){ renderTodayStrip(); renderSentenceBuild(); }
   });
 });
 
@@ -2059,6 +2084,7 @@ function phraseCardHtml(p, opts){
   const reviewedToday = p.quickReviewedOn === todayStr();
   const showEdit = opts && opts.showEdit;
   const showStarredDays = opts && opts.showStarredDays && p.starred;
+  const showApplied = opts && opts.showApplied;
   const starredLine = showStarredDays ? `<div class="due-meta">${escapeHtml(daysStarredLabel(p.starredAt))}</div>` : '';
   return `
     <div class="phrase-texts">
@@ -2074,6 +2100,7 @@ function phraseCardHtml(p, opts){
       ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
       ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
       ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
+      ${showApplied ? `<button class="ghost${p.applied ? ' starred' : ''}" data-apply="${p.id}" title="Mark as used in real life, not just reviewed">${p.applied ? '✓ Applied' : 'Mark applied'}</button>` : ''}
       ${showEdit ? `<button class="ghost" data-edit-phrase="${p.id}" title="Edit text, incl. bold">✎ Edit</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
@@ -2084,12 +2111,20 @@ function phraseCardHtml(p, opts){
     </div>`;
 }
 
-let starredFilter = { query: '', type: '', lang: '', minDays: '', maxDays: '' };
+let starredFilter = { query: '', type: '', lang: '', bold: '', applied: '', minDays: '', maxDays: '' };
 let starredSelected = new Set(); // composite "type:id" keys, for bulk unstar
 
 // Collects every starred item across the three things that can be starred
 // (phrases, grammar entries, Qur'an entries) into one normalized list, so
 // the Starred tab is a genuine hub rather than a phrases-only view.
+// Soft daily cap on how much NEW material you star per language — a nudge, never a block (see
+// the warning built in renderStarred). Counted by starredAt date, per language side of the phrase,
+// so a bilingual phrase counts toward both languages' totals.
+const STARRED_DAILY_CAP = 3;
+function starredTodayCount(lang){
+  const today = todayStr();
+  return state.bank.filter(p => p.starred && p.starredAt && p.starredAt.slice(0, 10) === today && (lang === 'en' ? !!p.en : !!p.ar)).length;
+}
 function collectStarredItems(){
   const items = [];
   state.bank.filter(p=>p.starred).forEach(p=>{
@@ -2118,9 +2153,24 @@ function collectStarredItems(){
       days: daysStarred(q.starredAt)
     });
   });
+  items.forEach(item => { item.bold = itemBoldFlags(item); });
   return items;
 }
 
+// Whether an item carries a bold (**word**) segment, per language — used by the Starred tab's
+// bold-word filter. Grammar entries are tagged with a single language; Qur'an checks Arabic text
+// vs its translation.
+function itemBoldFlags(item){
+  if(item.type === 'phrase') return { en: extractBoldSegments(item.ref.en).length > 0, ar: extractBoldSegments(item.ref.ar).length > 0 };
+  if(item.type === 'grammar'){
+    const g = item.ref;
+    const text = [g.title, g.rule_summary, g.user_notes, (g.examples || []).map(e => `${e.target || ''} ${e.translation || ''}`).join(' ')].join(' ');
+    const has = extractBoldSegments(text).length > 0;
+    return g.language === 'Arabic' ? { en: false, ar: has } : { en: has, ar: false };
+  }
+  const q = item.ref;
+  return { en: extractBoldSegments(q.translation || '').length > 0, ar: extractBoldSegments(q.arabic || '').length > 0 };
+}
 function starredCardHtml(item){
   const g = item.ref, q = item.ref;
   const selectRow = `<div class="star-select-row"><label class="star-select-wrap"><input type="checkbox" class="starred-select" data-star-key="${escapeHtml(item.key)}"${starredSelected.has(item.key) ? ' checked' : ''}> Select</label></div>`;
@@ -2157,7 +2207,7 @@ function starredCardHtml(item){
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
   }
-  return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true });
+  return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true, showApplied: true });
 }
 
 function renderStarred(){
@@ -2177,6 +2227,13 @@ function renderStarred(){
   const matches = all.filter(item=>{
     if(starredFilter.type && item.type !== starredFilter.type) return false;
     if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
+    if(starredFilter.bold === 'any' && !(item.bold.en || item.bold.ar)) return false;
+    if(starredFilter.bold === 'en' && !item.bold.en) return false;
+    if(starredFilter.bold === 'ar' && !item.bold.ar) return false;
+    // "Applied" only makes sense for phrases; grammar/Qur'an entries have no such marker, so
+    // they never match "Applied only" and always count as "not yet applied".
+    if(starredFilter.applied === 'yes' && !(item.type === 'phrase' && item.ref.applied)) return false;
+    if(starredFilter.applied === 'no' && item.type === 'phrase' && item.ref.applied) return false;
     if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
     if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
     if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
@@ -2192,6 +2249,14 @@ function renderStarred(){
   const byType = t => all.filter(i=>i.type===t).length;
   countNote.textContent = matches.length + ' of ' + all.length + ' starred '
     + '(' + byType('phrase') + ' phrases, ' + byType('grammar') + ' grammar, ' + byType('quran') + ' Qur\'an)';
+  const capNoteEl = document.getElementById('starredCapNote');
+  if(capNoteEl){
+    const enCount = starredTodayCount('en'), arCount = starredTodayCount('ar');
+    const over = enCount > STARRED_DAILY_CAP || arCount > STARRED_DAILY_CAP;
+    capNoteEl.textContent = `Starred today: ${enCount}/${STARRED_DAILY_CAP} EN · ${arCount}/${STARRED_DAILY_CAP} AR`
+      + (over ? ' — past your soft daily cap. Not blocked, just a nudge to stop adding for today.' : '');
+    capNoteEl.className = over ? 'count-note warn' : 'count-note';
+  }
   if(bulkBar){
     bulkBar.style.display = matches.length ? 'flex' : 'none';
     const selectAllBox = document.getElementById('starredSelectAll');
@@ -2228,6 +2293,8 @@ document.addEventListener('change', (e)=>{
 document.getElementById('starredSearch').addEventListener('input', e=>{ starredFilter.query = e.target.value.trim(); renderStarred(); });
 document.getElementById('starredTypeFilter').addEventListener('change', e=>{ starredFilter.type = e.target.value; renderStarred(); });
 document.getElementById('starredLangFilter').addEventListener('change', e=>{ starredFilter.lang = e.target.value; renderStarred(); });
+document.getElementById('starredBoldFilter').addEventListener('change', e=>{ starredFilter.bold = e.target.value; renderStarred(); });
+document.getElementById('starredAppliedFilter').addEventListener('change', e=>{ starredFilter.applied = e.target.value; renderStarred(); });
 document.getElementById('starredMinDays').addEventListener('input', e=>{ starredFilter.minDays = e.target.value; renderStarred(); });
 document.getElementById('starredMaxDays').addEventListener('input', e=>{ starredFilter.maxDays = e.target.value; renderStarred(); });
 
@@ -2692,6 +2759,18 @@ document.addEventListener('click', async (e)=>{
       renderGcStarResults();
       if(practiceSet && practiceSet.length) renderPracticeCurrentView();
       if(document.getElementById('view-review').classList.contains('active')) renderReview();
+      renderSentenceBuild();
+    }
+    return;
+  }
+  const applyId = e.target.dataset.apply;
+  if(applyId){
+    const p = state.bank.find(x=>x.id === applyId);
+    if(p){
+      p.applied = !p.applied;
+      p.appliedAt = p.applied ? new Date().toISOString() : null;
+      await saveBank();
+      renderStarred();
     }
     return;
   }
@@ -2957,6 +3036,78 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
   const lang = document.getElementById('quickLang').value;
   if(!text) return;
   addLogEntry(text, lang, 'Quick practice');
+});
+
+// ---------- Sentence build (starred bold words) ----------
+// Uses the same ensureSrs()/rateReview() spacing machinery as Review and Gap review, so a
+// sentence-build rep on a phrase counts toward the daily bank-review dose whenever that phrase
+// was actually due — it never inflates the dose by manufacturing extra "due" reps.
+let sbCurrentId = null, sbRevealed = false, sbDraft = '';
+function sbPool(){
+  state.bank.forEach(ensureSrs);
+  return state.bank.filter(p => p.starred && (extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length));
+}
+function sbQueue(){
+  const today = todayStr();
+  return sbPool().filter(p => p.srs.nextReview <= today);
+}
+// Picks one bold word to practice with. Arabic is your harder skill, so if a phrase has a bold
+// word in both languages, Arabic is offered first.
+function sbWordFor(p){
+  const arWords = extractBoldSegments(p.ar);
+  if(arWords.length) return { word: arWords[0], lang: 'ar' };
+  return { word: extractBoldSegments(p.en)[0], lang: 'en' };
+}
+function renderSentenceBuild(){
+  const box = document.getElementById('sbBox');
+  if(!box) return;
+  const queue = sbQueue();
+  if(!queue.length){
+    box.innerHTML = '<div class="empty">No starred phrase with a bold word is due right now — star a bolded phrase, or come back when one is due.</div>';
+    return;
+  }
+  const p = queue[0];
+  if(sbCurrentId !== p.id){ sbCurrentId = p.id; sbRevealed = false; sbDraft = ''; }
+  const w = sbWordFor(p);
+  const dir = w.lang === 'ar' ? 'rtl' : 'ltr';
+  const orig = [p.en ? escapeHtml(p.en) : '', p.ar ? `<span dir="rtl">${escapeHtml(p.ar)}</span>` : ''].filter(Boolean).join(' — ');
+  box.innerHTML = `
+    <div class="due-card"><div class="phrase-texts">
+      <div class="due-meta">${queue.length} due · build a new sentence using this word (${w.lang === 'ar' ? 'Arabic' : 'English'}):</div>
+      <div class="phrase-en" ${dir === 'rtl' ? 'dir="rtl"' : ''} style="font-weight:700; font-size:18px;">${escapeHtml(w.word)}</div>
+      <div class="field" style="margin:10px 0;">
+        <label>Your sentence — don't reuse the original phrase</label>
+        <textarea id="sbInput" ${dir === 'rtl' ? 'dir="rtl"' : ''} style="min-height:70px; width:100%;">${escapeHtml(sbDraft)}</textarea>
+      </div>
+      <div class="card-actions"><button class="ghost" id="sbShowOrigBtn" type="button">${sbRevealed ? 'Hide' : 'Show'} original phrase</button></div>
+      ${sbRevealed ? `<div class="due-meta" style="margin-top:8px;">Original: ${orig}</div>` : ''}
+    </div>
+    <div class="rating-row">
+        <button class="rate-btn rate-1" data-sbrate="1" type="button">1 Couldn't do it</button>
+        <button class="rate-btn rate-2" data-sbrate="2" type="button">2 Struggled</button>
+        <button class="rate-btn rate-3" data-sbrate="3" type="button">3 Okay</button>
+        <button class="rate-btn rate-4" data-sbrate="4" type="button">4 Good</button>
+        <button class="rate-btn rate-5" data-sbrate="5" type="button">5 Perfect</button>
+    </div></div>`;
+}
+document.getElementById('sbBox').addEventListener('input', e=>{ if(e.target.id === 'sbInput') sbDraft = e.target.value; });
+document.getElementById('sbBox').addEventListener('click', async e=>{
+  if(e.target.id === 'sbShowOrigBtn'){ sbRevealed = !sbRevealed; renderSentenceBuild(); return; }
+  const rateVal = e.target.dataset.sbrate;
+  if(rateVal){
+    const p = state.bank.find(x=>x.id === sbCurrentId);
+    if(p){
+      const w = sbWordFor(p);
+      const sentence = (document.getElementById('sbInput').value || '').trim();
+      if(sentence) await addLogEntry(sentence, w.lang, 'Sentence build · ' + w.word);
+      rateReview(p, parseInt(rateVal, 10));
+      await saveBank();
+      renderDailyPlan();
+      if(document.getElementById('view-review').classList.contains('active')) renderReview();
+    }
+    sbCurrentId = null; sbRevealed = false; sbDraft = '';
+    renderSentenceBuild();
+  }
 });
 
 // ---------- Session log ----------
@@ -5597,11 +5748,20 @@ function renderCategoryFrequency(){
     const pct = Math.max(6, Math.round((count / max) * 100));
     return `
       <div class="freq-row">
-        <div class="freq-label">${escapeHtml(cat)} <span class="due-meta">${count}× · last ${escapeHtml(lastSeen[cat] || '—')}</span></div>
+        <button class="freq-label" type="button" data-freq-cat="${escapeHtml(cat)}" title="Filter your grammar notebook to this category" style="background:none; border:none; padding:0; font:inherit; text-align:left; cursor:pointer; color:inherit; text-decoration:underline; text-decoration-color:transparent;">${escapeHtml(cat)}</button> <span class="due-meta">${count}× · last ${escapeHtml(lastSeen[cat] || '—')}</span>
         <div class="freq-bar-track"><div class="freq-bar-fill" style="width:${pct}%"></div></div>
       </div>`;
   }).join('');
 }
+document.getElementById('categoryFrequencyList').addEventListener('click', (e)=>{
+  const btn = e.target.closest('[data-freq-cat]');
+  if(!btn) return;
+  grammarFilter.category = btn.dataset.freqCat;
+  const sel = document.getElementById('gCategoryFilter');
+  if(sel) sel.value = grammarFilter.category;
+  renderGrammarList();
+  document.getElementById('gSearch').closest('.panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 function renderGrammarList(){
   updateGrammarCategoryDropdown();
@@ -6900,21 +7060,40 @@ function gapTargetOf(g){ return g.correct || g.wanted; }
 // ---------- Timed spoken card ----------
 let gapSessionDone = new Set();
 let gapRevealed = false, gapCardStart = null, gapRevealMs = 0, gapTimerId = null;
+let gapPaused = false, gapPausedAt = 0, gapPausedMs = 0, gapFrozenLeft = 0;
 function gapTimerSecs(){ return state.gapMeta.timerSecs || 3; }
 function stopGapTimer(){ if(gapTimerId){ clearInterval(gapTimerId); gapTimerId = null; } }
 function startGapTimer(){
   stopGapTimer();
-  if(gapRevealed || !gapCardStart) return;
+  if(gapRevealed || !gapCardStart || gapPaused) return;
   const secs = gapTimerSecs();
   const tick = () => {
     const el = document.getElementById('gapTimer');
     if(!el || gapRevealed){ stopGapTimer(); return; }
-    const left = secs - (Date.now() - gapCardStart.t) / 1000;
+    const left = secs - (Date.now() - gapCardStart.t - gapPausedMs) / 1000;
     if(left > 0){ el.textContent = left.toFixed(1) + ' s'; el.classList.remove('late'); }
     else { el.textContent = 'Say it now!'; el.classList.add('late'); }
   };
   tick();
   gapTimerId = setInterval(tick, 100);
+}
+// Pause freezes the countdown (e.g. an interruption mid-card) without
+// counting the paused time against your reveal speed; resume picks up
+// exactly where it left off by adding the paused duration to gapPausedMs.
+function pauseGapTimer(){
+  if(gapPaused || gapRevealed || !gapCardStart) return;
+  const secs = gapTimerSecs();
+  const elapsed = (Date.now() - gapCardStart.t - gapPausedMs) / 1000;
+  gapFrozenLeft = Math.max(0, secs - elapsed);
+  gapPaused = true;
+  gapPausedAt = Date.now();
+  stopGapTimer();
+}
+function resumeGapTimer(){
+  if(!gapPaused) return;
+  gapPausedMs += Date.now() - gapPausedAt;
+  gapPaused = false;
+  startGapTimer();
 }
 function renderGapReview(){
   const panel = document.getElementById('gapReviewPanel');
@@ -6943,7 +7122,7 @@ function renderGapReview(){
     return;
   }
   const g = queue[0];
-  if(!gapCardStart || gapCardStart.id !== g.id){ gapCardStart = { id: g.id, t: Date.now() }; gapRevealed = false; gapRevealMs = 0; }
+  if(!gapCardStart || gapCardStart.id !== g.id){ gapCardStart = { id: g.id, t: Date.now() }; gapRevealed = false; gapRevealMs = 0; gapPaused = false; gapPausedMs = 0; }
   const light = gapTrack(g) === 'light';
   const own = g.lang === 'ar' ? g.exAr : g.exEn;
   const other = g.lang === 'ar' ? g.exEn : g.exAr;
@@ -6982,16 +7161,24 @@ function renderGapReview(){
     <div class="due-card"><div class="phrase-texts">
       <div class="due-meta">${pill} · ${GAP_TYPE_LABELS[g.type]}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}</div>
       ${cue}
-      ${gapRevealed ? '' : '<div class="gap-timer" id="gapTimer"></div>'}
+      ${gapRevealed ? '' : `<div class="card-actions" style="align-items:center; gap:12px;">
+        <div class="gap-timer${gapPaused ? ' late' : ''}" id="gapTimer">${gapPaused ? (gapFrozenLeft <= 0 ? 'Say it now!' : gapFrozenLeft.toFixed(1) + ' s') + ' · paused' : ''}</div>
+        <button class="ghost" id="gapPauseBtn" type="button">${gapPaused ? '▶ Resume' : '⏸ Pause'}</button>
+      </div>`}
       ${gapRevealed ? answer : ''}
     </div>${rating}</div>`;
-  startGapTimer();
+  if(!gapPaused) startGapTimer();
 }
 document.getElementById('gapReviewBox').addEventListener('change', async (e) => {
   if(e.target.id === 'gapCapSel'){ state.gapMeta.cap = parseInt(e.target.value, 10); await saveGaps(); renderGapReview(); }
   if(e.target.id === 'gapTimerSel'){ state.gapMeta.timerSecs = parseInt(e.target.value, 10); await saveGaps(); renderGapReview(); }
 });
 document.getElementById('gapReviewBox').addEventListener('click', async (e) => {
+  if(e.target.id === 'gapPauseBtn'){
+    if(gapPaused) resumeGapTimer(); else pauseGapTimer();
+    renderGapReview();
+    return;
+  }
   if(e.target.id === 'gapMoreBtn'){ gapCapState(); state.gapMeta.reviewed.bonus = (state.gapMeta.reviewed.bonus || 0) + 10; await saveGaps(); renderGapReview(); return; }
   if(e.target.id === 'gapRevealBtn'){
     gapRevealMs = gapCardStart ? Date.now() - gapCardStart.t : 0;
@@ -8968,6 +9155,7 @@ document.addEventListener('keydown', (e) => {
   renderSpkSync();
   renderDashboard();
   renderHours(); hrsBadge();
+  renderSentenceBuild();
 
   // Silently catch up today's drill progress from another device, if any —
   // best-effort and non-blocking, so a slow/offline sheet never delays the
