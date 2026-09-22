@@ -445,6 +445,8 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .modal-x:hover{ border-color:var(--ink); }
 
 /* ---------- Gaps (words forgotten while speaking) ---------- */
+.recap-card{ border:2px solid var(--teal); padding:12px 14px; margin:8px 0; background:var(--panel); }
+.recap-progress{ font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
 .gap-timer{ font-size:24px; font-weight:700; color:var(--brass-deep); margin:8px 0; font-variant-numeric:tabular-nums; }
 .gap-timer.late{ color:#B33A2E; }
 .gap-controls{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
@@ -901,6 +903,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div id="gapChecklist"></div>
     </div>
     <div class="panel" id="gapTopPanel" style="display:none;"><div id="gapTop"></div></div>
+    <div class="panel" id="gapRecapPanel" style="display:none;"><div id="gapRecapBox"></div></div>
     <div class="panel" id="gapReviewPanel" style="display:none;"><div id="gapReviewBox"></div></div>
     <div class="panel">
       <h2>Your gaps</h2>
@@ -6962,9 +6965,48 @@ function renderGapList(){
     </div>`;
   }).join('');
 }
+
+function renderGapRecap(){
+  const panel = document.getElementById('gapRecapPanel'), box = document.getElementById('gapRecapBox');
+  if(!panel) return;
+  const lang = uiLang(), due = gapRecapIsDue(lang), rs = gapRecapState(lang), inProgress = rs.queueIds.length > 0;
+  panel.style.display = (due || inProgress) ? '' : 'none';
+  if(!due && !inProgress) return;
+  const queue = gapRecapQueue(lang);
+  if(!queue.length){
+    // Just finished (or nothing was ever mastered) — nothing to show, panel hides itself next render.
+    box.innerHTML = '';
+    panel.style.display = 'none';
+    return;
+  }
+  const total = rs.queueIds.length, done = rs.doneIds.length;
+  const g = queue[0], dir = g.lang === 'ar' ? 'rtl' : 'ltr';
+  const target = gapTargetOf(g);
+  const own = g.lang === 'ar' ? g.exAr : g.exEn;
+  box.innerHTML = `<h2>Vocabulary recap — ${LANG_NAMES[lang]}</h2>
+    <p class="gap-mini">A monthly sweep through every word you've mastered — one light touch each, like a full recitation pass, so nothing that's "done" quietly falls out of the loop. This is separate from your daily gap reviews and never affects your daily cap.</p>
+    <div class="recap-progress">${done}/${total} swept this pass</div>
+    <div class="recap-card">
+      <div class="gap-answer" dir="${dir}">${escapeHtml(target)}</div>
+      ${own ? `<div class="gap-meta" dir="${dir}">${escapeHtml(own)}</div>` : ''}
+      <div class="card-actions">
+        <button class="rate-btn rate-5" data-recap="got" data-gid="${g.id}" type="button">✓ Still got it</button>
+        <button class="rate-btn rate-2" data-recap="forgot" data-gid="${g.id}" type="button">✗ Forgot it</button>
+      </div>
+    </div>`;
+}
+document.getElementById('gapRecapBox').addEventListener('click', async (e) => {
+  const act = e.target.dataset.recap;
+  if(!act) return;
+  const g = state.gaps.find(x => x.id === e.target.dataset.gid);
+  if(!g) return;
+  await gapRecapMark(uiLang(), g, act === 'got');
+  renderGaps();
+});
+
 function renderGaps(){
   renderGapList();
-  ['renderGapChecklist', 'renderGapTop', 'renderGapReview', 'renderGapStats', 'renderGapSync'].forEach(fn => {
+  ['renderGapChecklist', 'renderGapTop', 'renderGapRecap', 'renderGapReview', 'renderGapStats', 'renderGapSync'].forEach(fn => {
     if(typeof window[fn] === 'function') window[fn]();
   });
 }
@@ -7122,6 +7164,64 @@ function gapRelapse(g){
   else { ensureSrs(g); g.srs.station = Math.max(1, g.srs.station - 1); g.srs.reps = 0; g.srs.nextReview = today; }
 }
 // Daily cap on gap reviews (each rating counts). Overflow just stays due.
+// =====================================================================
+// VOCABULARY RECAP — a fixed monthly (default) batch sweep per language, matching a
+// juz recitation pass: it touches EVERY mastered gap together on one cadence, instead
+// of each one carrying its own maintenance due-date. Per-item maintenance dates would
+// compound the same way daily new-word intake does; a fixed calendar sweep can't,
+// because its size is set by the cadence, not by how many words have accumulated.
+// A "Got it" leaves the word mastered. A "Forgot it" reopens it, dropped back to a
+// MIDDLE point in its track (not all the way to the start) since it was genuinely
+// retained for a while — full-track goes to station 4, quick-track to touch 2 of 3.
+function gapRecapState(lang){
+  if(!state.gapMeta.recap) state.gapMeta.recap = {};
+  if(!state.gapMeta.recap[lang]) state.gapMeta.recap[lang] = { last: '', queueIds: [], doneIds: [], updatedAt: '' };
+  return state.gapMeta.recap[lang];
+}
+function gapRecapCadence(){ return state.gapMeta.recapCadenceDays || 30; }
+function gapMasteredList(lang){ return state.gaps.filter(g => g.lang === lang && g.status === 'closed' && g.closedBy === 'mastered'); }
+// When the NEXT sweep is due. Never-done starts the clock from the earliest mastery
+// date, so a word mastered yesterday doesn't get swept today.
+function gapRecapDueDate(lang){
+  const rs = gapRecapState(lang), cad = gapRecapCadence();
+  if(rs.last) return addDays(rs.last, cad);
+  const list = gapMasteredList(lang);
+  if(!list.length) return null;
+  const earliest = list.map(g => g.closedAt).filter(Boolean).sort()[0];
+  return earliest ? addDays(earliest, cad) : todayStr();
+}
+function gapRecapIsDue(lang){ const d = gapRecapDueDate(lang); return !!d && d <= todayStr(); }
+// Starts (or resumes) a sweep: a snapshot of everything mastered right now, taken once
+// per sweep so an item you reopen mid-sweep doesn't vanish from the count, and a word
+// that finishes mastering mid-sweep waits for next month rather than sneaking in.
+function gapRecapEnsureQueue(lang){
+  const rs = gapRecapState(lang);
+  if(!rs.queueIds.length && !rs.doneIds.length && gapRecapIsDue(lang)){
+    rs.queueIds = gapMasteredList(lang).map(g => g.id);
+  }
+  return rs;
+}
+function gapRecapQueue(lang){
+  const rs = gapRecapEnsureQueue(lang);
+  const done = new Set(rs.doneIds);
+  return rs.queueIds.map(id => state.gaps.find(g => g.id === id)).filter(g => g && !done.has(g.id));
+}
+async function gapRecapMark(lang, g, gotIt){
+  const rs = gapRecapState(lang), today = todayStr();
+  if(!gotIt){
+    if(gapTrack(g) === 'light'){ g.lt = { step: 1, next: today }; }
+    else { ensureSrs(g); g.srs.station = 4; g.srs.reps = 0; g.srs.nextReview = today; }
+    g.status = 'open'; g.closedAt = ''; g.closedBy = '';
+    g.attempts = (g.attempts || []).concat([{ d: today, r: 2, ms: 0 }]).slice(-30);
+  }
+  if(!rs.doneIds.includes(g.id)) rs.doneIds.push(g.id);
+  gapTouch(g);
+  if(rs.doneIds.length >= rs.queueIds.length){ rs.last = today; rs.queueIds = []; rs.doneIds = []; }
+  rs.updatedAt = new Date().toISOString();
+  await saveGaps();
+  bumpGapSyncInBackground();
+}
+
 function gapCapState(){
   const today = todayStr(), m = state.gapMeta;
   if(!m.reviewed || m.reviewed.date !== today) m.reviewed = { date: today, n: 0, bonus: 0 };
@@ -7572,6 +7672,15 @@ async function coreRestoreGaps(){
     const rowsIn = data.entries || [];
     gapAddTombs(rowsIn.filter(r => r.status === 'deleted').map(r => ({ id: String(r.id), at: String(r.updatedAt || '') })));
     const incoming = rowsIn.filter(r => r.status !== 'deleted').map(gapFromRow).filter(Boolean);
+    // Only the recap DATE needs to travel between devices (it decides whether the sweep is
+    // due) -- the in-progress queue/doneIds stay local, so a half-finished sweep on one
+    // device never gets stomped by another device's separate session.
+    if(data.recap && typeof data.recap === 'object'){
+      Object.keys(data.recap).forEach(lang => {
+        const remote = data.recap[lang], rs = gapRecapState(lang);
+        if(remote && (remote.last || '') > (rs.last || '')) rs.last = remote.last;
+      });
+    }
     const before = state.gaps.length;
     state.gaps = mergeGaps(state.gaps, incoming);
     await saveGaps();
@@ -7588,7 +7697,7 @@ async function coreBackupGaps(){
   try{
     const post = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))) })
+      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {} })
     });
     throwIfRejected(await post.json());
     return { ok: true, message: `Gaps: ${state.gaps.length} backed up.` };
