@@ -511,6 +511,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .hrs-tpl{ border:2px solid var(--ink); padding:12px 14px; margin:10px 0; background:var(--panel); }
 .hrs-find{ border:1px dashed var(--line); background:#FFFDF7; padding:8px 10px; margin:8px 0; }
 .hrs-find input{ width:100%; box-sizing:border-box; }
+.hc-pipe{ display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin:6px 0; font-size:11.5px; }
+.hc-step{ padding:2px 8px; border:1px solid var(--line); border-radius:999px; color:var(--ink-soft); background:var(--panel); }
+.hc-step.done{ background:var(--teal-soft); color:var(--teal); border-color:var(--teal); }
+.hc-step.now{ background:var(--brass-deep); color:#fff; border-color:var(--brass-deep); font-weight:700; }
+.hc-arrow{ color:var(--ink-soft); }
+.hc-next{ padding:4px 10px; }
 .gap-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px; }
 .gap-table th, .gap-table td{ text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
 .gap-table th{ color:var(--ink-soft); font-weight:600; }
@@ -2096,6 +2102,8 @@ function phraseCardHtml(p, opts){
   const showApplied = opts && opts.showApplied;
   const showSentenceBuild = opts && opts.showSentenceBuild && (extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length);
   const starredLine = showStarredDays ? `<div class="due-meta">${escapeHtml(daysStarredLabel(p.starredAt))}</div>` : '';
+  const showHardChunk = opts && opts.showHardChunk;
+  const hasBold = extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length;
   return `
     <div class="phrase-texts">
       <div class="phrase-en">${mdToHtml(p.en)}</div>
@@ -2103,6 +2111,7 @@ function phraseCardHtml(p, opts){
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
       ${metaLine}
       ${starredLine}
+      ${hcPipeHtml(p)}
     </div>
     <div class="card-actions">
       ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}" title="Speak English">EN</button>` : ''}
@@ -2112,6 +2121,8 @@ function phraseCardHtml(p, opts){
       ${showStar ? `<button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>` : ''}
       ${showApplied ? `<button class="ghost${p.applied ? ' starred' : ''}" data-apply="${p.id}" title="Mark as used in real life, not just reviewed">${p.applied ? '✓ Applied' : 'Mark applied'}</button>` : ''}
       ${showSentenceBuild ? `<button class="ghost" data-sbcard="${p.id}" title="Practice making a brand-new sentence with the bolded word in this phrase">🧩 Build a sentence</button>` : ''}
+      ${showHardChunk && hasBold && !p.hardChunk ? `<button class="ghost" data-hcmark="${p.id}" title="Track this bolded term through the hard-chunk pipeline">Mark hard chunk</button>` : ''}
+      ${showHardChunk && p.hardChunk ? `<button class="ghost" data-hcunmark="${p.id}" title="Stop tracking this phrase's pipeline">Unmark hard chunk</button>` : ''}
       ${showEdit ? `<button class="ghost" data-edit-phrase="${p.id}" title="Edit text, incl. bold">✎ Edit</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
@@ -2218,7 +2229,7 @@ function starredCardHtml(item){
         <button class="icon starred" data-quran-star="${q.id}" title="Remove star">★</button>
       </div>`;
   }
-  return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true, showApplied: true });
+  return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true, showApplied: true, showHardChunk: true, showSentenceBuild: true });
 }
 
 function renderStarred(){
@@ -2418,7 +2429,7 @@ function renderBank(){
       card.innerHTML = boldRowHtml(p, bankFilter.bold, { expandedIds: bankExpandedIds, scope: 'bank', cardOpts: { showDelete: true, showEdit: true } });
     } else {
       card.className = 'phrase-card';
-      card.innerHTML = phraseCardHtml(p, { showDelete: true, showEdit: true });
+      card.innerHTML = phraseCardHtml(p, { showDelete: true, showEdit: true, showHardChunk: true, showSentenceBuild: true });
     }
     list.appendChild(card);
   });
@@ -2783,6 +2794,46 @@ document.addEventListener('click', async (e)=>{
       renderHeaderStats();
       await saveBank();
       renderStarred();
+    }
+    return;
+  }
+  const hcMarkId = e.target.dataset.hcmark;
+  if(hcMarkId){
+    const p = state.bank.find(x=>x.id === hcMarkId);
+    if(p){
+      p.hardChunk = true; p.hcPhase = 'bank'; p.hcPhaseAt = new Date().toISOString();
+      await saveBank(); renderBank(); renderStarred();
+    }
+    return;
+  }
+  const hcUnmarkId = e.target.dataset.hcunmark;
+  if(hcUnmarkId){
+    const p = state.bank.find(x=>x.id === hcUnmarkId);
+    if(p && confirm('Stop tracking "' + stripBold(p.en || p.ar) + '" as a hard chunk? Its progress through the pipeline is kept, just no longer shown.')){
+      p.hardChunk = false;
+      await saveBank(); renderBank(); renderStarred();
+    }
+    return;
+  }
+  const hcNextId = e.target.dataset.hcnext;
+  if(hcNextId){
+    const p = state.bank.find(x=>x.id === hcNextId);
+    if(p){
+      const cur = hcStageIdx(p), next = HC_STAGES[cur + 1];
+      if(next){
+        p.hcPhase = next.k; p.hcPhaseAt = new Date().toISOString();
+        // The "gap" stage is the one step that actually DOES something on your behalf —
+        // it creates the linked Gap entry, because that's a real object, not just a label.
+        // Every other stage is a deliberate manual nudge, exactly as you asked for.
+        if(next.k === 'gap'){
+          const word = stripBold(extractBoldSegments(p.en)[0] || extractBoldSegments(p.ar)[0] || p.en || p.ar);
+          const lang = extractBoldSegments(p.en).length ? 'en' : 'ar';
+          const r = captureGap({ lang, wanted: word, source: 'Hard-chunk pipeline: ' + stripBold(p.en || p.ar), exEn: p.en || '', exAr: p.ar || '' });
+          if(r){ r.g.type = 'retrieval'; r.g.typeManual = true; gapEnsureTrack(r.g); gapTouch(r.g); await saveGaps(); renderGaps(); }
+        }
+      }
+      await saveBank(); renderBank(); renderStarred();
+      gapToastMsg(next ? `“${stripBold(p.en || p.ar)}” moved to “${next.label}”.${next.k === 'gap' ? ' A linked Gap entry was created.' : ''}` : '');
     }
     return;
   }
@@ -3670,6 +3721,18 @@ function bumpDrillSyncInBackground(){
   if(!state.settings.webAppUrl) return;
   clearTimeout(drillSyncTimer);
   drillSyncTimer = setTimeout(()=>{ coreSyncDrills().catch(()=>{}); }, 1500);
+}
+
+// Same pattern for gap reviews: without this, a rating only reached the Sheet if you
+// remembered to press "Sync gaps with Sheet" — which is what made review progress look
+// like it wasn't syncing between devices. Debounced so a run of cards in one session
+// makes one request, and pull-before-push (inside coreSyncGaps) means it can only ever
+// update the SAME row for that gap — never add a new one.
+let gapSyncTimer = null;
+function bumpGapSyncInBackground(){
+  if(!state.settings.webAppUrl) return;
+  clearTimeout(gapSyncTimer);
+  gapSyncTimer = setTimeout(()=>{ coreSyncGaps().catch(()=>{}); }, 2000);
 }
 
 // Catches this device up with progress made on another device today.
@@ -6656,6 +6719,34 @@ if('serviceWorker' in navigator){
 // Entirely separate from the phrase bank: nothing here touches state.bank
 // unless you press "Move to bank", and it never writes to the practice log.
 // =====================================================================
+// ---- Hard-chunk pipeline ----------------------------------------------------
+// For phrases YOU mark as a hard technical chunk (multi-word terms like "artificial
+// intelligence" that are slow to become usable). Each one moves through fixed stages,
+// ONE deliberate tap at a time — nothing here advances on its own. Advancing a stage
+// hooks into the features already built for that job, it doesn't duplicate them:
+//   bank      → phrase sits in the normal 7-station review, as usual
+//   gap       → linked into Gaps on the quick 3-touch retrieval track
+//   reinforce → a nudge to run it through Domain glossary or a Speaking-cycle pattern
+//   produce   → a nudge to use "🧩 Build a sentence" on this exact card
+//   graduated → done; kept for the record, no more nudging
+const HC_STAGES = [
+  { k: 'bank', label: 'Bank', hint: 'In your normal spaced review.' },
+  { k: 'gap', label: 'Gap', hint: 'Linked to a quick-recall Gap entry so retrieval speed gets trained, not just recognition.' },
+  { k: 'reinforce', label: 'Reinforce', hint: 'Run it through Domain glossary (Hours tab) or a Speaking-cycle pattern to meet it in more sentences.' },
+  { k: 'produce', label: 'Produce', hint: 'Use "🧩 Build a sentence" on this card — production is the actual gap for a technical chunk.' },
+  { k: 'graduated', label: 'Graduated', hint: 'You have produced it unprompted. Kept for the record.' }
+];
+function hcStageIdx(p){ const i = HC_STAGES.findIndex(s => s.k === (p.hcPhase || 'bank')); return i < 0 ? 0 : i; }
+function hcPipeHtml(p){
+  if(!p.hardChunk) return '';
+  const cur = hcStageIdx(p);
+  const steps = HC_STAGES.map((s, i) => `<span class="hc-step${i < cur ? ' done' : i === cur ? ' now' : ''}">${i < cur ? '✓ ' : ''}${s.label}</span>`).join('<span class="hc-arrow">→</span>');
+  const next = HC_STAGES[cur + 1];
+  return `<div class="hc-pipe">${steps}</div>
+    ${next ? `<div class="gap-mini">${escapeHtml(HC_STAGES[cur].hint)}</div><div class="card-actions"><button class="ghost hc-next" data-hcnext="${p.id}">→ Move to “${next.label}”</button></div>`
+      : `<div class="gap-mini">${escapeHtml(HC_STAGES[cur].hint)}</div>`}`;
+}
+
 const GAP_TYPE_LABELS = { new: 'Never learned', retrieval: 'Couldn\u2019t recall', chunk: 'Wrong choice / chunk' };
 let gapFilter = { query: '', type: '', status: '', topic: '', from: '', to: '', lang: '' };
 let gapExpanded = new Set();
@@ -6723,6 +6814,7 @@ function captureGap({ lang, wanted, said, source, exEn, exAr }){
   gapTouch(g);
   gapTick('logged');
   saveGaps();
+  bumpGapSyncInBackground();
   return { g, isNew, reopened };
 }
 
@@ -6737,15 +6829,36 @@ function gapAddTombs(list){
   const cutoff = new Date(Date.now() - 400 * 86400000).toISOString();
   state.gapTomb = [...m.values()].filter(t => (t.at || '') >= cutoff);
 }
+// Union two devices' review-attempt histories instead of picking one side, so a rating
+// done on device A is never silently dropped just because device B synced last. Capped
+// at 30, same as a single device's own history, to match ensureSrs/rateGapReview.
+function gapMergeAttempts(a, b){
+  const seen = new Set(), out = [];
+  (a || []).concat(b || []).forEach(x => {
+    if(!x) return;
+    const key = (x.d || '') + '|' + x.r + '|' + (x.ms || 0);
+    if(seen.has(key)) return;
+    seen.add(key); out.push(x);
+  });
+  out.sort((p, q) => (p.d || '').localeCompare(q.d || ''));
+  return out.slice(-30);
+}
+// The date of a gap's most recent REVIEW (not edit, not relog) — used to decide which
+// device's scheduling state (station, reps, next-due date) is the current one. Comparing
+// raw updatedAt for this is wrong: editing an unrelated field like the note also bumps
+// updatedAt, and would wrongly overwrite real review progress made on the other device.
+function gapLastAttemptTime(g){ const a = g.attempts || []; return a.length ? (a[a.length - 1].d || '') : ''; }
 function mergeGaps(local, incoming){
   const byId = new Map();
   const add = (g) => {
     if(!g || !g.id) return;
     const cur = byId.get(g.id);
     if(!cur){ byId.set(g.id, Object.assign({}, g)); return; }
-    const newer = (g.updatedAt || '') > (cur.updatedAt || '') ? g : cur;
+    const curLast = gapLastAttemptTime(cur), gLast = gapLastAttemptTime(g);
+    const newer = gLast !== curLast ? (gLast > curLast ? g : cur) : ((g.updatedAt || '') > (cur.updatedAt || '') ? g : cur);
     const merged = Object.assign({}, newer);
     merged.logDates = [...new Set([].concat(cur.logDates || [], g.logDates || []))].sort();
+    merged.attempts = gapMergeAttempts(cur.attempts, g.attempts);
     byId.set(g.id, merged);
   };
   (local || []).forEach(add); (incoming || []).forEach(add);
@@ -6757,9 +6870,11 @@ function mergeGaps(local, incoming){
     const other = byKey.get(k);
     if(!other){ byKey.set(k, g); return; }
     const [base, extra] = (other.createdAt || '') <= (g.createdAt || '') ? [other, g] : [g, other];
-    const newest = (extra.updatedAt || '') > (base.updatedAt || '') ? extra : base;
+    const baseLast = gapLastAttemptTime(base), extraLast = gapLastAttemptTime(extra);
+    const newest = extraLast !== baseLast ? (extraLast > baseLast ? extra : base) : ((extra.updatedAt || '') > (base.updatedAt || '') ? extra : base);
     const merged = Object.assign({}, newest, { id: base.id, createdAt: base.createdAt, date: base.date, dateAdded: base.dateAdded });
     merged.logDates = [...new Set([].concat(base.logDates || [], extra.logDates || []))].sort();
+    merged.attempts = gapMergeAttempts(base.attempts, extra.attempts);
     byKey.set(k, merged);
   });
   const dead = new Set((state.gapTomb || []).map(t => t.id));
@@ -7039,6 +7154,7 @@ function rateGapReview(g, rating, ms){
   }
   g.attempts = (g.attempts || []).concat([{ d: today, r: rating, ms: ms || 0 }]).slice(-30);
   gapCountReview(); gapTick('drill'); gapTouch(g);
+  bumpGapSyncInBackground();
 }
 // outcome: 'fast' (said it within the timer) advances; 'slow' (got it, but late) repeats
 // the touch sooner; 'miss' steps back one touch. Three fast touches = mastered.
@@ -7063,6 +7179,7 @@ function rateGapLight(g, outcome, ms){
   const r = outcome === 'fast' ? 5 : outcome === 'slow' ? 3 : 1;
   g.attempts = (g.attempts || []).concat([{ d: today, r, ms: ms || 0 }]).slice(-30);
   gapCountReview(); gapTick('drill'); gapTouch(g);
+  bumpGapSyncInBackground();
 }
 // What's due, most urgent first: lapsed in the last 3 days, then most overdue.
 function gapDueSorted(){
