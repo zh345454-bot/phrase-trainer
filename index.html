@@ -447,6 +447,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 /* ---------- Gaps (words forgotten while speaking) ---------- */
 .recap-card{ border:2px solid var(--teal); padding:12px 14px; margin:8px 0; background:var(--panel); }
 .recap-progress{ font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
+.quick-dictate.listening{ background:#B33A2E; color:#fff; }
 .gap-timer{ font-size:24px; font-weight:700; color:var(--brass-deep); margin:8px 0; font-variant-numeric:tabular-nums; }
 .gap-timer.late{ color:#B33A2E; }
 .gap-controls{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
@@ -786,7 +787,8 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           </select>
         </div>
       </div>
-      <button class="primary" id="quickSpeakBtn">Speak</button>
+      <button class="primary" id="quickDictateBtn">🎤 Dictate</button>
+      <button class="icon" id="quickSpeakBtn" title="Speak this text aloud">🔊</button>
       <button class="ghost" id="quickVoiceBtn">🎙 Practice in Voice practice</button>
       <button class="ghost" id="quickLogBtn">Log as practiced</button>
       <div class="status-msg" id="quickSpeakNote"></div>
@@ -1616,11 +1618,10 @@ function renderTodayStrip(){
   const box = document.getElementById('todayStrip');
   if(!box) return;
   const dueAll = getDueReviews();
-  const hotAll = getDueHotLayer();
-  const dueTotal = dueAll.length + hotAll.length;
+  const dueTotal = dueAll.length;
   const lines = [];
 
-  lines.push(`<div class="today-strip-line"><strong>${dueTotal}</strong> due for review (${dueAll.length} station · ${hotAll.length} hot-layer) <button class="ghost" data-goto="review" style="margin-left:6px;">Go to Review →</button></div>`);
+  lines.push(`<div class="today-strip-line"><strong>${dueTotal}</strong> due for review <button class="ghost" data-goto="review" style="margin-left:6px;">Go to Review →</button></div>`);
 
   if(dueTotal > 40){
     lines.push('<div class="today-strip-line due-meta">Queue\'s grown past a healthy daily size — a couple of Quick Reviews below chip away at it without needing a full Review session.</div>');
@@ -1778,58 +1779,36 @@ function getDueReviews(){
   const today = todayStr();
   return state.bank.filter(p=>{ ensureSrs(p); return p.srs.nextReview <= today; });
 }
-function getDueHotLayer(){
-  const today = todayStr();
-  const items = [];
-  state.bank.forEach(p=>{
-    ensureSrs(p);
-    HOT_LAYER_OFFSETS.forEach(offset=>{
-      if((p.hotLayerDone||[]).includes(offset)) return;
-      if(!p.dateAdded) return;
-      if(addDays(p.dateAdded, offset) === today) items.push({ phrase: p, offset });
-    });
-  });
-  return items;
-}
 let reviewFilter = { query: '', category: '' };
+// Formats a date already stored on the phrase (lastPracticed / srs.nextReview) for display.
+// Nothing new is saved here — the row doesn't grow, this just reads what's already there.
+function fmtReviewDate(d){
+  if(!d) return 'never';
+  const diff = daysBetween(todayStr(), d);
+  if(diff === 0) return 'today (' + d + ')';
+  if(diff === 1) return 'tomorrow (' + d + ')';
+  if(diff === -1) return 'yesterday (' + d + ')';
+  return d + (diff > 0 ? ' (in ' + diff + 'd)' : ' (' + (-diff) + 'd ago)');
+}
 function renderReview(){
   updateCategoryDropdowns();
   const dueAll = getDueReviews();
-  const hotAll = getDueHotLayer();
   const filterActive = !!(reviewFilter.query || reviewFilter.category);
   const due = dueAll.filter(p => matchesFilter(p, reviewFilter.query, reviewFilter.category));
-  const hot = hotAll.filter(h => matchesFilter(h.phrase, reviewFilter.query, reviewFilter.category));
   const summary = document.getElementById('reviewSummary');
   const list = document.getElementById('reviewList');
   summary.textContent = filterActive
-    ? `Showing ${due.length} of ${dueAll.length} due for station review · ${hot.length} of ${hotAll.length} hot-layer reinforcement${hotAll.length===1?'':'s'} matching this filter`
-    : due.length + ' due for station review · ' + hot.length + ' hot-layer reinforcement' + (hot.length===1?'':'s');
-  if(due.length === 0 && hot.length === 0){
+    ? `Showing ${due.length} of ${dueAll.length} due for station review matching this filter`
+    : due.length + ' due for station review';
+  if(due.length === 0){
     list.innerHTML = filterActive
       ? '<div class="empty">No due items match that search.</div>'
       : '<div class="empty">Nothing due right now — check back tomorrow.</div>';
     return;
   }
   list.innerHTML = '';
-  hot.forEach(({phrase:p, offset})=>{
-    const card = document.createElement('div');
-    card.className = 'due-card';
-    card.innerHTML = `
-      <div class="phrase-texts">
-        <div class="phrase-en">${mdToHtml(p.en)} <span class="hot-badge">Hot · day ${offset}</span></div>
-        ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
-      </div>
-      <div class="card-actions" style="margin-top:8px;">
-        ${p.en ? `<button class="icon" data-speak="en" data-id="${p.id}">EN</button>` : ''}
-        ${p.ar ? `<button class="icon" data-speak="ar" data-id="${p.id}">AR</button>` : ''}
-        ${p.en ? `<button class="icon wide" data-copy="en" data-id="${p.id}" title="Copy English">⧉ EN</button>` : ''}
-        ${p.ar ? `<button class="icon wide" data-copy="ar" data-id="${p.id}" title="Copy Arabic">⧉ AR</button>` : ''}
-        <button class="icon${p.starred ? ' starred' : ''}" data-star="${p.id}" title="${p.starred ? 'Remove star' : 'Star'}">${p.starred ? '★' : '☆'}</button>
-        <button class="ghost" data-hotdone="${p.id}" data-offset="${offset}">Mark reinforced</button>
-      </div>`;
-    list.appendChild(card);
-  });
   due.forEach(p=>{
+    ensureSrs(p);
     const card = document.createElement('div');
     card.className = 'due-card';
     card.innerHTML = `
@@ -1837,6 +1816,7 @@ function renderReview(){
         <div class="phrase-en">${mdToHtml(p.en)} <span class="station-pill">Station ${p.srs.station}</span></div>
         ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
         <div class="due-meta">${p.srs.reps}/${MIN_TO_ADVANCE[p.srs.station]} reps at this station${p.category ? ' · '+escapeHtml(p.category) : ''}</div>
+        <div class="due-meta">Last: ${fmtReviewDate(p.lastPracticed)} · Next: ${fmtReviewDate(p.srs.nextReview)}</div>
       </div>
       <div>
         <div class="card-actions">
@@ -1867,18 +1847,6 @@ document.addEventListener('click', async (e)=>{
       await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Review · rated ' + rateVal + '/5' + (p.category ? ' · ' + p.category : ''));
       renderReview();
       renderDailyPlan();
-    }
-    return;
-  }
-  const hotId = e.target.dataset.hotdone;
-  if(hotId){
-    const p = state.bank.find(x=>x.id === hotId);
-    if(p){
-      p.hotLayerDone = p.hotLayerDone || [];
-      p.hotLayerDone.push(parseInt(e.target.dataset.offset,10));
-      await saveBank();
-      await addLogEntry(p.ar || p.en, p.ar ? 'ar' : 'en', 'Review · hot-layer reinforcement' + (p.category ? ' · ' + p.category : ''));
-      renderReview();
     }
     return;
   }
@@ -2078,7 +2046,7 @@ function updateCategoryDropdowns(){
     // practice/review pickers stay plain so they don't get crowded.
     const withCounts = id === 'bankCategoryFilter';
     // The Practice set picker also gets "★ Starred" (with how many are starred) at the top.
-    const starredOpt = id === 'practiceCategoryFilter'
+    const starredOpt = (id === 'practiceCategoryFilter' || id === 'reviewCategoryFilter')
       ? `<option value="${STARRED_CATEGORY}">★ Starred (${state.bank.filter(p => p.starred).length})</option>` : '';
     sel.innerHTML = '<option value="">All categories</option>' + starredOpt + cats.map(c=>
       `<option value="${escapeHtml(c)}">${escapeHtml(c)}${withCounts ? ' | ' + counts[c] : ''}</option>`
@@ -3092,6 +3060,60 @@ document.getElementById('quickSpeakBtn').addEventListener('click', ()=>{
   }
   speak(q.text, q.lang);
 });
+// ---------- Quick practice: voice-to-text (Web Speech API) ----------
+// Separate from speak()/speechSynthesis (text-to-speech) used everywhere else in the
+// app — this is speechRECOGNITION, only wired to this one button, so it can't affect
+// any other feature. Not every browser supports it (best on Chrome/Edge; Safari/iOS
+// support is partial; recognition quality for Arabic varies by device).
+let quickRecognizer = null, quickListening = false;
+function quickStopDictation(){
+  quickListening = false;
+  if(quickRecognizer){ try{ quickRecognizer.stop(); }catch(e){} }
+  const btn = document.getElementById('quickDictateBtn');
+  btn.textContent = '🎤 Dictate'; btn.classList.remove('quick-dictate', 'listening');
+}
+document.getElementById('quickDictateBtn').addEventListener('click', () => {
+  const note = document.getElementById('quickSpeakNote');
+  if(quickListening){ quickStopDictation(); note.textContent = 'Stopped.'; note.className = 'status-msg'; return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){
+    note.textContent = 'Voice typing isn\u2019t supported in this browser — try Chrome on Android or desktop.';
+    note.className = 'status-msg err';
+    return;
+  }
+  if(window.speechSynthesis) window.speechSynthesis.cancel(); // don't let TTS and the mic overlap
+  const lang = document.getElementById('quickLang').value;
+  const textBox = document.getElementById('quickText');
+  const startingText = textBox.value ? textBox.value.trim() + ' ' : '';
+  const rec = new SR();
+  quickRecognizer = rec;
+  rec.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  let finalText = '';
+  rec.onstart = () => {
+    quickListening = true;
+    const btn = document.getElementById('quickDictateBtn');
+    btn.textContent = '⏺ Listening… (tap to stop)'; btn.classList.add('quick-dictate', 'listening');
+    note.textContent = 'Listening — speak now.'; note.className = 'status-msg';
+  };
+  rec.onresult = (e) => {
+    let interim = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const chunk = e.results[i][0].transcript;
+      if(e.results[i].isFinal) finalText += chunk + ' '; else interim += chunk;
+    }
+    textBox.value = (startingText + finalText + interim).trim();
+  };
+  rec.onerror = (e) => {
+    const msgs = { 'not-allowed': 'Microphone permission was denied.', 'no-speech': 'Didn\u2019t catch anything — try again.', 'network': 'A network error interrupted voice typing.' };
+    note.textContent = msgs[e.error] || ('Voice typing stopped: ' + e.error + '.');
+    note.className = 'status-msg err';
+  };
+  rec.onend = () => { quickStopDictation(); };
+  try{ rec.start(); }catch(e){ note.textContent = 'Could not start the microphone.'; note.className = 'status-msg err'; }
+});
+
 document.getElementById('quickVoiceBtn').addEventListener('click', ()=>{
   const q = quickPrepare(); if(!q) return;
   goToTab('grammar');
