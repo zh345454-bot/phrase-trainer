@@ -3060,58 +3060,73 @@ document.getElementById('quickSpeakBtn').addEventListener('click', ()=>{
   }
   speak(q.text, q.lang);
 });
-// ---------- Quick practice: voice-to-text (Web Speech API) ----------
-// Separate from speak()/speechSynthesis (text-to-speech) used everywhere else in the
-// app — this is speechRECOGNITION, only wired to this one button, so it can't affect
-// any other feature. Not every browser supports it (best on Chrome/Edge; Safari/iOS
-// support is partial; recognition quality for Arabic varies by device).
-let quickRecognizer = null, quickListening = false;
-function quickStopDictation(){
-  quickListening = false;
-  if(quickRecognizer){ try{ quickRecognizer.stop(); }catch(e){} }
+// ---------- Quick practice: voice-to-text ----------
+// Uses the SAME record-then-transcribe path as Voice practice (MediaRecorder → your
+// Apps Script's Gemini transcription), not the browser's live SpeechRecognition API.
+// Live recognition repeats/duplicates words as it revises its own interim guesses —
+// that was the "sensitive, repeats a few times" bug. A single recording sent once for
+// transcription doesn't have that failure mode, at the cost of getting the text back
+// after you stop instead of live. Separate from speak()/speechSynthesis (text-to-speech)
+// used elsewhere — this only touches this one button.
+let quickRecorder = null, quickChunks = [];
+function quickDictateReset(){
   const btn = document.getElementById('quickDictateBtn');
-  btn.textContent = '🎤 Dictate'; btn.classList.remove('quick-dictate', 'listening');
+  btn.textContent = '🎤 Dictate'; btn.disabled = false; btn.classList.remove('quick-dictate', 'listening');
 }
-document.getElementById('quickDictateBtn').addEventListener('click', () => {
-  const note = document.getElementById('quickSpeakNote');
-  if(quickListening){ quickStopDictation(); note.textContent = 'Stopped.'; note.className = 'status-msg'; return; }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){
-    note.textContent = 'Voice typing isn\u2019t supported in this browser — try Chrome on Android or desktop.';
-    note.className = 'status-msg err';
-    return;
+document.getElementById('quickDictateBtn').addEventListener('click', async () => {
+  const note = document.getElementById('quickSpeakNote'), btn = document.getElementById('quickDictateBtn');
+  if(quickRecorder && quickRecorder.state === 'recording'){ quickRecorder.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    note.textContent = 'This browser does not support audio recording.'; note.className = 'status-msg err'; return;
+  }
+  if(!state.settings.webAppUrl){
+    note.textContent = 'Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.'; note.className = 'status-msg err'; return;
   }
   if(window.speechSynthesis) window.speechSynthesis.cancel(); // don't let TTS and the mic overlap
-  const lang = document.getElementById('quickLang').value;
-  const textBox = document.getElementById('quickText');
-  const startingText = textBox.value ? textBox.value.trim() + ' ' : '';
-  const rec = new SR();
-  quickRecognizer = rec;
-  rec.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
-  rec.continuous = true;
-  rec.interimResults = true;
-  let finalText = '';
-  rec.onstart = () => {
-    quickListening = true;
-    const btn = document.getElementById('quickDictateBtn');
-    btn.textContent = '⏺ Listening… (tap to stop)'; btn.classList.add('quick-dictate', 'listening');
-    note.textContent = 'Listening — speak now.'; note.className = 'status-msg';
-  };
-  rec.onresult = (e) => {
-    let interim = '';
-    for(let i = e.resultIndex; i < e.results.length; i++){
-      const chunk = e.results[i][0].transcript;
-      if(e.results[i].isFinal) finalText += chunk + ' '; else interim += chunk;
-    }
-    textBox.value = (startingText + finalText + interim).trim();
-  };
-  rec.onerror = (e) => {
-    const msgs = { 'not-allowed': 'Microphone permission was denied.', 'no-speech': 'Didn\u2019t catch anything — try again.', 'network': 'A network error interrupted voice typing.' };
-    note.textContent = msgs[e.error] || ('Voice typing stopped: ' + e.error + '.');
-    note.className = 'status-msg err';
-  };
-  rec.onend = () => { quickStopDictation(); };
-  try{ rec.start(); }catch(e){ note.textContent = 'Could not start the microphone.'; note.className = 'status-msg err'; }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    quickChunks = [];
+    quickRecorder = new MediaRecorder(stream);
+    quickRecorder.ondataavailable = ev => { if(ev.data.size > 0) quickChunks.push(ev.data); };
+    quickRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop()); // release the mic indicator
+      const blob = new Blob(quickChunks, { type: quickRecorder.mimeType || 'audio/webm' });
+      quickChunks = [];
+      btn.textContent = 'Transcribing…'; btn.disabled = true; btn.classList.remove('listening');
+      note.textContent = 'Transcribing…'; note.className = 'status-msg';
+      try{
+        const base64 = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(',')[1]);
+          r.onerror = () => reject(new Error('Could not read the recording.'));
+          r.readAsDataURL(blob);
+        });
+        const lang = document.getElementById('quickLang').value;
+        const res = await fetch(state.settings.webAppUrl, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: sheetPostBody({ type: 'transcribe', audio: base64, mimeType: blob.type, language: lang })
+        });
+        const data = await res.json();
+        if(data.status !== 'ok') throw new Error(data.message || 'Transcription failed.');
+        if(!data.text){
+          note.textContent = 'Nothing was heard in that recording — try again, closer to the mic.'; note.className = 'status-msg err';
+        } else {
+          const box = document.getElementById('quickText');
+          box.value = (box.value ? box.value.trim() + ' ' : '') + data.text;
+          note.textContent = ''; note.className = 'status-msg';
+        }
+      }catch(err){
+        note.textContent = err.message || 'Transcription failed.'; note.className = 'status-msg err';
+      }
+      quickDictateReset();
+    };
+    quickRecorder.start();
+    btn.textContent = '⏺ Recording… (tap to stop)'; btn.classList.add('quick-dictate', 'listening');
+    note.textContent = 'Recording — speak now, then tap to stop.'; note.className = 'status-msg';
+  }catch(err){
+    note.textContent = 'Could not access the microphone.'; note.className = 'status-msg err';
+    quickDictateReset();
+  }
 });
 
 document.getElementById('quickVoiceBtn').addEventListener('click', ()=>{
