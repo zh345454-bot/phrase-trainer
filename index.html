@@ -3775,6 +3775,16 @@ function bumpGapSyncInBackground(){
   gapSyncTimer = setTimeout(()=>{ coreSyncGaps().catch(()=>{}); }, 2000);
 }
 
+// Same pattern for the Hours log: without this, a logged session only reached the
+// Sheet if you remembered to press "Sync hours with Sheet" — which is why hours logged
+// on one device weren't showing up on another.
+let hrsSyncTimer = null;
+function bumpHrsSyncInBackground(){
+  if(!state.settings.webAppUrl) return;
+  clearTimeout(hrsSyncTimer);
+  hrsSyncTimer = setTimeout(()=>{ coreSyncHours().catch(()=>{}); }, 2000);
+}
+
 // Catches this device up with progress made on another device today.
 async function coreRestoreDrills(){
   const url = state.settings.webAppUrl;
@@ -8758,6 +8768,7 @@ async function hrsSaveSession(form){
     await saveGaps(); renderGaps();
   }
   hrsSave(); hrsPending = null;
+  bumpHrsSyncInBackground();
   renderHours();
   gapToastMsg(`Logged ${minutes} min of ${HRS_SKILL_LABELS[skill].toLowerCase()} (${LANG_NAMES[lang]}).${nw.length ? ' ' + nw.length + ' new word' + (nw.length === 1 ? '' : 's') + ' added to Gaps.' : ''}`);
   if(typeof renderDashboard === 'function') renderDashboard();
@@ -8870,7 +8881,7 @@ document.getElementById('hrsRoot').addEventListener('click', async (e) => {
   if(act === 'del'){
     if(!confirm('Delete this session?')) return;
     const x = state.hours.sessions.find(z => z.id === a.dataset.id);
-    if(x){ state.hours.selfSeen[hrsKey(x.date, x.lang)] = true; state.hours.sessions = state.hours.sessions.filter(z => z.id !== x.id); hrsSave(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
+    if(x){ state.hours.selfSeen[hrsKey(x.date, x.lang)] = true; state.hours.sessions = state.hours.sessions.filter(z => z.id !== x.id); hrsSave(); bumpHrsSyncInBackground(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
     return;
   }
 });
