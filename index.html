@@ -810,6 +810,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="new">New phrases</option>
             <option value="weak">Weak spots</option>
             <option value="oldest">Least recently practiced</option>
+            <option value="midpoint">Midpoint of every station</option>
           </select>
         </div>
         <div class="field" style="max-width:110px;">
@@ -1593,7 +1594,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.view === 'starred') renderStarred();
     if(btn.dataset.view === 'drills'){ renderDrills(); renderDrillsSpeakingLine(); }
     if(btn.dataset.view === 'quran') renderQuran();
-    if(btn.dataset.view === 'gaps') renderGaps();
+    if(btn.dataset.view === 'gaps'){
+      renderGaps();
+      if(state.settings.webAppUrl) coreRestoreGaps().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
+    }
     if(btn.dataset.view === 'today') renderDashboard();
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
     if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
@@ -2977,6 +2981,38 @@ document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
     selected = shuffle(pool.filter(isWeak)).slice(0, count);
   } else if(mode === 'oldest'){
     selected = pool.slice().sort((a,b)=> (a.practiceCount||0) - (b.practiceCount||0) || Math.random() - 0.5).slice(0, count);
+  } else if(mode === 'midpoint'){
+    // Pulls from EVERY station (2 through 7 — station 1's gap is 0 days, so it has no
+    // "waiting period" to be partway through) round-robin, so a set never fills up with
+    // just one station's items. Within a station, "midpoint" is the middle third of its
+    // gap (35%-65%) rather than one exact day, since almost nothing lands on an exact
+    // midpoint day. Only items NOT YET due are eligible — once something is actually due,
+    // it belongs to Review/the "Due for review" focus, not here.
+    const stations = [2, 3, 4, 5, 6, 7];
+    const byStation = {};
+    stations.forEach(st => {
+      const gap = STATION_GAP_DAYS[st];
+      const lo = Math.ceil(gap * 0.35), hi = Math.floor(gap * 0.65);
+      byStation[st] = shuffle(pool.filter(p => {
+        if(p.srs.station !== st || p.srs.nextReview <= today) return false;
+        const daysSincePassing = gap - daysBetween(today, p.srs.nextReview);
+        return daysSincePassing >= lo && daysSincePassing <= hi;
+      }));
+    });
+    let anyLeft = true;
+    while(selected.length < count && anyLeft){
+      anyLeft = false;
+      for(const st of stations){
+        if(selected.length >= count) break;
+        if(byStation[st].length){ selected.push(byStation[st].shift()); anyLeft = true; }
+      }
+    }
+    window.__lastMidpointByStation = stations.map(st => st + ': ' + pool.filter(p => {
+      if(p.srs.station !== st || p.srs.nextReview <= today) return false;
+      const gap = STATION_GAP_DAYS[st], lo = Math.ceil(gap * 0.35), hi = Math.floor(gap * 0.65);
+      const d = gap - daysBetween(today, p.srs.nextReview);
+      return d >= lo && d <= hi;
+    }).length).join(', ');
   } else {
     // Balanced mix (default): ~45% due, ~20% new (capped), ~15% weak spots,
     // remainder filled by least-recently-practiced items — preferring ones
@@ -3019,7 +3055,8 @@ document.getElementById('genPracticeBtn').addEventListener('click', ()=>{
     const dueCount = pool.filter(isDue).length;
     const weakCount = pool.filter(isWeak).length;
     const poolLabel = boldLabel ? `matching pool (${boldLabel})` : 'bank';
-    noteEl.textContent = `${selected.length} phrase${selected.length===1?'':'s'} in this set · ${dueCount} due overall · ${weakCount} weak spot${weakCount===1?'':'s'} in ${poolLabel} · ${getNewIntroTodayCount()}/${state.settings.newPerDayCap||0} new phrases introduced today.`;
+    const midpointSuffix = mode === 'midpoint' ? ` · candidates near midpoint by station — ${window.__lastMidpointByStation}` : '';
+    noteEl.textContent = `${selected.length} phrase${selected.length===1?'':'s'} in this set${midpointSuffix} · ${dueCount} due overall · ${weakCount} weak spot${weakCount===1?'':'s'} in ${poolLabel} · ${getNewIntroTodayCount()}/${state.settings.newPerDayCap||0} new phrases introduced today.`;
   }
 });
 document.getElementById('newPerDayCapInput').addEventListener('change', async (e)=>{
@@ -3804,7 +3841,10 @@ async function coreRestoreDrills(){
 }
 // Coming back to this tab/app after using another device → catch up silently.
 document.addEventListener('visibilitychange', ()=>{
-  if(!document.hidden && state.settings && state.settings.webAppUrl) coreRestoreDrills().catch(()=>{});
+  if(!document.hidden && state.settings && state.settings.webAppUrl){
+    coreRestoreDrills().catch(()=>{});
+    coreRestoreGaps().catch(()=>{});
+  }
 });
 
 async function coreBackupBank(){
@@ -9481,6 +9521,9 @@ document.addEventListener('keydown', (e) => {
   // rest of the app loading. coreRestoreDrills() re-renders Drills itself
   // once (if) it resolves.
   if(state.settings.webAppUrl) coreRestoreDrills().catch(()=>{});
+  // Gaps had no equivalent catch-up, so reviews done on another device never showed
+  // up here until you happened to rate/log something yourself (which pushes+pulls).
+  if(state.settings.webAppUrl) coreRestoreGaps().catch(()=>{});
 
   if(!state.bank.length){
     state.bank = [
