@@ -1350,6 +1350,17 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </div>
 </div>
 
+<div class="modal-backdrop" id="wordLevelModal">
+  <div class="modal" style="max-width:480px; max-height:80vh; overflow-y:auto;">
+    <h2>🎓 Word level</h2>
+    <p style="margin-top:-6px;" class="count-note">Checked against your EN/AR level tabs first, then your WordLevels staging tab. Nothing here changes your vocabulary automatically.</p>
+    <div id="wordLevelBody"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeWordLevel">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
@@ -2098,6 +2109,7 @@ function phraseCardHtml(p, opts){
       ${showSentenceBuild ? `<button class="ghost" data-sbcard="${p.id}" title="Practice making a brand-new sentence with the bolded word in this phrase">🧩 Build a sentence</button>` : ''}
       ${showHardChunk && hasBold && !p.hardChunk ? `<button class="ghost" data-hcmark="${p.id}" title="Track this bolded term through the hard-chunk pipeline">Mark hard chunk</button>` : ''}
       ${showHardChunk && p.hardChunk ? `<button class="ghost" data-hcunmark="${p.id}" title="Stop tracking this phrase's pipeline">Unmark hard chunk</button>` : ''}
+      ${hasBold && (!opts || opts.showWordLevel !== false) ? `<button class="ghost" data-checklevel="${p.id}" title="Look up the level of this phrase's bolded term(s)">🎓 Check level</button>` : ''}
       ${showEdit ? `<button class="ghost" data-edit-phrase="${p.id}" title="Edit text, incl. bold">✎ Edit</button>` : ''}
       ${showLog && p.en ? `<button class="ghost" data-log="en" data-id="${p.id}">Log EN</button>` : ''}
       ${showLog && p.ar ? `<button class="ghost" data-log="ar" data-id="${p.id}">Log AR</button>` : ''}
@@ -2788,6 +2800,12 @@ document.addEventListener('click', async (e)=>{
       p.hardChunk = false;
       await saveBank(); renderBank(); renderStarred();
     }
+    return;
+  }
+  const checkLevelId = e.target.dataset.checklevel;
+  if(checkLevelId){
+    const p = state.bank.find(x=>x.id === checkLevelId);
+    if(p) await openWordLevelModal(p);
     return;
   }
   const hcNextId = e.target.dataset.hcnext;
@@ -3495,6 +3513,312 @@ function vocabBenchmarkFor(lang, count){
   const pct = next ? Math.round(((count - cur.from) / (next.from - cur.from)) * 100) : 100;
   return { cur, next, togo: next ? next.from - count : 0, pct };
 }
+
+// ---------- Word Level Estimation (bolded phrases) ----------------------
+// Lookup priority, per the design: your existing authoritative EN/AR tabs
+// (word | pos | Levels) first, then the WordLevels staging tab (AI
+// suggestions / manual levels awaiting review), else "not yet leveled".
+// A WordLevels entry never overrides an EN/AR one. This module only reads —
+// it never writes to EN/AR, and Batch 1 doesn't write to WordLevels either.
+let wordLevelsCache = { en: null, ar: null, staging: null, loading: false, loadedAt: null };
+
+// Same normalisation already used to match bolded segments against each
+// other (normalizeBoldKey), reused here so an EN/AR/WordLevels term lines up
+// with a bolded phrase term regardless of casing/diacritics.
+function normalizeTermKey(term, lang){
+  return String(term || '').trim().split(/\s+/)
+    .map(w => normalizeWordKey(w, lang)).filter(Boolean).join(' ');
+}
+
+async function fetchWordLevelRows(type){
+  const url = state.settings.webAppUrl;
+  if(!url) throw new Error('Add your Apps Script Web App URL in Sheet settings first.');
+  const res = await fetch(sheetGetUrl(url, { type }), { method: 'GET' });
+  const data = await res.json();
+  throwIfRejected(data);
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+// Loads (or reloads) EN, AR and WordLevels into memory for this session.
+// Not persisted to localStorage on purpose — EN/AR are your own sheets and
+// can change outside the app, so each session re-checks the sheet rather
+// than trusting a stale cache.
+async function ensureWordLevelsLoaded(force){
+  if(!force && wordLevelsCache.en && wordLevelsCache.ar && wordLevelsCache.staging) return wordLevelsCache;
+  const [enRows, arRows, stagingRows] = await Promise.all([
+    fetchWordLevelRows('en'),
+    fetchWordLevelRows('ar'),
+    fetchWordLevelRows('wordlevels')
+  ]);
+  const enMap = new Map();
+  enRows.forEach(r => { const k = normalizeTermKey(r.word, 'en'); if(k && !enMap.has(k)) enMap.set(k, r); });
+  const arMap = new Map();
+  arRows.forEach(r => { const k = normalizeTermKey(r.word, 'ar'); if(k && !arMap.has(k)) arMap.set(k, r); });
+  const stagingMap = new Map();
+  stagingRows.forEach(r => {
+    const lang = (r.lang || '').toLowerCase() === 'ar' ? 'ar' : 'en';
+    const k = lang + '|' + normalizeTermKey(r.term, lang);
+    if(k) stagingMap.set(k, r); // a later row (lower in the sheet) wins, so a hand-edited fix overrides an older one
+  });
+  wordLevelsCache = { en: enMap, ar: arMap, staging: stagingMap, loading: false, loadedAt: Date.now() };
+  return wordLevelsCache;
+}
+
+// EN/AR (authoritative) -> WordLevels (staging) -> not yet leveled.
+function lookupWordLevel(term, lang){
+  const key = normalizeTermKey(term, lang);
+  if(!key) return { status: 'unleveled' };
+  const authMap = lang === 'ar' ? wordLevelsCache.ar : wordLevelsCache.en;
+  const authHit = authMap && authMap.get(key);
+  if(authHit) return { status: 'leveled', level: authHit.levels || '', pos: authHit.pos || '', source: 'auth' };
+  const stagingHit = wordLevelsCache.staging && wordLevelsCache.staging.get(lang + '|' + key);
+  if(stagingHit) return { status: 'leveled', level: stagingHit.level || '', source: stagingHit.source === 'manual' ? 'manual' : 'ai', note: stagingHit.note || '' };
+  return { status: 'unleveled' };
+}
+
+// Where a free-text level string sits on the SAME ladder the header already
+// uses (VOCAB_BENCHMARKS) — matches the highest stage label mentioned in the
+// text, so "B1/B2" or "around C1" still resolves to something comparable.
+// Returns -1 if nothing on the ladder is mentioned.
+function matchLadderStageIdx(levelText, lang){
+  const stages = VOCAB_BENCHMARKS[lang].stages;
+  const txt = String(levelText || '').toUpperCase();
+  for(let i = stages.length - 1; i >= 0; i--){
+    if(txt.includes(stages[i].label.toUpperCase())) return i;
+  }
+  return -1;
+}
+
+async function openWordLevelModal(p){
+  const modal = document.getElementById('wordLevelModal');
+  const body = document.getElementById('wordLevelBody');
+  wlUiState = {}; // fresh per-term UI state each time the modal opens (Ask AI / manual entry)
+  body.innerHTML = '<p class="count-note">Checking your level tabs…</p>';
+  modal.classList.add('open');
+  try{
+    await ensureWordLevelsLoaded(false);
+  }catch(err){
+    body.innerHTML = `<p class="count-note">Couldn't load level data${err && err.message ? ' (' + err.message + ')' : ''}.</p>`;
+    return;
+  }
+  body.innerHTML = wordLevelModalHtml(p);
+}
+
+function wordLevelModalHtml(p){
+  wlCurrentPhrase = p;
+  const terms = [];
+  extractBoldSegments(p.en).forEach(seg => terms.push({ lang: 'en', text: stripBold(seg) }));
+  extractBoldSegments(p.ar).forEach(seg => terms.push({ lang: 'ar', text: stripBold(seg) }));
+  wlCurrentTerms = terms;
+  if(!terms.length) return '<p class="count-note">No bolded terms in this phrase.</p>';
+  const vocab = countUniqueBoldWords();
+  const rows = terms.map((t, idx) => {
+    const res = lookupWordLevel(t.text, t.lang);
+    let levelLine, flagLine = '';
+    if(res.status === 'leveled'){
+      const sourceLabel = res.source === 'auth' ? '' : (res.source === 'manual' ? ' — manual (WordLevels)' : ' — AI estimate (WordLevels)');
+      const arCaution = t.lang === 'ar' && res.source !== 'auth'
+        ? ' <span class="count-note">Arabic estimates are less reliable than English — treat as a rough guide, not authoritative.</span>' : '';
+      levelLine = `≈ ${escapeHtml(res.level || '—')}${sourceLabel}${arCaution}`;
+      const bench = vocabBenchmarkFor(t.lang, vocab[t.lang].unique);
+      const curIdx = VOCAB_BENCHMARKS[t.lang].stages.findIndex(s => s.label === bench.cur.label);
+      const termIdx = matchLadderStageIdx(res.level, t.lang);
+      if(termIdx > -1 && curIdx > -1 && termIdx > curIdx){
+        flagLine = `<div class="due-meta" style="color:var(--teal);">Above your current level (≈ ${escapeHtml(bench.cur.label)}) — consider <strong>Mark hard chunk</strong> on this phrase.</div>`;
+      }
+    } else {
+      levelLine = 'Not yet leveled.';
+    }
+    return `<div class="bold-row-wrap">
+      <div class="bold-row"><span class="bold-chip"${t.lang === 'ar' ? ' dir="rtl"' : ''}>${escapeHtml(t.text)}</span></div>
+      <div>${levelLine}</div>
+      ${flagLine}
+      ${wlActionsHtml(idx, t, res)}
+    </div>`;
+  }).join('');
+  const curLines = ['en', 'ar'].filter(l => terms.some(t => t.lang === l)).map(l => {
+    const b = vocabBenchmarkFor(l, vocab[l].unique);
+    return `<div class="due-meta">Your current ${l === 'en' ? 'English' : 'Arabic'} level: ≈ ${escapeHtml(b.cur.label)} (${vocab[l].unique.toLocaleString()} words)</div>`;
+  }).join('');
+  return rows + curLines;
+}
+
+document.getElementById('closeWordLevel').addEventListener('click', ()=> document.getElementById('wordLevelModal').classList.remove('open'));
+
+// ---- Batch 2: Ask AI suggestion + manual entry, saved to WordLevels ----
+// UI-only state for whichever term row is mid-action; keyed by index into
+// wlCurrentTerms, rebuilt from scratch every time the modal opens. Never
+// touches EN/AR — a term with source:'auth' gets no action row at all, so
+// there is no path in this UI that could ever try to write over them.
+let wlCurrentPhrase = null;
+let wlCurrentTerms = [];
+let wlUiState = {};
+
+function wlRefreshModalBody(){
+  const body = document.getElementById('wordLevelBody');
+  if(body && wlCurrentPhrase) body.innerHTML = wordLevelModalHtml(wlCurrentPhrase);
+}
+
+// Same ladder the header/flagging already uses (VOCAB_BENCHMARKS), so an AI
+// suggestion or a manual entry is always one of these exact labels.
+function wlLadderLabels(lang){
+  return VOCAB_BENCHMARKS[lang].stages.map(s => s.label);
+}
+
+function wlActionsHtml(idx, term, res){
+  if(res.status === 'leveled' && res.source === 'auth') return ''; // EN/AR is authoritative and read-only — nothing to add
+  const ui = wlUiState[idx] || { mode: 'idle' };
+  const existingLevel = res.status === 'leveled' ? (res.level || '') : '';
+  const existingNote = res.status === 'leveled' ? (res.note || '') : '';
+
+  if(ui.mode === 'asking') return '<p class="count-note" style="margin:6px 0 0;">Asking AI…</p>';
+  if(ui.mode === 'saving') return '<p class="count-note" style="margin:6px 0 0;">Saving…</p>';
+
+  if(ui.mode === 'ai-result'){
+    const via = ui.fallback ? '<div class="count-note">⚠ Came from the fallback AI — double-check it.</div>' : '';
+    return `<div class="wl-suggest" style="margin-top:6px;">
+      <div>AI suggests: <strong>${escapeHtml(ui.level || '—')}</strong></div>
+      ${ui.reason ? `<div class="due-meta">${escapeHtml(ui.reason)}</div>` : ''}
+      ${via}
+      <div class="hrs-chips">
+        <button class="ghost" type="button" data-wlaccept="${idx}">✓ Accept</button>
+        <button class="ghost" type="button" data-wleditai="${idx}">✎ Edit before saving</button>
+        <button class="ghost" type="button" data-wlcancel="${idx}">Discard</button>
+      </div>
+    </div>`;
+  }
+
+  if(ui.mode === 'manual-edit'){
+    const labels = wlLadderLabels(term.lang);
+    const prefill = ui.level !== undefined ? ui.level : existingLevel;
+    const options = labels.map(l => `<option value="${escapeHtml(l)}"${l === prefill ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('');
+    return `<div class="wl-manual" style="margin-top:6px;">
+      <select data-wllevelinput="${idx}"><option value="">Select level…</option>${options}</select>
+      <input type="text" data-wlnoteinput="${idx}" placeholder="Optional note" value="${escapeHtml(ui.note !== undefined ? ui.note : existingNote)}" style="margin-top:6px;">
+      ${ui.error ? `<div class="status-msg err">${escapeHtml(ui.error)}</div>` : ''}
+      <div class="hrs-chips">
+        <button class="primary" type="button" data-wlsavemanual="${idx}">Save</button>
+        <button class="ghost" type="button" data-wlcancel="${idx}">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  // idle (default)
+  return `<div class="wl-idle" style="margin-top:6px;">
+    ${ui.error ? `<div class="status-msg err">${escapeHtml(ui.error)}</div>` : ''}
+    <div class="hrs-chips">
+      <button class="ghost" type="button" data-wlask="${idx}">🤖 Ask AI</button>
+      <button class="ghost" type="button" data-wlmanual="${idx}">✎ ${res.status === 'leveled' ? 'Edit' : 'Set manually'}</button>
+    </div>
+  </div>`;
+}
+
+async function wlAskAi(idx){
+  const term = wlCurrentTerms[idx];
+  if(!term) return;
+  wlUiState[idx] = { mode: 'asking' };
+  wlRefreshModalBody();
+  const labels = wlLadderLabels(term.lang);
+  const langName = term.lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a vocabulary-level assessor for language learners. Reply with ONLY one JSON object, no markdown fences.';
+  const prompt = `Estimate the proficiency level of this ${langName} word or phrase: "${term.text}".\nChoose ONLY one level from this list: ${labels.join(', ')}.\nReply with ONLY JSON: {"level":"","reason":""}. level = one label from the list, exactly as written; reason = one short sentence (max ~15 words) explaining the choice.`;
+  try{
+    const { text, fallback } = await callGemini(prompt, { system, useSearch: false });
+    const parsed = parseAiJson(text);
+    const rawLevel = String(parsed.level || '').trim();
+    const matched = labels.find(l => l.toLowerCase() === rawLevel.toLowerCase());
+    wlUiState[idx] = { mode: 'ai-result', level: matched || rawLevel || labels[0], reason: String(parsed.reason || '').trim(), fallback: !!fallback };
+  }catch(err){
+    wlUiState[idx] = { mode: 'idle', error: 'AI request failed: ' + ((err && err.message) || 'unknown error') };
+  }
+  wlRefreshModalBody();
+}
+
+function wlStartManual(idx){
+  const ui = wlUiState[idx] || {};
+  wlUiState[idx] = { mode: 'manual-edit', level: ui.level, note: ui.note };
+  wlRefreshModalBody();
+}
+
+function wlEditAiBeforeSaving(idx){
+  const ui = wlUiState[idx] || {};
+  wlUiState[idx] = { mode: 'manual-edit', level: ui.level, note: ui.reason || '' };
+  wlRefreshModalBody();
+}
+
+function wlCancel(idx){
+  wlUiState[idx] = { mode: 'idle' };
+  wlRefreshModalBody();
+}
+
+async function wlAcceptAi(idx){
+  const ui = wlUiState[idx];
+  if(!ui || ui.mode !== 'ai-result') return;
+  await wlSaveLevel(idx, ui.level, 'ai', ui.reason || '');
+}
+
+async function wlSaveManual(idx){
+  const body = document.getElementById('wordLevelBody');
+  const sel = body.querySelector(`[data-wllevelinput="${idx}"]`);
+  const noteInput = body.querySelector(`[data-wlnoteinput="${idx}"]`);
+  const level = sel ? sel.value.trim() : '';
+  const note = noteInput ? noteInput.value.trim() : '';
+  if(!level){
+    wlUiState[idx] = Object.assign({}, wlUiState[idx], { error: 'Pick a level first.' });
+    wlRefreshModalBody();
+    return;
+  }
+  await wlSaveLevel(idx, level, 'manual', note);
+}
+
+// Writes ONE upserted row into the full WordLevels set and pushes the whole
+// set back — wordlevels_sync on the backend clears and rewrites the sheet
+// each call, so a partial push would silently drop every other saved term.
+// The in-memory cache is only updated after the sheet confirms the write.
+async function wlSaveLevel(idx, level, source, note){
+  const term = wlCurrentTerms[idx];
+  if(!term) return;
+  const url = state.settings.webAppUrl;
+  if(!url){
+    wlUiState[idx] = { mode: 'idle', error: 'Add your Apps Script Web App URL in Sheet settings first.' };
+    wlRefreshModalBody();
+    return;
+  }
+  wlUiState[idx] = { mode: 'saving' };
+  wlRefreshModalBody();
+  try{
+    const key = term.lang + '|' + normalizeTermKey(term.text, term.lang);
+    const existing = wordLevelsCache.staging && wordLevelsCache.staging.get(key);
+    const row = {
+      id: (existing && existing.id) || uid(),
+      lang: term.lang,
+      term: term.text,
+      level,
+      source,
+      note: note || '',
+      updatedAt: new Date().toISOString()
+    };
+    const nextStaging = new Map(wordLevelsCache.staging || []);
+    nextStaging.set(key, row);
+    const rows = [...nextStaging.values()];
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'wordlevels_sync', rows }) });
+    throwIfRejected(await post.json());
+    wordLevelsCache.staging = nextStaging;
+    wlUiState[idx] = { mode: 'idle' };
+  }catch(err){
+    wlUiState[idx] = { mode: 'idle', error: 'Save failed: ' + ((err && err.message) || 'unknown error') };
+  }
+  wlRefreshModalBody();
+}
+
+document.getElementById('wordLevelBody').addEventListener('click', (e)=>{
+  const ask = e.target.closest('[data-wlask]'); if(ask){ wlAskAi(Number(ask.dataset.wlask)); return; }
+  const manual = e.target.closest('[data-wlmanual]'); if(manual){ wlStartManual(Number(manual.dataset.wlmanual)); return; }
+  const editAi = e.target.closest('[data-wleditai]'); if(editAi){ wlEditAiBeforeSaving(Number(editAi.dataset.wleditai)); return; }
+  const accept = e.target.closest('[data-wlaccept]'); if(accept){ wlAcceptAi(Number(accept.dataset.wlaccept)); return; }
+  const saveManual = e.target.closest('[data-wlsavemanual]'); if(saveManual){ wlSaveManual(Number(saveManual.dataset.wlsavemanual)); return; }
+  const cancel = e.target.closest('[data-wlcancel]'); if(cancel){ wlCancel(Number(cancel.dataset.wlcancel)); return; }
+});
 
 // ---- Timeline projection ----------------------------------------------
 // Pace = how many NEW unique words you've been adding per day, worked out
