@@ -1361,6 +1361,17 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </div>
 </div>
 
+<div class="modal-backdrop" id="bulkLevelModal">
+  <div class="modal" style="max-width:480px; max-height:80vh; overflow-y:auto;">
+    <h2>🎓 Level your vocabulary</h2>
+    <p style="margin-top:-6px;" class="count-note">Runs every saved word (not just bolded ones) that isn't already leveled through the AI, a batch of words per call — same EN/AR-first, WordLevels-second priority as the per-phrase check. Progress saves every few batches, so pausing, closing this, or even reloading the page is safe — nothing already saved gets re-asked.</p>
+    <div id="bulkLevelBody"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="closeBulkLevel">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
 
@@ -3514,6 +3525,66 @@ function vocabBenchmarkFor(lang, count){
   return { cur, next, togo: next ? next.from - count : 0, pct };
 }
 
+// Per-WORD proficiency ladder — what a single word's own level is estimated
+// or looked up as (AI suggestion, manual entry, the level-breakdown tally,
+// and matching against your EN/AR "Levels" columns). This is DIFFERENT from
+// VOCAB_BENCHMARKS above, which measures overall vocabulary SIZE (how many
+// words you've saved), not any one word's difficulty. The two language
+// ladders are DIFFERENT LENGTHS, matching what the EN and AR sheets actually
+// use: EN has no A0 or C2, AR has both.
+const WORD_LEVEL_LADDER = {
+  en: ['A1', 'A2', 'B1', 'B2', 'C1'],
+  ar: ['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2']
+};
+// Free-text level (e.g. "B1/B2", "around C1", or an AI reply with extra
+// wording around the code) → the ladder index it most matches, or -1 if none
+// of the codes appear at all. Longest/last-mentioned code wins on a tie so
+// "A1/B1" resolves to the higher one, matching the old stage-ladder behavior.
+function matchWordLevelIdx(levelText, lang){
+  const labels = WORD_LEVEL_LADDER[lang];
+  const txt = String(levelText || '').toUpperCase();
+  for(let i = labels.length - 1; i >= 0; i--){
+    if(new RegExp('\\b' + labels[i] + '\\b').test(txt)) return i;
+  }
+  return -1;
+}
+function matchWordLevelLabel(levelText, lang){
+  const idx = matchWordLevelIdx(levelText, lang);
+  return idx > -1 ? WORD_LEVEL_LADDER[lang][idx] : '';
+}
+
+// AI-facing difficulty categories — the SAME seven names are used for both
+// languages, so the AI never needs to know how many CEFR rungs either
+// language's ladder has. Each category maps PROPORTIONALLY onto whichever
+// WORD_LEVEL_LADDER[lang] is in play (5 rungs for EN, 7 for AR), so the same
+// AI reply ("Intermediate") lands on a different CEFR code per language —
+// this is the conversion step the EN/AR sheets themselves never see; only
+// the resolved CEFR code is ever stored in WordLevels.
+const AI_LEVEL_CATEGORIES = ['Beginner', 'Elementary', 'Pre-Intermediate', 'Intermediate', 'Upper-Intermediate', 'Advanced', 'Proficient'];
+// Tolerant match against the category names: case/space/hyphen-insensitive
+// and ignores surrounding text (a stray "I'd say Advanced." still matches).
+// Longest name checked first so "Pre-Intermediate" / "Upper-Intermediate"
+// aren't mistakenly matched as a looser "Intermediate".
+function matchAiCategoryIdx(text){
+  const norm = s => String(s || '').toUpperCase().replace(/[\s-]+/g, ' ').trim();
+  const txt = norm(text);
+  const order = AI_LEVEL_CATEGORIES.map((label, i) => ({ label, i })).sort((a, b) => b.label.length - a.label.length);
+  for(const { label, i } of order){
+    if(new RegExp('\\b' + norm(label).replace(/ /g, '[\\s-]+') + '\\b').test(txt)) return i;
+  }
+  return -1;
+}
+// AI category index (0–6, on the shared 7-name scale) -> the equivalent rung
+// on THIS language's own CEFR ladder, picked proportionally (not by matching
+// index directly, since the ladders are different lengths).
+function categoryIdxToLangLevel(catIdx, lang){
+  const ladder = WORD_LEVEL_LADDER[lang];
+  if(catIdx < 0 || !ladder) return '';
+  const pct = catIdx / (AI_LEVEL_CATEGORIES.length - 1);
+  const idx = Math.round(pct * (ladder.length - 1));
+  return ladder[idx];
+}
+
 // ---------- Word Level Estimation (bolded phrases) ----------------------
 // Lookup priority, per the design: your existing authoritative EN/AR tabs
 // (word | pos | Levels) first, then the WordLevels staging tab (AI
@@ -3551,9 +3622,18 @@ async function ensureWordLevelsLoaded(force){
     fetchWordLevelRows('wordlevels')
   ]);
   const enMap = new Map();
-  enRows.forEach(r => { const k = normalizeTermKey(r.word, 'en'); if(k && !enMap.has(k)) enMap.set(k, r); });
+  enRows.forEach(r => {
+    const k = normalizeTermKey(r.word, 'en'); if(k && !enMap.has(k)) enMap.set(k, r);
+    const kv = normalizeTermKey(r.wordVoweled, 'en'); if(kv && !enMap.has(kv)) enMap.set(kv, r); // usually unused for EN, harmless if column D is blank
+  });
   const arMap = new Map();
-  arRows.forEach(r => { const k = normalizeTermKey(r.word, 'ar'); if(k && !arMap.has(k)) arMap.set(k, r); });
+  arRows.forEach(r => {
+    const k = normalizeTermKey(r.word, 'ar'); if(k && !arMap.has(k)) arMap.set(k, r);
+    // Diacritics are already stripped by normalizeWordKey, so a tashkil'd bank word
+    // should already match a bare column-A word — but index the voweled form too
+    // (column D) in case column A holds something other than a plain match key.
+    const kv = normalizeTermKey(r.wordVoweled, 'ar'); if(kv && !arMap.has(kv)) arMap.set(kv, r);
+  });
   const stagingMap = new Map();
   stagingRows.forEach(r => {
     const lang = (r.lang || '').toLowerCase() === 'ar' ? 'ar' : 'en';
@@ -3570,7 +3650,13 @@ function lookupWordLevel(term, lang){
   if(!key) return { status: 'unleveled' };
   const authMap = lang === 'ar' ? wordLevelsCache.ar : wordLevelsCache.en;
   const authHit = authMap && authMap.get(key);
-  if(authHit) return { status: 'leveled', level: authHit.levels || '', pos: authHit.pos || '', source: 'auth' };
+  // A row existing in the EN/AR sheet is NOT the same as being leveled — a
+  // blank Levels cell (word added but never rated) must fall through to
+  // staging/AI, not be treated as already done. This was the main reason
+  // most words never reached the AI at all: any word already present as a
+  // bare row (even with an empty Levels column) was being swallowed here
+  // and permanently skipped.
+  if(authHit && String(authHit.levels || '').trim()) return { status: 'leveled', level: authHit.levels, pos: authHit.pos || '', source: 'auth' };
   const stagingHit = wordLevelsCache.staging && wordLevelsCache.staging.get(lang + '|' + key);
   if(stagingHit) return { status: 'leveled', level: stagingHit.level || '', source: stagingHit.source === 'manual' ? 'manual' : 'ai', note: stagingHit.note || '' };
   return { status: 'unleveled' };
@@ -3622,8 +3708,15 @@ function wordLevelModalHtml(p){
       levelLine = `≈ ${escapeHtml(res.level || '—')}${sourceLabel}${arCaution}`;
       const bench = vocabBenchmarkFor(t.lang, vocab[t.lang].unique);
       const curIdx = VOCAB_BENCHMARKS[t.lang].stages.findIndex(s => s.label === bench.cur.label);
-      const termIdx = matchLadderStageIdx(res.level, t.lang);
-      if(termIdx > -1 && curIdx > -1 && termIdx > curIdx){
+      // Proportional position on each word's own ladder (WORD_LEVEL_LADDER,
+      // e.g. A1-C2) vs. the milestone ladder (VOCAB_BENCHMARKS, e.g. how many
+      // words you've saved) — the two ladders have different lengths/meanings,
+      // so compare where each sits as a fraction of its own scale rather than
+      // matching indices directly.
+      const curPct = curIdx > -1 ? curIdx / (VOCAB_BENCHMARKS[t.lang].stages.length - 1) : -1;
+      const termIdx = matchWordLevelIdx(res.level, t.lang);
+      const termPct = termIdx > -1 ? termIdx / (WORD_LEVEL_LADDER[t.lang].length - 1) : -1;
+      if(termPct > -1 && curPct > -1 && termPct > curPct){
         flagLine = `<div class="due-meta" style="color:var(--teal);">Above your current level (≈ ${escapeHtml(bench.cur.label)}) — consider <strong>Mark hard chunk</strong> on this phrase.</div>`;
       }
     } else {
@@ -3659,10 +3752,14 @@ function wlRefreshModalBody(){
   if(body && wlCurrentPhrase) body.innerHTML = wordLevelModalHtml(wlCurrentPhrase);
 }
 
-// Same ladder the header/flagging already uses (VOCAB_BENCHMARKS), so an AI
-// suggestion or a manual entry is always one of these exact labels.
+// The word-DIFFICULTY ladder (WORD_LEVEL_LADDER — CEFR codes, length varies
+// by language), NOT the vocab-count milestone ladder (VOCAB_BENCHMARKS).
+// Used only for the manual "Set level" dropdown, so a hand-entered level is
+// always a real CEFR code for that language's own sheet. The AI itself is
+// prompted with AI_LEVEL_CATEGORIES instead (see wlAskAi/blStart) and its
+// reply is converted to one of these codes via categoryIdxToLangLevel.
 function wlLadderLabels(lang){
-  return VOCAB_BENCHMARKS[lang].stages.map(s => s.label);
+  return WORD_LEVEL_LADDER[lang];
 }
 
 function wlActionsHtml(idx, term, res){
@@ -3718,16 +3815,18 @@ async function wlAskAi(idx){
   if(!term) return;
   wlUiState[idx] = { mode: 'asking' };
   wlRefreshModalBody();
-  const labels = wlLadderLabels(term.lang);
   const langName = term.lang === 'ar' ? 'Arabic' : 'English';
   const system = 'You are a vocabulary-level assessor for language learners. Reply with ONLY one JSON object, no markdown fences.';
-  const prompt = `Estimate the proficiency level of this ${langName} word or phrase: "${term.text}".\nChoose ONLY one level from this list: ${labels.join(', ')}.\nReply with ONLY JSON: {"level":"","reason":""}. level = one label from the list, exactly as written; reason = one short sentence (max ~15 words) explaining the choice.`;
+  const prompt = `Estimate the proficiency level of this ${langName} word or phrase: "${term.text}".\nChoose ONLY one category from this list: ${AI_LEVEL_CATEGORIES.join(', ')}.\nReply with ONLY JSON: {"level":"","reason":""}. level = one category from the list, exactly as written; reason = one short sentence (max ~15 words) explaining the choice.`;
   try{
     const { text, fallback } = await callGemini(prompt, { system, useSearch: false });
     const parsed = parseAiJson(text);
     const rawLevel = String(parsed.level || '').trim();
-    const matched = labels.find(l => l.toLowerCase() === rawLevel.toLowerCase());
-    wlUiState[idx] = { mode: 'ai-result', level: matched || rawLevel || labels[0], reason: String(parsed.reason || '').trim(), fallback: !!fallback };
+    const catIdx = matchAiCategoryIdx(rawLevel);
+    const level = categoryIdxToLangLevel(catIdx, term.lang);
+    wlUiState[idx] = level
+      ? { mode: 'ai-result', level, reason: String(parsed.reason || '').trim(), fallback: !!fallback }
+      : { mode: 'idle', error: `AI reply didn't match a known category ("${rawLevel || '—'}") — try again or set it manually.` };
   }catch(err){
     wlUiState[idx] = { mode: 'idle', error: 'AI request failed: ' + ((err && err.message) || 'unknown error') };
   }
@@ -3819,6 +3918,188 @@ document.getElementById('wordLevelBody').addEventListener('click', (e)=>{
   const saveManual = e.target.closest('[data-wlsavemanual]'); if(saveManual){ wlSaveManual(Number(saveManual.dataset.wlsavemanual)); return; }
   const cancel = e.target.closest('[data-wlcancel]'); if(cancel){ wlCancel(Number(cancel.dataset.wlcancel)); return; }
 });
+
+// ---- Batch 3: bulk leveling — every saved word (not just bolded ones), in
+// batches of many words per AI call instead of one call per word. Reuses
+// the exact same lookup (lookupWordLevel), ladder (wlLadderLabels) and save
+// path (wordlevels_sync, full-set push) as the per-phrase modal — this is
+// just a loop that drives them across the whole vocabulary automatically.
+const WL_BULK_CHUNK = 40;       // words per AI call
+const WL_BULK_SYNC_EVERY = 5;   // push progress to the sheet every N calls, not just at the end
+
+let blWordsCache = null; // {en:[{label,count}], ar:[...]} — snapshot of countUniqueWords(), taken when the modal opens
+function ensureBlWords(){
+  if(blWordsCache) return blWordsCache;
+  const u = countUniqueWords();
+  blWordsCache = { en: u.en.all || [], ar: u.ar.all || [] };
+  return blWordsCache;
+}
+// Recomputed on every render/Start/Resume, so it always reflects whatever is
+// currently in wordLevelsCache — including progress this run already saved,
+// a manual/AI edit made via the per-phrase modal, or another run's saves.
+function blRemaining(lang){
+  return ensureBlWords()[lang].filter(w => {
+    const res = lookupWordLevel(w.label, lang);
+    if(res.status !== 'leveled') return true;
+    if(res.source === 'auth') return false; // your own EN/AR sheet is authoritative — never re-queued
+    // A staging (ai/manual) value that isn't a real code on this language's
+    // ladder — e.g. a pre-fix AR entry like "Intermediate" saved before the
+    // category→CEFR conversion existed — gets treated as unleveled so the
+    // bulk run naturally re-levels it instead of leaving it wrong forever.
+    return matchWordLevelIdx(res.level, lang) < 0;
+  });
+}
+
+function freshBlState(){ return { status: 'idle', processed: 0, total: 0, callsDone: 0, totalCalls: 0, lastError: '' }; }
+let blState = { en: freshBlState(), ar: freshBlState() };
+
+async function openBulkLevelModal(){
+  const modal = document.getElementById('bulkLevelModal');
+  const body = document.getElementById('bulkLevelBody');
+  blWordsCache = null; // take a fresh snapshot of the bank each time this opens
+  body.innerHTML = '<p class="count-note">Checking your level tabs…</p>';
+  modal.classList.add('open');
+  try{
+    await ensureWordLevelsLoaded(false);
+  }catch(err){
+    body.innerHTML = `<p class="count-note">Couldn't load level data${err && err.message ? ' (' + err.message + ')' : ''}.</p>`;
+    return;
+  }
+  body.innerHTML = bulkLevelModalHtml();
+}
+function blRefresh(){
+  const body = document.getElementById('bulkLevelBody');
+  if(body) body.innerHTML = bulkLevelModalHtml();
+}
+document.getElementById('closeBulkLevel').addEventListener('click', ()=> document.getElementById('bulkLevelModal').classList.remove('open'));
+
+function bulkLevelModalHtml(){
+  if(!(wordLevelsCache.en && wordLevelsCache.ar && wordLevelsCache.staging)) return '<p class="count-note">Loading your level data…</p>';
+  return bulkLevelLangHtml('en') + '<hr style="margin:14px 0; border:none; border-top:1px solid var(--line);">' + bulkLevelLangHtml('ar');
+}
+function bulkLevelLangHtml(lang){
+  const langName = lang === 'ar' ? 'Arabic' : 'English';
+  const st = blState[lang];
+  const totalWords = ensureBlWords()[lang].length;
+  const remaining = blRemaining(lang);
+  const leveledCount = totalWords - remaining.length;
+  let controls;
+  if(st.status === 'running'){
+    const pct = st.total ? Math.round((st.processed / st.total) * 100) : 0;
+    controls = `<div class="hs-bar" style="margin:8px 0;"><i style="width:${pct}%;"></i></div>
+      <p class="count-note">Leveling: ${st.processed.toLocaleString()} / ${st.total.toLocaleString()} words (call ${st.callsDone}/${st.totalCalls})…</p>
+      <div class="hrs-chips"><button class="ghost" type="button" data-blstop="${lang}">Pause</button></div>`;
+  } else {
+    const otherRunning = blState[lang === 'en' ? 'ar' : 'en'].status === 'running';
+    const errLine = st.lastError ? `<div class="status-msg err">${escapeHtml(st.lastError)}</div>` : '';
+    if(!remaining.length){
+      controls = `${errLine}<p class="count-note">All ${totalWords.toLocaleString()} ${langName} words are leveled.</p>`;
+    } else {
+      const calls = Math.ceil(remaining.length / WL_BULK_CHUNK);
+      const verb = st.status === 'paused' ? 'Resume' : 'Start';
+      controls = `${errLine}<p class="count-note">${remaining.length.toLocaleString()} of ${totalWords.toLocaleString()} not yet leveled — about ${calls.toLocaleString()} AI call${calls === 1 ? '' : 's'}.</p>
+        <div class="hrs-chips"><button class="primary" type="button" data-blstart="${lang}"${otherRunning ? ' disabled title="Finish or pause the other language first — they share the same WordLevels sheet."' : ''}>🎓 ${verb} ${langName}</button></div>`;
+    }
+  }
+  return `<div class="wl-bulk-lang">
+    <h4 style="margin:0 0 4px;">${langName}</h4>
+    <p class="due-meta" style="margin:0 0 4px;">${leveledCount.toLocaleString()} / ${totalWords.toLocaleString()} leveled so far</p>
+    ${controls}
+  </div>`;
+}
+
+document.getElementById('bulkLevelBody').addEventListener('click', (e)=>{
+  const start = e.target.closest('[data-blstart]'); if(start && !start.disabled){ blStart(start.dataset.blstart); return; }
+  const stop = e.target.closest('[data-blstop]'); if(stop){ blStop(stop.dataset.blstop); return; }
+});
+
+function blStop(lang){
+  blState[lang].stopRequested = true;
+}
+
+// Pushes ONLY this run's own accumulated rows, merged onto whatever is
+// currently live in wordLevelsCache.staging (not a stale snapshot from when
+// the run started) — so a concurrent manual save or the other language's own
+// bulk run can't be clobbered by this sync. wordlevels_sync always rewrites
+// the whole sheet, so the merge has to happen on the client before every push.
+async function blSyncDelta(lang, delta){
+  if(!delta.size) return true;
+  const url = state.settings.webAppUrl;
+  if(!url) return false;
+  try{
+    const merged = new Map(wordLevelsCache.staging || []);
+    delta.forEach((row, key) => merged.set(key, row));
+    const rows = [...merged.values()];
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'wordlevels_sync', rows }) });
+    throwIfRejected(await post.json());
+    wordLevelsCache.staging = merged;
+    delta.clear();
+    return true;
+  }catch(err){
+    blState[lang].lastError = 'Save failed: ' + ((err && err.message) || 'unknown error');
+    return false;
+  }
+}
+
+async function blStart(lang){
+  const st = blState[lang];
+  if(st.status === 'running') return;
+  if(blState[lang === 'en' ? 'ar' : 'en'].status === 'running') return; // one language at a time — see blSyncDelta
+  const url = state.settings.webAppUrl;
+  if(!url){ st.lastError = 'Add your Apps Script Web App URL in Sheet settings first.'; blRefresh(); return; }
+
+  const queue = blRemaining(lang);
+  if(!queue.length){ blRefresh(); return; }
+
+  st.status = 'running'; st.stopRequested = false; st.lastError = '';
+  st.total = queue.length; st.processed = 0;
+  st.totalCalls = Math.ceil(queue.length / WL_BULK_CHUNK); st.callsDone = 0;
+  blRefresh();
+
+  const langName = lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a vocabulary-level assessor for language learners. Reply with ONLY one JSON object, no markdown fences.';
+  const delta = new Map(); // this run's own rows, not yet confirmed synced
+  let chunksSinceSync = 0;
+
+  for(let i = 0; i < queue.length; i += WL_BULK_CHUNK){
+    if(st.stopRequested) break;
+    const chunk = queue.slice(i, i + WL_BULK_CHUNK);
+    const numbered = chunk.map((w, j) => `${j + 1}. ${w.label}`).join('\n');
+    const prompt = `For each numbered ${langName} word below, estimate its proficiency level.\nUse ONLY one of these categories: ${AI_LEVEL_CATEGORIES.join(', ')}.\nReply with ONLY JSON: {"items":[{"n":1,"level":""}, ...]} — one entry per number, matching the numbering exactly, no extra text.\n\n${numbered}`;
+    try{
+      const { text } = await callGemini(prompt, { system, useSearch: false });
+      const parsed = parseAiJson(text);
+      const items = Array.isArray(parsed.items) ? parsed.items : [];
+      items.forEach(it => {
+        const w = chunk[Number(it.n) - 1];
+        if(!w) return;
+        const rawLevel = String(it.level || '').trim();
+        const catIdx = matchAiCategoryIdx(rawLevel);
+        if(catIdx < 0) return; // AI didn't stick to a known category for this one — skip rather than save junk
+        const matched = categoryIdxToLangLevel(catIdx, lang);
+        if(!matched) return;
+        const key = lang + '|' + normalizeTermKey(w.label, lang);
+        const existing = (delta.get(key)) || (wordLevelsCache.staging && wordLevelsCache.staging.get(key));
+        delta.set(key, { id: (existing && existing.id) || uid(), lang, term: w.label, level: matched, source: 'ai', note: '', updatedAt: new Date().toISOString() });
+      });
+      st.callsDone++;
+      st.processed = Math.min(queue.length, i + chunk.length);
+    }catch(err){
+      st.lastError = 'Stopped: ' + ((err && err.message) || 'AI request failed');
+      break;
+    }
+    chunksSinceSync++;
+    blRefresh();
+    if(chunksSinceSync >= WL_BULK_SYNC_EVERY){
+      await blSyncDelta(lang, delta);
+      chunksSinceSync = 0;
+      blRefresh();
+    }
+  }
+  await blSyncDelta(lang, delta); // final save of whatever this run produced, even if it stopped early
+  st.status = st.lastError ? 'error' : (st.stopRequested ? 'paused' : 'done');
+  blRefresh();
+}
 
 // ---- Timeline projection ----------------------------------------------
 // Pace = how many NEW unique words you've been adding per day, worked out
@@ -3913,10 +4194,45 @@ function countUniqueWords(){
       unique: groups.size,
       merges,
       top: recs.filter(r => r.count > 1).sort((a, b) => b.count - a.count).slice(0, 12),
-      firstDates: recs.map(r => r.first).filter(Boolean)
+      firstDates: recs.map(r => r.first).filter(Boolean),
+      all: recs // every distinct word (label + count), not just the top repeats — used for level-breakdown / bulk leveling
     };
   });
   return result;
+}
+
+// How many of this language's distinct saved words already have a level —
+// EN/AR authoritative first, then WordLevels staging, same lookupWordLevel
+// used by the per-phrase modal — bucketed onto WORD_LEVEL_LADDER (the real
+// per-language CEFR ladder: 5 rungs for EN, 7 for AR), NOT VOCAB_BENCHMARKS
+// (that's the separate vocab-COUNT milestone ladder). Purely a tally: it
+// resolves nothing new and writes nothing. Needs wordLevelsCache already
+// loaded; callers check that first.
+function levelBreakdown(lang, wordList){
+  const rungs = WORD_LEVEL_LADDER[lang];
+  const counts = rungs.map(() => 0);
+  let leveled = 0, unleveled = 0;
+  (wordList || []).forEach(w => {
+    const res = lookupWordLevel(w.label, lang);
+    if(res.status !== 'leveled'){ unleveled++; return; }
+    const idx = matchWordLevelIdx(res.level, lang);
+    if(idx > -1){ counts[idx]++; leveled++; }
+    else unleveled++; // has a level string, but not one that matches a known CEFR rung
+  });
+  return { stages: rungs.map((label, i) => ({ label, count: counts[i] })), leveled, unleveled, total: (wordList || []).length };
+}
+let wlHeaderLoadFailed = false;
+function levelBreakdownHtml(lang, wordList){
+  const loaded = !!(wordLevelsCache.en && wordLevelsCache.ar && wordLevelsCache.staging);
+  if(!loaded) return wlHeaderLoadFailed
+    ? '<p class="hs-sum">Word levels: couldn\'t load (check your Apps Script URL in Sheet settings).</p>'
+    : '<p class="hs-sum">Word levels: loading…</p>';
+  const bd = levelBreakdown(lang, wordList);
+  if(!bd.total) return '';
+  const pct = Math.round((bd.leveled / bd.total) * 100);
+  const chips = bd.stages.map(s => `<span class="hs-chip">${escapeHtml(s.label)} ${s.count.toLocaleString()}</span>`).join('');
+  return `<p class="hs-sum">Word levels: <strong>${bd.leveled.toLocaleString()}</strong> / ${bd.total.toLocaleString()} leveled (${pct}%) — ${bd.unleveled.toLocaleString()} not yet leveled</p>
+    <div class="hs-repeats">${chips || '<span class="hs-note">Nothing leveled yet.</span>'}</div>`;
 }
 
 let hsDetailsOpen = false;
@@ -3956,8 +4272,7 @@ function hsHoursLine(lang){
   } catch(e){ return ''; }
 }
 function hsDetailsHtml(boldEntries, boldUniq, words){
-  const block = (lang, label) => {
-    const w = words[lang];
+  const block = (lang, label) => {    const w = words[lang];
     const b = vocabBenchmarkFor(lang, w.unique);
     const merged = Math.max(0, w.total - w.unique);
     const chips = w.top.map(r =>
@@ -3969,9 +4284,11 @@ function hsDetailsHtml(boldEntries, boldUniq, words){
       <div class="hs-bar"><i style="width:${Math.max(0, Math.min(100, b.pct))}%"></i></div>
       ${timelineHtml(lang, w, b)}
       <p class="hs-sum">Bolded: ${boldEntries[lang].toLocaleString()} bold entr${boldEntries[lang] === 1 ? 'y' : 'ies'} → ${boldUniq[lang].unique.toLocaleString()} unique bolded</p>
-      <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>${mergesHtml(w)}`;
+      <div class="hs-repeats">${chips ? '<span class="hs-note">Most repeated: </span>' + chips : '<span class="hs-note">No repeated words yet.</span>'}</div>${mergesHtml(w)}
+      ${levelBreakdownHtml(lang, w.all)}`;
   };
-  return block('en', 'English') + block('ar', 'Arabic')
+  return `<p class="hs-sum"><button class="ghost" type="button" id="openBulkLevelBtn" style="padding:4px 10px; font-size:12.5px;">🎓 Level my vocabulary</button></p>`
+    + block('en', 'English') + block('ar', 'Arabic')
     + '<p class="hs-note"><strong>Why the two lines can disagree:</strong> “saved words” counts only the distinct words in phrases you put in the bank (not everything you already know), on a vocabulary scale; “hours” counts practice time, on a separate scale (English: Cambridge ranges). They are different yardsticks, so they need not match, and neither proves ability. Use the Hours tab for your overall level and the word count for your speaking-vocabulary target.</p>'
     + `<p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.en.source)}</p><p class="hs-src">${escapeHtml(VOCAB_BENCHMARKS.ar.source)}</p>`
     + '<p class="hs-src">Speaking target: English ≈3,000 word families covers ~95% of everyday spoken English, and 5,000–7,000 covers ~98% (Nation 2006; Adolphs &amp; Schmitt 2003). Arabic 3,000 is a loose estimate — no comparable coverage study. Pace ETAs assume you keep the same rate; they are projections, not promises.</p>'
@@ -4001,6 +4318,20 @@ document.addEventListener('click', (e)=>{
   if(e.target && e.target.id === 'hsToggleBtn'){
     hsDetailsOpen = !hsDetailsOpen;
     renderHeaderStats();
+    // Level data (EN/AR + WordLevels) isn't loaded until something needs it —
+    // opening the details panel is the first thing that does, so kick it off
+    // here and re-render once it lands (levelBreakdownHtml shows "loading…"
+    // in the meantime). Already-loaded case (e.g. the 🎓 modal was opened
+    // earlier this session) resolves instantly via ensureWordLevelsLoaded's
+    // own cache check.
+    if(hsDetailsOpen && !(wordLevelsCache.en && wordLevelsCache.ar && wordLevelsCache.staging)){
+      ensureWordLevelsLoaded(false)
+        .then(()=>{ wlHeaderLoadFailed = false; if(hsDetailsOpen) renderHeaderStats(); })
+        .catch(()=>{ wlHeaderLoadFailed = true; if(hsDetailsOpen) renderHeaderStats(); }); // the 🎓 modal still reports the real error message if opened
+    }
+  }
+  if(e.target && e.target.id === 'openBulkLevelBtn'){
+    openBulkLevelModal();
   }
 });
 
