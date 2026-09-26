@@ -7954,20 +7954,20 @@ document.getElementById('gapList').addEventListener('click', async (e) => {
     if(newType !== g.type){ g.type = newType; g.typeManual = true; }
     else if(!g.typeManual) g.type = gapAutoType(g.wanted, g.lang);
     gapEnsureTrack(g);
-    gapTouch(g); await saveGaps(); renderGaps(); return;
+    gapTouch(g); await saveGaps(); bumpGapSyncInBackground(); renderGaps(); return;
   }
-  if(act === 'archive'){ g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'manual'; gapTouch(g); await saveGaps(); renderGaps(); return; }
+  if(act === 'archive'){ g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'manual'; gapTouch(g); await saveGaps(); bumpGapSyncInBackground(); renderGaps(); return; }
   if(act === 'reopen'){
     g.status = 'open'; g.closedAt = ''; g.closedBy = '';
     g.srs = { station: 1, reps: 0, nextReview: todayStr(), dateAdded: g.dateAdded || todayStr(), hotLayerDone: [] };
     g.lt = { step: 0, next: todayStr() };
-    gapTouch(g); await saveGaps(); renderGaps(); return;
+    gapTouch(g); await saveGaps(); bumpGapSyncInBackground(); renderGaps(); return;
   }
   if(act === 'delete'){
     if(!confirm('Delete this gap and its history for good? (Archive keeps it in your records instead.)')) return;
     gapAddTombs([{ id: g.id, at: new Date().toISOString() }]);
     state.gaps = state.gaps.filter(x => x.id !== g.id); gapExpanded.delete(g.id);
-    await saveGaps(); renderGaps(); return;
+    await saveGaps(); bumpGapSyncInBackground(); renderGaps(); return;
   }
   if(act === 'ai' && typeof gapAiFill === 'function'){ gapAiFill(g, card, btn); return; }
   if(act === 'bank' && typeof gapMoveToBank === 'function'){ gapMoveToBank(g, card); return; }
@@ -8497,7 +8497,7 @@ async function gapMoveToBank(g, card){
   renderBank();
   g.exEn = val('exEn'); g.exAr = val('exAr'); g.correct = val('correct'); g.topic = val('topic') || g.topic;
   g.inBank = true; g.bankedAt = todayStr(); g.status = 'closed'; g.closedAt = todayStr(); g.closedBy = 'bank';
-  gapTouch(g); await saveGaps(); renderGaps();
+  gapTouch(g); await saveGaps(); bumpGapSyncInBackground(); renderGaps();
   gapToastMsg(bolded ? 'Moved to your phrase bank with the word in bold.' : 'Moved to your phrase bank (couldn\u2019t find the word in the sentence to bold it).');
 }
 
