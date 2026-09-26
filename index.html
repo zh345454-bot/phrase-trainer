@@ -3255,6 +3255,8 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
 // sentence-build rep on a phrase counts toward today's dose the same as any other completed
 // review, whether or not that particular phrase was already due (see rateReview()).
 let sbCurrentId = null, sbRevealed = false, sbDraft = '';
+// AI check state for the current card: null (idle) | {mode:'asking'} | {mode:'result', usesWord, correct, rating, feedback, fallback} | {mode:'idle', error}
+let sbAiState = null;
 // Set when a specific card's "🧩 Build a sentence" button is pressed — that one phrase is
 // practised immediately, ignoring the normal starred+due queue, then cleared so the panel
 // goes back to its usual queue behaviour.
@@ -3263,6 +3265,14 @@ function sbOpenForPhrase(id){
   const p = state.bank.find(x => x.id === id);
   if(!p || !(extractBoldSegments(p.en).length || extractBoldSegments(p.ar).length)) return;
   sbForcedId = id; sbCurrentId = null; sbRevealed = false; sbDraft = '';
+  // The button can be clicked from Bank, search results, etc., but the Sentence-build
+  // panel only exists inside the Practice & Log tab. Without switching to it first, this
+  // still rendered and updated state correctly — it just did so inside a hidden view, so
+  // clicking the button anywhere but Practice looked like it silently did nothing.
+  if(!document.getElementById('view-practice').classList.contains('active')){
+    const tabBtn = document.querySelector('.tab-btn[data-view="practice"]');
+    if(tabBtn) tabBtn.click();
+  }
   renderSentenceBuild();
   const panel = document.getElementById('sbBox');
   if(panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3292,7 +3302,7 @@ function renderSentenceBuild(){
     box.innerHTML = '<div class="empty">No starred phrase with a bold word is due right now — star a bolded phrase, or come back when one is due.</div>';
     return;
   }
-  if(sbCurrentId !== p.id){ sbCurrentId = p.id; sbRevealed = false; sbDraft = ''; }
+  if(sbCurrentId !== p.id){ sbCurrentId = p.id; sbRevealed = false; sbDraft = ''; sbAiState = null; }
   const w = sbWordFor(p);
   const dir = w.lang === 'ar' ? 'rtl' : 'ltr';
   const orig = [p.en ? escapeHtml(p.en) : '', p.ar ? `<span dir="rtl">${escapeHtml(p.ar)}</span>` : ''].filter(Boolean).join(' — ');
@@ -3304,8 +3314,13 @@ function renderSentenceBuild(){
         <label>Your sentence — don't reuse the original phrase</label>
         <textarea id="sbInput" ${dir === 'rtl' ? 'dir="rtl"' : ''} style="min-height:70px; width:100%;">${escapeHtml(sbDraft)}</textarea>
       </div>
-      <div class="card-actions"><button class="ghost" id="sbShowOrigBtn" type="button">${sbRevealed ? 'Hide' : 'Show'} original phrase</button>${forced ? '<button class="ghost" id="sbBackToQueueBtn" type="button">‹ Back to due queue</button>' : ''}</div>
+      <div class="card-actions">
+        <button class="ghost" id="sbShowOrigBtn" type="button">${sbRevealed ? 'Hide' : 'Show'} original phrase</button>
+        <button class="ghost" id="sbAskAiBtn" type="button">🤖 Ask AI</button>
+        ${forced ? '<button class="ghost" id="sbBackToQueueBtn" type="button">‹ Back to due queue</button>' : ''}
+      </div>
       ${sbRevealed ? `<div class="due-meta" style="margin-top:8px;">Original: ${orig}</div>` : ''}
+      ${sbAiResultHtml()}
     </div>
     <div class="rating-row">
         <button class="rate-btn rate-1" data-sbrate="1" type="button">1 Couldn't do it</button>
@@ -3315,9 +3330,38 @@ function renderSentenceBuild(){
         <button class="rate-btn rate-5" data-sbrate="5" type="button">5 Perfect</button>
     </div></div>`;
 }
+// Renders whatever sbAiState currently holds, right under the textarea.
+function sbAiResultHtml(){
+  if(!sbAiState) return '';
+  if(sbAiState.mode === 'asking') return '<p class="count-note" style="margin-top:8px;">Asking AI…</p>';
+  if(sbAiState.mode === 'idle' && sbAiState.error) return `<div class="status-msg err" style="margin-top:8px;">${escapeHtml(sbAiState.error)}</div>`;
+  if(sbAiState.mode === 'result'){
+    const s = sbAiState;
+    const via = s.fallback ? '<div class="count-note">⚠ Came from the fallback AI — double-check it.</div>' : '';
+    const usesLine = s.usesWord
+      ? '✓ Uses the target word/phrase (a different valid form is fine).'
+      : '✗ Doesn\u2019t seem to actually use the target word/phrase.';
+    const correctLine = s.correct ? '✓ Grammatically sound.' : '✗ Has a grammar issue — see feedback below.';
+    return `<div class="wl-suggest" style="margin-top:8px;">
+      <div>${usesLine}</div>
+      <div>${correctLine}</div>
+      ${s.feedback ? `<div class="due-meta">${escapeHtml(s.feedback)}</div>` : ''}
+      <div>AI suggests rating: <strong>${s.rating || '—'}</strong></div>
+      ${via}
+      <div class="hrs-chips">
+        ${s.rating ? `<button class="ghost" type="button" data-sbaiaccept="${s.rating}">Use this rating</button>` : ''}
+        <button class="ghost" type="button" id="sbAiDismissBtn">Dismiss</button>
+      </div>
+    </div>`;
+  }
+  return '';
+}
 document.getElementById('sbBox').addEventListener('input', e=>{ if(e.target.id === 'sbInput') sbDraft = e.target.value; });
 document.getElementById('sbBox').addEventListener('click', async e=>{
   if(e.target.id === 'sbShowOrigBtn'){ sbRevealed = !sbRevealed; renderSentenceBuild(); return; }
+  if(e.target.id === 'sbAskAiBtn'){ sbAskAi(); return; }
+  if(e.target.id === 'sbAiDismissBtn'){ sbAiState = null; renderSentenceBuild(); return; }
+  if(e.target.dataset.sbaiaccept){ e.target.dataset.sbrate = e.target.dataset.sbaiaccept; }
   if(e.target.id === 'sbBackToQueueBtn'){ sbForcedId = null; sbCurrentId = null; sbRevealed = false; sbDraft = ''; renderSentenceBuild(); return; }
   const rateVal = e.target.dataset.sbrate;
   if(rateVal){
@@ -3336,9 +3380,46 @@ document.getElementById('sbBox').addEventListener('click', async e=>{
   }
 });
 
-// A "🧩 Build a sentence" button on any bold-word practice card jumps straight into
-// Sentence build for that one word, bypassing the usual starred+due queue.
-document.getElementById('practiceList').addEventListener('click', e=>{
+// AI check for the drafted sentence — same idea as the "🎓 Check level" AI lookup
+// (same callGemini/parseAiJson pipeline), just judging whether THIS sentence
+// correctly puts the target word/phrase to use rather than requiring it to match
+// any specific pre-written example. Any sentence that genuinely uses the word
+// (in a valid inflected form) correctly is meant to pass.
+async function sbAskAi(){
+  const p = state.bank.find(x => x.id === sbCurrentId);
+  if(!p) return;
+  const w = sbWordFor(p);
+  const sentence = (document.getElementById('sbInput').value || '').trim();
+  if(!sentence){ sbAiState = { mode: 'idle', error: 'Write a sentence first.' }; renderSentenceBuild(); return; }
+  sbAiState = { mode: 'asking' };
+  renderSentenceBuild();
+  const langName = w.lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a supportive but precise language-learning coach checking a student\u2019s original sentence. Reply with ONLY one JSON object, no markdown fences.';
+  const prompt = `Target word/phrase (${langName}): "${w.word}"\nStudent's new sentence: "${sentence}"\n\nJudge ONLY this sentence. Accept ANY correct, natural sentence that genuinely uses the target word or phrase (a different inflected/conjugated form of it is fine — it does not need to match any specific pre-written example). Reply with ONLY JSON: {"usesWord":true|false,"correct":true|false,"rating":1-5,"feedback":""}. usesWord = true if the sentence genuinely uses the target word/phrase (any valid form); correct = true if the sentence is grammatically sound and natural; rating = your suggested 1-5 score (1 = didn\u2019t use it/broken, 5 = perfect natural use); feedback = one short sentence (max ~20 words) of concrete, encouraging feedback.`;
+  try{
+    const { text, fallback } = await callGemini(prompt, { system, useSearch: false });
+    const parsed = parseAiJson(text);
+    const rating = parseInt(parsed.rating, 10);
+    sbAiState = {
+      mode: 'result',
+      usesWord: !!parsed.usesWord,
+      correct: !!parsed.correct,
+      rating: (rating >= 1 && rating <= 5) ? rating : null,
+      feedback: String(parsed.feedback || '').trim(),
+      fallback: !!fallback
+    };
+  }catch(err){
+    sbAiState = { mode: 'idle', error: 'AI request failed: ' + ((err && err.message) || 'unknown error') };
+  }
+  renderSentenceBuild();
+}
+
+// A "🧩 Build a sentence" button on any bold-word card jumps straight into Sentence
+// build for that one word, bypassing the usual starred+due queue. Delegated on
+// document.body (not just #practiceList) because this button also renders on Bank
+// cards and search-result cards — scoping the listener to #practiceList meant clicking
+// it anywhere outside Practice (e.g. the phrase Bank) silently did nothing.
+document.body.addEventListener('click', e=>{
   const btn = e.target.closest('[data-sbcard]');
   if(btn) sbOpenForPhrase(btn.dataset.sbcard);
 });
@@ -4551,12 +4632,26 @@ async function coreRestoreDrills(){
   }
 }
 // Coming back to this tab/app after using another device → catch up silently.
+// Also: if a drill/gap/hours change is still sitting in its debounce window when
+// the tab gets backgrounded or closed, that change never reaches the Sheet — the
+// setTimeout below is heavily throttled or dropped once the tab is hidden on most
+// mobile browsers. That's what made it look like gaps "don't sync to all devices":
+// you'd log one right before switching apps, and the pending push just evaporated.
+// Flushing on both visibilitychange(hidden) and pagehide covers the browsers that
+// only reliably fire one or the other.
+function flushPendingSyncs(){
+  if(drillSyncTimer){ clearTimeout(drillSyncTimer); drillSyncTimer = null; coreSyncDrills().catch(()=>{}); }
+  if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreSyncGaps().catch(()=>{}); }
+  if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreSyncHours().catch(()=>{}); }
+}
 document.addEventListener('visibilitychange', ()=>{
-  if(!document.hidden && state.settings && state.settings.webAppUrl){
+  if(document.hidden){ flushPendingSyncs(); return; }
+  if(state.settings && state.settings.webAppUrl){
     coreRestoreDrills().catch(()=>{});
     coreRestoreGaps().catch(()=>{});
   }
 });
+window.addEventListener('pagehide', flushPendingSyncs);
 
 async function coreBackupBank(){
   const url = state.settings.webAppUrl;
