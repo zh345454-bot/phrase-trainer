@@ -874,6 +874,14 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           <label>Category</label>
           <select id="reviewCategoryFilter"><option value="">All categories</option></select>
         </div>
+        <div class="field" style="max-width:170px;">
+          <label>Due from</label>
+          <input type="date" id="reviewDateFrom">
+        </div>
+        <div class="field" style="max-width:170px;">
+          <label>Due to</label>
+          <input type="date" id="reviewDateTo">
+        </div>
       </div>
       <div class="count-note" id="reviewSummary"></div>
       <div id="reviewList"></div>
@@ -1177,6 +1185,16 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
     <div class="panel">
       <h2>Entries</h2>
+      <div class="toolbar">
+        <div class="field" style="max-width:170px;">
+          <label>From</label>
+          <input type="date" id="historyDateFrom">
+        </div>
+        <div class="field" style="max-width:170px;">
+          <label>To</label>
+          <input type="date" id="historyDateTo">
+        </div>
+      </div>
       <div id="historyList"><div class="empty">Nothing pulled yet.</div></div>
     </div>
   </section>
@@ -1805,7 +1823,15 @@ function getDueReviews(){
   const today = todayStr();
   return state.bank.filter(p=>{ ensureSrs(p); return p.srs.nextReview <= today; });
 }
-let reviewFilter = { query: '', category: '' };
+let reviewFilter = { query: '', category: '', dateFrom: '', dateTo: '' };
+// Filters the due list by its "Next" date (p.srs.nextReview), e.g. to see
+// just today's due items separately from stuff that's overdue from last week.
+function matchesReviewDate(p, dateFrom, dateTo){
+  const d = p.srs && p.srs.nextReview;
+  if(dateFrom && (!d || d < dateFrom)) return false;
+  if(dateTo && (!d || d > dateTo)) return false;
+  return true;
+}
 // Formats a date already stored on the phrase (lastPracticed / srs.nextReview) for display.
 // Nothing new is saved here — the row doesn't grow, this just reads what's already there.
 function fmtReviewDate(d){
@@ -1819,8 +1845,8 @@ function fmtReviewDate(d){
 function renderReview(){
   updateCategoryDropdowns();
   const dueAll = getDueReviews();
-  const filterActive = !!(reviewFilter.query || reviewFilter.category);
-  const due = dueAll.filter(p => matchesFilter(p, reviewFilter.query, reviewFilter.category));
+  const filterActive = !!(reviewFilter.query || reviewFilter.category || reviewFilter.dateFrom || reviewFilter.dateTo);
+  const due = dueAll.filter(p => matchesFilter(p, reviewFilter.query, reviewFilter.category) && matchesReviewDate(p, reviewFilter.dateFrom, reviewFilter.dateTo));
   const summary = document.getElementById('reviewSummary');
   const list = document.getElementById('reviewList');
   summary.textContent = filterActive
@@ -2503,6 +2529,22 @@ document.getElementById('reviewSearch').addEventListener('input', (e)=>{
 document.getElementById('reviewCategoryFilter').addEventListener('change', (e)=>{
   reviewFilter.category = e.target.value;
   renderReview();
+});
+document.getElementById('reviewDateFrom').addEventListener('change', (e)=>{
+  reviewFilter.dateFrom = e.target.value;
+  renderReview();
+});
+document.getElementById('reviewDateTo').addEventListener('change', (e)=>{
+  reviewFilter.dateTo = e.target.value;
+  renderReview();
+});
+document.getElementById('historyDateFrom').addEventListener('change', (e)=>{
+  historyFilter.dateFrom = e.target.value;
+  renderHistory(filterHistoryEntries(historyEntries));
+});
+document.getElementById('historyDateTo').addEventListener('change', (e)=>{
+  historyFilter.dateTo = e.target.value;
+  renderHistory(filterHistoryEntries(historyEntries));
 });
 document.getElementById('bankLoadMoreBtn').addEventListener('click', ()=>{
   bankVisibleCount += BANK_PAGE_SIZE;
@@ -3358,6 +3400,15 @@ function getGeminiUsageBySlot(){
 // below, called from inside rateReview() itself — see there for how
 // per-phrase, due-gated progress is counted.)
 
+// Review / Quick review bake the numeric rating straight into the category
+// text ("Review · rated 4/5 · Grammar"), which is otherwise a stable label.
+// Ignoring just that number when matching means re-rating the same phrase
+// later the same day still finds and updates today's row instead of
+// treating a changed score as a brand-new category and appending again —
+// this is why the Log sheet was growing fast specifically from reviews.
+function logMatchCategory(category){
+  return String(category || '').replace(/rated \d\/5/i, 'rated _/5');
+}
 async function addLogEntry(text, lang, category){
   const date = todayStr();
   // Upsert by (date, lang, category, phrase): logging the exact same thing
@@ -3365,10 +3416,11 @@ async function addLogEntry(text, lang, category){
   // bumps this row's count instead of creating another diary row. The count
   // column is what actually reflects "how many times", the row count no
   // longer does.
-  const existing = state.log.find(l => l.date === date && l.lang === lang && l.category === category && l.phrase === text);
+  const existing = state.log.find(l => l.date === date && l.lang === lang && logMatchCategory(l.category) === logMatchCategory(category) && l.phrase === text);
   if(existing){
     existing.count = (existing.count || 1) + 1;
     existing.time = timeStr();
+    existing.category = category; // keep the latest rating/category text visible
     existing.synced = false; // count changed since it was last synced
   } else {
     state.log.unshift({ date, time: timeStr(), lang, category, phrase: text, count: 1, synced: false });
@@ -4832,7 +4884,8 @@ document.getElementById('pullBtn').addEventListener('click', async ()=>{
     const res = await fetch(sheetGetUrl(url), { method: 'GET' });
     const data = await res.json();
     throwIfRejected(data);
-    renderHistory(data);
+    historyEntries = data;
+    renderHistory(filterHistoryEntries(historyEntries));
     statusEl.textContent = 'Pulled ' + data.length + ' entries from the sheet.';
     statusEl.className = 'status-msg';
   }catch(err){
@@ -4971,11 +5024,25 @@ document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=
   statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
 });
 
+// Entries as last pulled from the sheet, cached so the date filter below can
+// re-slice and re-render locally without hitting the sheet again.
+let historyEntries = [];
+let historyFilter = { dateFrom: '', dateTo: '' };
+function filterHistoryEntries(entries){
+  if(!historyFilter.dateFrom && !historyFilter.dateTo) return entries;
+  return entries.filter(e => {
+    if(historyFilter.dateFrom && e.date < historyFilter.dateFrom) return false;
+    if(historyFilter.dateTo && e.date > historyFilter.dateTo) return false;
+    return true;
+  });
+}
 function renderHistory(entries){
   const list = document.getElementById('historyList');
   const statsRow = document.getElementById('statsRow');
   if(!entries || entries.length === 0){
-    list.innerHTML = '<div class="empty">No entries found in the sheet yet.</div>';
+    list.innerHTML = (historyFilter.dateFrom || historyFilter.dateTo)
+      ? '<div class="empty">No entries in that date range.</div>'
+      : '<div class="empty">No entries found in the sheet yet.</div>';
     statsRow.innerHTML = '';
     return;
   }
