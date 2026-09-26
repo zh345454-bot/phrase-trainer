@@ -4283,7 +4283,10 @@ function levelBreakdownHtml(lang, wordList){
   const bd = levelBreakdown(lang, wordList);
   if(!bd.total) return '';
   const pct = Math.round((bd.leveled / bd.total) * 100);
-  const chips = bd.stages.map(s => `<span class="hs-chip">${escapeHtml(s.label)} ${s.count.toLocaleString()}</span>`).join('');
+  const chips = bd.stages.map(s => {
+    const stagePct = Math.round((s.count / bd.total) * 100);
+    return `<span class="hs-chip">${escapeHtml(s.label)} ${s.count.toLocaleString()} (${stagePct}%)</span>`;
+  }).join('');
   return `<p class="hs-sum">Word levels: <strong>${bd.leveled.toLocaleString()}</strong> / ${bd.total.toLocaleString()} leveled (${pct}%) — ${bd.unleveled.toLocaleString()} not yet leveled</p>
     <div class="hs-repeats">${chips || '<span class="hs-note">Nothing leveled yet.</span>'}</div>`;
 }
