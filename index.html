@@ -1787,7 +1787,6 @@ function ensureSrs(p){
 function rateReview(p, rating){
   ensureSrs(p);
   const today = todayStr();
-  const wasDue = p.srs.nextReview <= today;
   let station = p.srs.station;
   if(rating >= 4){
     p.srs.reps += 1;
@@ -1810,14 +1809,15 @@ function rateReview(p, rating){
     p.srs.reps = 0;
     p.srs.nextReview = addDays(today, STATION_GAP_DAYS[station]);
   }
-  // Counts toward today's dose regardless of station or which rating you
-  // gave — finishing the review is what the dose tracks, not mastering it
-  // on the first pass. Only counts if it was actually due, so quick-
-  // reviewing a non-due phrase from Practice & Log doesn't inflate it.
-  if(wasDue){
-    bumpDailyDoseCompleted();
-    bumpDrillSyncInBackground();
-  }
+  // Counts toward today's dose regardless of station, rating, or whether the
+  // phrase was already due — finishing a review is what the dose tracks, not
+  // mastering it on the first pass. Practice's own Focus picker (Due for
+  // review / New phrases / Weak spots / Least recently practiced / Midpoint
+  // of every station / Balanced mix) already does the job of surfacing the
+  // right material, so a Quick Review from Practice is just as legitimate a
+  // way to complete today's dose as rating something in the Review tab.
+  bumpDailyDoseCompleted();
+  bumpDrillSyncInBackground();
 }
 function getDueReviews(){
   const today = todayStr();
@@ -3251,8 +3251,8 @@ document.getElementById('quickLogBtn').addEventListener('click', ()=>{
 
 // ---------- Sentence build (starred bold words) ----------
 // Uses the same ensureSrs()/rateReview() spacing machinery as Review and Gap review, so a
-// sentence-build rep on a phrase counts toward the daily bank-review dose whenever that phrase
-// was actually due — it never inflates the dose by manufacturing extra "due" reps.
+// sentence-build rep on a phrase counts toward today's dose the same as any other completed
+// review, whether or not that particular phrase was already due (see rateReview()).
 let sbCurrentId = null, sbRevealed = false, sbDraft = '';
 // Set when a specific card's "🧩 Build a sentence" button is pressed — that one phrase is
 // practised immediately, ignoring the normal starred+due queue, then cleared so the panel
