@@ -4502,6 +4502,16 @@ function sheetPostBody(extra){
   if(state.settings.sharedSecret) body.secret = state.settings.sharedSecret;
   return JSON.stringify(body);
 }
+// `keepalive: true` is what lets a POST survive the tab actually being hidden/unloaded —
+// but every browser enforces a hard ~64KB cap (shared across ALL in-flight keepalive
+// requests) and just throws "Failed to fetch" over that, no fallback, no partial send.
+// A gaps/hours/library payload can easily grow past that over time, so keepalive is only
+// safe to request when we've checked the body actually fits — otherwise a plain (non-
+// keepalive) request at least has a chance of finishing, which beats a guaranteed throw.
+const KEEPALIVE_SAFE_BYTES = 60000;
+function wantKeepalive_(bodyStr, requested){
+  return !!requested && bodyStr.length < KEEPALIVE_SAFE_BYTES;
+}
 function sheetGetUrl(url, params){
   const usp = new URLSearchParams(params || {});
   if(state.settings.sharedSecret) usp.set('secret', state.settings.sharedSecret);
@@ -4592,11 +4602,12 @@ async function coreSyncDrills(){
     // Pull-merge first, so this device's push can never overwrite another device's higher counts.
     try{ await pullDrillsMerge(); }catch(e){}
     const d = getDrillSnapshot();
+    const bodyStr = sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
+      voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro });
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
-      body: sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
-        voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro })
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: wantKeepalive_(bodyStr, true),
+      body: bodyStr
     });
     throwIfRejected(await res.json());
     renderDailyPlan();
@@ -4676,25 +4687,29 @@ async function coreRestoreDrills(){
 // coreSyncGaps() (and its drills/hours/library siblings) is a PULL then a PUSH, two
 // separate network round trips, and a browser that's actively hiding/unloading the
 // tab essentially never lets both finish in time. So the flush below skips the pull
-// and fires a single push-only request with `keepalive: true`, which is what
-// browsers actually keep alive past unload. The pull isn't lost, just deferred: the
-// next time the app opens, the normal coreRestoreX() catch-up above picks up
-// whatever the other device pushed in the meantime.
+// and fires a single push-only request, requesting `keepalive: true` — that's what
+// browsers actually keep alive past unload. `keepalive` requests are capped at ~64KB
+// total though (a hard browser limit, no partial send), so wantKeepalive_() only
+// grants it when the payload actually fits; past that it falls back to a normal
+// request, which at least has a chance of completing before the page has fully
+// unloaded. Either way, nothing is really lost: the next time the app opens, the
+// normal coreRestoreX() catch-up above picks up whatever the other device pushed.
 function flushPendingSyncs(){
   if(drillSyncTimer){
     clearTimeout(drillSyncTimer); drillSyncTimer = null;
     if(state.settings.webAppUrl){
       const d = getDrillSnapshot();
+      const bodyStr = sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
+        voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro });
       fetch(state.settings.webAppUrl, {
-        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
-        body: sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
-          voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro })
+        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        keepalive: wantKeepalive_(bodyStr, true), body: bodyStr
       }).catch(()=>{});
     }
   }
-  if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreBackupGaps().catch(()=>{}); }
-  if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreBackupHours().catch(()=>{}); }
-  if(ptSyncTimer){ clearTimeout(ptSyncTimer); ptSyncTimer = null; coreBackupParallelTexts().catch(()=>{}); }
+  if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreBackupGaps({ keepalive: true }).catch(()=>{}); }
+  if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreBackupHours({ keepalive: true }).catch(()=>{}); }
+  if(ptSyncTimer){ clearTimeout(ptSyncTimer); ptSyncTimer = null; coreBackupParallelTexts({ keepalive: true }).catch(()=>{}); }
 }
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){ flushPendingSyncs(); return; }
@@ -4912,16 +4927,18 @@ async function coreRestoreQuran(){
 // same pattern as Grammar/Quran). Called after coreRestoreParallelTexts has
 // already merged in whatever the sheet had, so nothing another device added
 // gets wiped by this push.
-async function coreBackupParallelTexts(){
+async function coreBackupParallelTexts(opts){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
+    const bodyStr = sheetPostBody({ type: 'paralleltexts_sync', entries: state.parallelTexts.map(p => ({
+      id: p.id, topic: p.topic, date: p.date, docUrl: p.docUrl, docId: p.docId || '',
+      english: p.english, arabic: p.arabic, createdAt: p.createdAt || ''
+    })) });
     const res = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
-      body: sheetPostBody({ type: 'paralleltexts_sync', entries: state.parallelTexts.map(p => ({
-        id: p.id, topic: p.topic, date: p.date, docUrl: p.docUrl, docId: p.docId || '',
-        english: p.english, arabic: p.arabic, createdAt: p.createdAt || ''
-      })) })
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      keepalive: wantKeepalive_(bodyStr, opts && opts.keepalive),
+      body: bodyStr
     });
     throwIfRejected(await res.json());
     return { ok: true, message: 'Library: ' + state.parallelTexts.length + ' entries backed up.' };
@@ -8738,13 +8755,15 @@ async function coreRestoreGaps(){
   }
 }
 // Push this device's (already merged) gaps to the Sheet.
-async function coreBackupGaps(){
+async function coreBackupGaps(opts){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
+    const bodyStr = sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {} });
     const post = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
-      body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {} })
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      keepalive: wantKeepalive_(bodyStr, opts && opts.keepalive),
+      body: bodyStr
     });
     throwIfRejected(await post.json());
     return { ok: true, message: `Gaps: ${state.gaps.length} backed up.` };
@@ -10548,12 +10567,13 @@ async function coreRestoreHours(){
     return { ok: false, message: 'Hours restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
   }
 }
-async function coreBackupHours(){
+async function coreBackupHours(opts){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
     const rows = hrsRowsToPush();
-    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true, body: sheetPostBody({ type: 'hours_sync', rows }) });
+    const bodyStr = sheetPostBody({ type: 'hours_sync', rows });
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: wantKeepalive_(bodyStr, opts && opts.keepalive), body: bodyStr });
     throwIfRejected(await post.json());
     return { ok: true, message: `Hours: ${rows.length} day-rows backed up.` };
   }catch(err){
