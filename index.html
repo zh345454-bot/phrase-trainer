@@ -607,7 +607,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
-    <button class="tab-btn" data-view="history">History</button>
+    <button class="tab-btn" data-view="history">Library</button>
   </nav>
 
   <!-- PHRASE BANK -->
@@ -1173,30 +1173,38 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     </div>
   </section>
 
-  <!-- HISTORY -->
+  <!-- LIBRARY (bilingual parallel texts) -->
   <section class="view" id="view-history">
     <div class="panel">
-      <h2>Pull from Google Sheet</h2>
-      <button class="primary" id="pullBtn">Pull latest data</button>
-      <div class="status-msg" id="pullStatus"></div>
+      <h2>Add bilingual text</h2>
+      <div class="field">
+        <label>Topic (must be unique)</label>
+        <input type="text" id="ptTopicInput" placeholder="e.g. Airport announcements">
+      </div>
+      <div class="field">
+        <label>English text</label>
+        <textarea id="ptEnglishInput" rows="6" placeholder="Paste the English text here"></textarea>
+      </div>
+      <div class="field">
+        <label>Arabic text</label>
+        <textarea id="ptArabicInput" rows="6" dir="rtl" placeholder="ألصق النص العربي هنا"></textarea>
+      </div>
+      <button class="primary" id="ptSaveBtn">Save to Drive</button>
+      <div class="status-msg" id="ptSaveStatus"></div>
     </div>
     <div class="panel">
-      <h2>Overview</h2>
-      <div class="stats-row" id="statsRow"></div>
-    </div>
-    <div class="panel">
-      <h2>Entries</h2>
+      <h2>Library</h2>
       <div class="toolbar">
-        <div class="field" style="max-width:170px;">
-          <label>From</label>
-          <input type="date" id="historyDateFrom">
+        <div class="field" style="flex:1; min-width:180px;">
+          <label>Search</label>
+          <input type="text" id="ptSearchInput" placeholder="Search topic or text...">
         </div>
         <div class="field" style="max-width:170px;">
-          <label>To</label>
-          <input type="date" id="historyDateTo">
+          <label>From date</label>
+          <input type="date" id="ptDateFrom">
         </div>
       </div>
-      <div id="historyList"><div class="empty">Nothing pulled yet.</div></div>
+      <div id="ptList"><div class="empty">Nothing saved yet.</div></div>
     </div>
   </section>
 </div>
@@ -1274,6 +1282,11 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <input type="text" id="googleSearchCxInput" placeholder="e.g. a1b2c3d4e5f6g7h8i">
     </div>
     <p style="margin-top:-8px;">Google closed the Custom Search JSON API to new signups, so these two fields only matter if you already had a key from before — leave them blank otherwise. Without them, Ask AI still gives you a one-tap Google search link whenever Gemini's quota runs out.</p>
+    <div class="field">
+      <label>Library Drive folder (link or ID)</label>
+      <input type="text" id="ptFolderLinkInput" placeholder="https://drive.google.com/drive/folders/...">
+    </div>
+    <p style="margin-top:-8px; font-size:11.5px;">Where the Library tab saves each bilingual text as its own Google Doc. Paste the folder's share link (or just its ID) — create the folder once in Drive, then paste it here.</p>
     <div class="modal-actions">
       <button class="ghost" id="closeSettings">Cancel</button>
       <button class="primary" id="saveSettings">Save</button>
@@ -1392,7 +1405,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15 } };
+let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], parallelTexts: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15, driveFolderLink: '' } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -1442,6 +1455,9 @@ async function loadState(){
   if(state.settings.googleSearchApiKey === undefined) state.settings.googleSearchApiKey = '';
   if(state.settings.googleSearchCx === undefined) state.settings.googleSearchCx = '';
   if(state.settings.newPerDayCap === undefined) state.settings.newPerDayCap = 15;
+  if(state.settings.driveFolderLink === undefined) state.settings.driveFolderLink = '';
+  state.parallelTexts = lsGet('parallelTexts', []);
+  if(!Array.isArray(state.parallelTexts)) state.parallelTexts = [];
 }
 async function saveBank(){ lsSet('bank', state.bank); }
 async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); }
@@ -1449,6 +1465,7 @@ async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
 async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); lsSet('gapTomb', state.gapTomb || []); }
 async function saveSpk(){ lsSet('speaking', state.spk); }
+async function saveParallelTexts(){ lsSet('parallelTexts', state.parallelTexts); }
 
 // ---------- Keeping the local practice log from growing forever ----------
 // The Log sheet (Google Sheets) is the permanent, complete history — it's
@@ -1640,6 +1657,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
       if(state.settings.webAppUrl) coreRestoreGaps().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
     }
     if(btn.dataset.view === 'today') renderDashboard();
+    if(btn.dataset.view === 'history'){
+      renderParallelTexts();
+      if(state.settings.webAppUrl) coreRestoreParallelTexts().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
+    }
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
     if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
     if(btn.dataset.view === 'practice'){ renderTodayStrip(); renderSentenceBuild(); }
@@ -1707,6 +1728,7 @@ document.getElementById('settingsBtn').addEventListener('click', ()=>{
     : '') + 'Gemini calls counted on this device today: ' + getGeminiUsageToday() + (slotNote ? ' (' + slotNote + ')' : '') + '. The count restarts at your local midnight; Google\'s limits restart at midnight Pacific time.';
   document.getElementById('googleSearchApiKeyInput').value = state.settings.googleSearchApiKey || '';
   document.getElementById('googleSearchCxInput').value = state.settings.googleSearchCx || '';
+  document.getElementById('ptFolderLinkInput').value = state.settings.driveFolderLink || '';
   modal.classList.add('open');
 });
 document.getElementById('closeSettings').addEventListener('click', ()=> modal.classList.remove('open'));
@@ -1728,6 +1750,7 @@ async function applySettingsFromInputs(){
   state.settings.geminiModelOverride = modelOverride;
   state.settings.googleSearchApiKey = document.getElementById('googleSearchApiKeyInput').value.trim();
   state.settings.googleSearchCx = document.getElementById('googleSearchCxInput').value.trim();
+  state.settings.driveFolderLink = document.getElementById('ptFolderLinkInput').value.trim();
   await saveSettings();
 }
 document.getElementById('saveSettings').addEventListener('click', async ()=>{
@@ -2539,13 +2562,13 @@ document.getElementById('reviewDateTo').addEventListener('change', (e)=>{
   reviewFilter.dateTo = e.target.value;
   renderReview();
 });
-document.getElementById('historyDateFrom').addEventListener('change', (e)=>{
-  historyFilter.dateFrom = e.target.value;
-  renderHistory(filterHistoryEntries(historyEntries));
+document.getElementById('ptSearchInput').addEventListener('input', (e)=>{
+  ptFilter.search = e.target.value;
+  renderParallelTexts();
 });
-document.getElementById('historyDateTo').addEventListener('change', (e)=>{
-  historyFilter.dateTo = e.target.value;
-  renderHistory(filterHistoryEntries(historyEntries));
+document.getElementById('ptDateFrom').addEventListener('change', (e)=>{
+  ptFilter.dateFrom = e.target.value;
+  renderParallelTexts();
 });
 document.getElementById('bankLoadMoreBtn').addEventListener('click', ()=>{
   bankVisibleCount += BANK_PAGE_SIZE;
@@ -4614,6 +4637,17 @@ function bumpHrsSyncInBackground(){
   hrsSyncTimer = setTimeout(()=>{ coreSyncHours().catch(()=>{}); }, 2000);
 }
 
+// Same pattern for the Library: a save already pushes immediately inside its own
+// handler, but this debounced backstop covers a rapid run of saves the same way
+// gaps/hours/drills are covered — and flushPendingSyncs()/pagehide below make sure
+// a save right before switching tabs/apps doesn't get silently dropped.
+let ptSyncTimer = null;
+function bumpPtSyncInBackground(){
+  if(!state.settings.webAppUrl) return;
+  clearTimeout(ptSyncTimer);
+  ptSyncTimer = setTimeout(()=>{ coreSyncParallelTexts().catch(()=>{}); }, 2000);
+}
+
 // Catches this device up with progress made on another device today.
 async function coreRestoreDrills(){
   const url = state.settings.webAppUrl;
@@ -4643,12 +4677,14 @@ function flushPendingSyncs(){
   if(drillSyncTimer){ clearTimeout(drillSyncTimer); drillSyncTimer = null; coreSyncDrills().catch(()=>{}); }
   if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreSyncGaps().catch(()=>{}); }
   if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreSyncHours().catch(()=>{}); }
+  if(ptSyncTimer){ clearTimeout(ptSyncTimer); ptSyncTimer = null; coreSyncParallelTexts().catch(()=>{}); }
 }
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){ flushPendingSyncs(); return; }
   if(state.settings && state.settings.webAppUrl){
     coreRestoreDrills().catch(()=>{});
     coreRestoreGaps().catch(()=>{});
+    coreRestoreParallelTexts().catch(()=>{});
   }
 });
 window.addEventListener('pagehide', flushPendingSyncs);
@@ -4854,6 +4890,66 @@ async function coreRestoreQuran(){
   }
 }
 
+// ---------- Library (ParallelTexts) sync ----------
+// Pushes this device's saved bilingual texts to the sheet (full overwrite —
+// same pattern as Grammar/Quran). Called after coreRestoreParallelTexts has
+// already merged in whatever the sheet had, so nothing another device added
+// gets wiped by this push.
+async function coreBackupParallelTexts(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'paralleltexts_sync', entries: state.parallelTexts.map(p => ({
+        id: p.id, topic: p.topic, date: p.date, docUrl: p.docUrl, docId: p.docId || '',
+        english: p.english, arabic: p.arabic, createdAt: p.createdAt || ''
+      })) })
+    });
+    throwIfRejected(await res.json());
+    return { ok: true, message: 'Library: ' + state.parallelTexts.length + ' entries backed up.' };
+  }catch(err){
+    return { ok: false, message: 'Library: ' + (err && err.message ? err.message : 'backup failed.') };
+  }
+}
+// Pulls the sheet's entries and MERGES them into this device by id (never
+// replaces) — a saved text is effectively immutable once created, so a plain
+// union is enough: anything already here by id is left alone, anything new
+// from the sheet (saved on another device) is added.
+async function coreRestoreParallelTexts(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const res = await fetch(sheetGetUrl(url, { type: 'paralleltexts' }), { method: 'GET' });
+    const data = await res.json();
+    throwIfRejected(data);
+    if(Array.isArray(data)) throw new Error('your Apps Script doesn\u2019t have the Library update yet — paste in the updated script and redeploy first (nothing was sent)');
+    const rowsIn = data.entries || [];
+    const knownIds = new Set(state.parallelTexts.map(p => p.id));
+    const incoming = rowsIn.filter(r => r.id && !knownIds.has(r.id)).map(r => ({
+      id: r.id, topic: r.topic || '', date: r.date || '', docUrl: r.docUrl || '', docId: r.docId || '',
+      english: r.english || '', arabic: r.arabic || '', createdAt: r.createdAt || ''
+    }));
+    const before = state.parallelTexts.length;
+    if(incoming.length > 0){
+      state.parallelTexts = state.parallelTexts.concat(incoming);
+      await saveParallelTexts();
+      renderParallelTexts();
+    }
+    return { ok: true, incoming: incoming.length, before, message: 'Library: ' + incoming.length + ' from the Sheet merged with ' + before + ' here \u2192 ' + state.parallelTexts.length + ' on this device.' };
+  }catch(err){
+    return { ok: false, message: 'Library restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+// Pull → merge → push, same order as Gaps, so two devices never overwrite each other.
+async function coreSyncParallelTexts(){
+  const r = await coreRestoreParallelTexts();
+  if(!r.ok) return r; // e.g. old Apps Script: nothing is sent
+  const b = await coreBackupParallelTexts();
+  if(!b.ok) return b;
+  return { ok: true, message: 'Library synced: ' + r.incoming + ' from the Sheet merged with ' + r.before + ' here \u2192 ' + state.parallelTexts.length + ' in total, all backed up.' };
+}
+
 document.getElementById('syncBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('syncStatus');
   const btn = document.getElementById('syncBtn');
@@ -4904,6 +5000,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   results.push(await coreSyncHours());
   statusEl.textContent = 'Syncing drill progress...';
   results.push(await coreSyncDrills());
+  statusEl.textContent = 'Syncing library (merge, then back up)...';
+  results.push(await coreSyncParallelTexts());
 
   const anyFailed = results.some(r=>!r.ok);
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>All synced.</strong><br>')
@@ -4935,7 +5033,7 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
     return;
   }
   const counts = 'bank: ' + state.bank.length + ' phrases, grammar: ' + state.grammar.length + ' entries, Qur\'an: ' + state.quran.length + ' entries';
-  if(!confirm('(Your speaking gaps, speaking cycles and hours log are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
+  if(!confirm('(Your speaking gaps, speaking cycles, hours log and Library are merged, not replaced.) This replaces your local phrase bank, grammar notebook, and Qur\'an log (' + counts + ') with whatever is in the Sheet right now, discarding any local changes on this device since its last sync — including anything not yet synced from another device. Continue?')) return;
   btn.disabled = true;
   syncBtn.disabled = true;
   const origLabel = btn.textContent;
@@ -4958,6 +5056,8 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   results.push(await coreRestoreHours());
   statusEl.textContent = 'Catching up drill progress...';
   results.push(await coreRestoreDrills());
+  statusEl.textContent = 'Merging Library...';
+  results.push(await coreRestoreParallelTexts());
 
   const anyFailed = results.some(r=>!r.ok);
   statusEl.innerHTML = (anyFailed ? '<strong>Finished with problems:</strong><br>' : '<strong>Fully restored.</strong><br>')
@@ -4969,28 +5069,63 @@ document.getElementById('fullRestoreBtn').addEventListener('click', async ()=>{
   btn.textContent = origLabel;
 });
 
-document.getElementById('pullBtn').addEventListener('click', async ()=>{
-  const statusEl = document.getElementById('pullStatus');
-  const url = state.settings.webAppUrl;
-  if(!url){
+// ---------- Library (ParallelTexts): add a bilingual text as its own Google Doc ----------
+document.getElementById('ptSaveBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('ptSaveStatus');
+  const btn = document.getElementById('ptSaveBtn');
+  const topicEl = document.getElementById('ptTopicInput');
+  const enEl = document.getElementById('ptEnglishInput');
+  const arEl = document.getElementById('ptArabicInput');
+  const topic = topicEl.value.trim();
+  const english = enEl.value.trim();
+  const arabic = arEl.value.trim();
+  if(!topic || !english || !arabic){
+    statusEl.textContent = 'Topic, English text and Arabic text are all required.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  if(state.parallelTexts.some(p => p.topic.trim().toLowerCase() === topic.toLowerCase())){
+    statusEl.textContent = 'That topic is already used — topics must be unique. Pick a different name.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  if(!state.settings.webAppUrl){
     statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first.';
     statusEl.className = 'status-msg err';
     return;
   }
-  statusEl.textContent = 'Pulling data...';
+  if(!state.settings.driveFolderLink){
+    statusEl.textContent = 'Add your Library Drive folder link in Sheet & AI settings first.';
+    statusEl.className = 'status-msg err';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = 'Creating the Google Doc...';
   statusEl.className = 'status-msg';
+  const date = todayStr();
   try{
-    const res = await fetch(sheetGetUrl(url), { method: 'GET' });
+    const res = await fetch(state.settings.webAppUrl, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'create_parallel_doc', topic, date, english, arabic, folderLink: state.settings.driveFolderLink })
+    });
     const data = await res.json();
     throwIfRejected(data);
-    historyEntries = data;
-    renderHistory(filterHistoryEntries(historyEntries));
-    statusEl.textContent = 'Pulled ' + data.length + ' entries from the sheet.';
+    if(!data || data.status !== 'ok' || !data.docUrl) throw new Error(data && data.message ? data.message : 'The script did not return a Doc link.');
+    state.parallelTexts.push({
+      id: uid(), topic, date, docUrl: data.docUrl, docId: data.docId || '',
+      english, arabic, createdAt: new Date().toISOString()
+    });
+    await saveParallelTexts();
+    topicEl.value = ''; enEl.value = ''; arEl.value = '';
+    renderParallelTexts();
+    bumpPtSyncInBackground();
+    statusEl.textContent = 'Saved — Doc created in your Library folder.';
     statusEl.className = 'status-msg';
   }catch(err){
-    statusEl.textContent = err && err.message ? err.message : 'Could not reach the sheet. Check the Web App URL and that it is deployed with "Anyone" access.';
+    statusEl.textContent = err && err.message ? err.message : 'Could not create the Doc.';
     statusEl.className = 'status-msg err';
   }
+  btn.disabled = false;
 });
 
 // ---------- Local backup file (export/import, independent of the Sheet) ----------
@@ -5056,7 +5191,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     if(payload.speaking && Array.isArray(payload.speaking.cycles)) state.spk = mergeSpk(state.spk, payload.speaking); // merged, never replaced
     if(payload.hours && Array.isArray(payload.hours.sessions)){ mergeHours(state.hours, payload.hours); hrsSave(); }
     await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps(); await saveSpk();
-    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps(); renderSpeaking();
+    renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps(); renderSpeaking(); renderParallelTexts();
     renderGcStarResults(); renderGcDateResults();
     statusEl.textContent = 'Restored from file: ' + summary + '.';
     statusEl.className = 'status-msg';
@@ -5123,45 +5258,32 @@ document.getElementById('restoreGrammarBtn').addEventListener('click', async ()=
   statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
 });
 
-// Entries as last pulled from the sheet, cached so the date filter below can
-// re-slice and re-render locally without hitting the sheet again.
-let historyEntries = [];
-let historyFilter = { dateFrom: '', dateTo: '' };
-function filterHistoryEntries(entries){
-  if(!historyFilter.dateFrom && !historyFilter.dateTo) return entries;
-  return entries.filter(e => {
-    if(historyFilter.dateFrom && e.date < historyFilter.dateFrom) return false;
-    if(historyFilter.dateTo && e.date > historyFilter.dateTo) return false;
-    return true;
+// ---------- Library (ParallelTexts): search + "from date" filter, list rendering ----------
+let ptFilter = { search: '', dateFrom: '' };
+function filterParallelTexts(){
+  const q = ptFilter.search.trim().toLowerCase();
+  return state.parallelTexts.filter(p => {
+    if(ptFilter.dateFrom && p.date < ptFilter.dateFrom) return false;
+    if(!q) return true;
+    return p.topic.toLowerCase().includes(q) || p.english.toLowerCase().includes(q) || p.arabic.toLowerCase().includes(q);
   });
 }
-function renderHistory(entries){
-  const list = document.getElementById('historyList');
-  const statsRow = document.getElementById('statsRow');
-  if(!entries || entries.length === 0){
-    list.innerHTML = (historyFilter.dateFrom || historyFilter.dateTo)
-      ? '<div class="empty">No entries in that date range.</div>'
-      : '<div class="empty">No entries found in the sheet yet.</div>';
-    statsRow.innerHTML = '';
+function renderParallelTexts(){
+  const list = document.getElementById('ptList');
+  const entries = filterParallelTexts().slice().sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  if(entries.length === 0){
+    list.innerHTML = (ptFilter.search || ptFilter.dateFrom)
+      ? '<div class="empty">Nothing matches that search/date.</div>'
+      : '<div class="empty">Nothing saved yet.</div>';
     return;
   }
-  const enCount = entries.filter(e=>e.lang === 'en').reduce((sum, e) => sum + (Number(e.count) || 1), 0);
-  const arCount = entries.filter(e=>e.lang === 'ar').reduce((sum, e) => sum + (Number(e.count) || 1), 0);
-  const totalLogged = entries.reduce((sum, e) => sum + (Number(e.count) || 1), 0);
-  const days = new Set(entries.map(e=>e.date)).size;
-  const streak = getStreakInfo(entries);
-  statsRow.innerHTML = `
-    <div class="stat"><div class="num">${totalLogged}</div><div class="lbl">Total logged</div></div>
-    <div class="stat"><div class="num">${enCount}</div><div class="lbl">English</div></div>
-    <div class="stat"><div class="num">${arCount}</div><div class="lbl">Arabic</div></div>
-    <div class="stat"><div class="num">${days}</div><div class="lbl">Days practiced</div></div>
-    <div class="stat"><div class="num">${streak.current}</div><div class="lbl">Current streak</div></div>
-    <div class="stat"><div class="num">${streak.longest}</div><div class="lbl">Longest streak</div></div>`;
   list.innerHTML = '';
-  entries.slice().reverse().forEach(e=>{
+  entries.forEach(p=>{
     const row = document.createElement('div');
-    row.className = 'log-row';
-    row.innerHTML = `<span>${escapeHtml(e.date)} ${escapeHtml(e.time||'')} · ${(e.lang||'').toUpperCase()} · ${escapeHtml(e.phrase)}${e.count > 1 ? ' <span class="tag">×'+e.count+'</span>' : ''}${e.category ? ' <span class="tag">'+escapeHtml(e.category)+'</span>' : ''}</span>`;
+    row.className = 'log-row pt-row';
+    row.style.cursor = 'pointer';
+    row.innerHTML = `<span>${escapeHtml(p.topic)} <span class="tag">${escapeHtml(p.date)}</span></span>`;
+    row.addEventListener('click', ()=> window.open(p.docUrl, '_blank', 'noopener'));
     list.appendChild(row);
   });
 }
@@ -8647,7 +8769,7 @@ function renderGapSync(){
 // pop-up pre-filled, with the source tab and the surrounding sentence(s) kept as
 // context. The selection is remembered for a short while, because phones clear
 // it the moment you tap a button.
-const GAP_VIEW_LABELS = { bank: 'Phrase bank', starred: 'Starred', practice: 'Practice & Log', review: 'Review', drills: 'Drills', grammar: 'Grammar Hub', quran: 'Qur\u2019an', history: 'History', gaps: 'Gaps' };
+const GAP_VIEW_LABELS = { bank: 'Phrase bank', starred: 'Starred', practice: 'Practice & Log', review: 'Review', drills: 'Drills', grammar: 'Grammar Hub', quran: 'Qur\u2019an', history: 'Library', gaps: 'Gaps' };
 const GAP_SEL_TTL = 25000;
 let gapSel = null, gapSelTimer = null;
 function gapCleanText(node){
@@ -10153,6 +10275,48 @@ const HRS_SITES_LV = {
   en: { a: { label: 'VOA Learning English', site: 'learningenglish.voanews.com' }, b1: { label: 'BBC Learning English', site: 'bbc.co.uk/learningenglish' }, b2: { label: 'BBC News', site: 'bbc.co.uk/news' } },
   ar: { a: { label: 'Al Jazeera Learning', site: 'learning.aljazeera.net' }, b1: { label: 'Al Jazeera Learning', site: 'learning.aljazeera.net' }, b2: { label: 'Al Jazeera', site: 'aljazeera.net' } }
 };
+// Named platforms/broadcasters/YouTube channels to search WITHIN, picked per language.
+// `site` is a real domain for a Google "site:" search when the platform has one of its own;
+// left empty for channels that only live on YouTube (no distinct owned domain to filter by —
+// the AI prompt below is told the channel name instead, so its suggested queries name the
+// channel directly rather than relying on a site: filter that wouldn't exist for it).
+const HRS_PLATFORMS = {
+  en: [
+    { key: 'bbc_learning_english', label: 'BBC Learning English', site: 'bbc.co.uk/learningenglish' },
+    { key: 'voa_learning_english', label: 'VOA Learning English', site: 'learningenglish.voanews.com' },
+    { key: 'british_council', label: 'British Council — LearnEnglish', site: 'learnenglish.britishcouncil.org' },
+    { key: 'british_council_kids', label: 'British Council — LearnEnglish Kids', site: 'learnenglishkids.britishcouncil.org' },
+    { key: 'englishclass101', label: 'EnglishClass101', site: 'englishclass101.com' },
+    { key: 'ted_ed', label: 'TED-Ed', site: 'ed.ted.com' },
+    { key: 'rachels_english', label: "Rachel's English (YouTube)", site: '' },
+    { key: 'english_with_lucy', label: 'English with Lucy', site: 'englishwithlucy.co.uk' },
+    { key: 'mmm_english', label: 'mmmEnglish — Emma (YouTube)', site: '' },
+    { key: 'easy_english', label: 'Easy English — Easy Languages (YouTube)', site: '' },
+    { key: 'cnn10', label: 'CNN 10', site: 'cnn.com/cnn10' },
+    { key: 'oxford_online_english', label: 'Oxford Online English', site: 'oxfordonlineenglish.com' },
+    { key: 'learn_english_lets_talk', label: "Learn English with Let's Talk (YouTube)", site: '' },
+    { key: 'voa_news', label: 'VOA News', site: 'voanews.com' },
+    { key: 'bbc_news', label: 'BBC News', site: 'bbc.co.uk/news' }
+  ],
+  ar: [
+    { key: 'aljazeera_learning', label: 'Al Jazeera Learning (تعلم الجزيرة)', site: 'learning.aljazeera.net' },
+    { key: 'aljazeera_arabic', label: 'Al Jazeera Arabic (news)', site: 'aljazeera.net' },
+    { key: 'bbc_arabic', label: 'BBC Arabic', site: 'bbc.com/arabic' },
+    { key: 'alarabiya', label: 'Al Arabiya (news)', site: 'alarabiya.net' },
+    { key: 'arabicpod101', label: 'ArabicPod101', site: 'arabicpod101.com' },
+    { key: 'madinah_arabic', label: 'Madinah Arabic', site: 'madinaharabic.com' },
+    { key: 'live_lingua_fsi', label: 'Live Lingua — FSI Arabic Courses', site: 'livelingua.com' },
+    { key: 'learn_arabic_maha', label: 'Learn Arabic with Maha (YouTube)', site: '' },
+    { key: 'easy_arabic', label: 'Easy Arabic — Easy Languages (YouTube)', site: '' },
+    { key: 'learn_arabic_zakaria', label: 'Learn Arabic with Zakaria (YouTube)', site: '' },
+    { key: 'speak_real_arabic', label: 'Speak Real Arabic — Hala (YouTube)', site: '' },
+    { key: 'arabic_with_sam', label: 'Arabic with Sam — Levantine (YouTube)', site: '' },
+    { key: 'gateway_to_arabic', label: 'Gateway to Arabic — Imran Alawiye (YouTube)', site: '' },
+    { key: 'learn_with_safaa', label: 'Learn With Safaa (YouTube)', site: '' },
+    { key: 'learnarabic_meherali', label: 'LearnArabic — Madina Book, Meher Ali (YouTube)', site: '' }
+  ]
+};
+function hrsPlatformsFor(lang){ return HRS_PLATFORMS[lang] || HRS_PLATFORMS.en; }
 // Which band applies now: the level reached by hours (start + logged), per language.
 let hrsBandShift = {};   // per language: -1 / 0 / +1 band, set by "Too hard" / "Too easy" (kept until the page is reloaded)
 function hrsBand(lang){
@@ -10173,52 +10337,156 @@ function hrsFindList(lang, kind, band){
 function hrsFindSite(lang, band){
   return (HRS_SITES_LV[lang] && HRS_SITES_LV[lang][band]) || HRS_SITES[lang];
 }
-let hrsFindIdx = {};
+// The 150-topic list (same one used for search box hints) — picking one loads it straight
+// into the query box and is passed to Ask AI as the specific topic to search about.
+const HRS_TOPICS = ['Daily life', 'Family', 'Friends', 'Relationships', 'People', 'Personality', 'Feelings', 'Emotions', 'Home', 'Household', 'Rooms', 'Furniture', 'Food', 'Cooking', 'Drinks', 'Restaurants', 'Shopping', 'Clothes', 'Money', 'Prices', 'Jobs', 'Work', 'Workplace', 'Career', 'Business', 'Meetings', 'Job interviews', 'Education', 'School', 'University', 'Studying', 'Exams', 'Teachers', 'Students', 'Languages', 'English', 'Arabic', 'Communication', 'Conversation', 'Questions', 'Answers', 'Opinions', 'Agreement', 'Disagreement', 'Requests', 'Advice', 'Problems', 'Solutions', 'Decisions', 'Plans', 'Goals', 'Success', 'Failure', 'Mistakes', 'Habits', 'Routines', 'Time', 'Dates', 'Numbers', 'Weather', 'Seasons', 'Nature', 'Animals', 'Plants', 'Environment', 'Travel', 'Tourism', 'Airports', 'Hotels', 'Transportation', 'Cars', 'Driving', 'Roads', 'Cities', 'Countries', 'Places', 'Directions', 'Maps', 'Health', 'Body', 'Doctor', 'Hospital', 'Symptoms', 'Medicine', 'Exercise', 'Sports', 'Fitness', 'Sleep', 'Hobbies', 'Games', 'Music', 'Movies', 'Television', 'Books', 'Reading', 'Stories', 'News', 'Media', 'Internet', 'Social media', 'Technology', 'Computers', 'Phones', 'Apps', 'Science', 'History', 'Geography', 'Culture', 'Traditions', 'Religion', 'Society', 'Community', 'Government', 'Law', 'Politics', 'Economy', 'Finance', 'Banking', 'Investment', 'Business communication', 'Customer service', 'Buying and selling', 'Advertising', 'Products', 'Services', 'Safety', 'Emergencies', 'Crime', 'Rules', 'Responsibility', 'Freedom', 'Education systems', 'Careers', 'Workplace problems', 'Leadership', 'Management', 'Teamwork', 'Negotiation', 'Presentations', 'Public speaking', 'Arguments', 'Discussions', 'Debates', 'Descriptions', 'Comparisons', 'Explanations', 'Instructions', 'Experiences', 'Memories', 'Future plans'];
+// Last topic picked per language (persists while the tab stays open; not saved to the Sheet). '' = no topic picked yet.
+let hrsFindTopic = {};
+// Last platform picked per language (persists while the tab stays open; not saved to the Sheet).
+let hrsFindPlatform = {};
+// AI-generated search-idea state, keyed by lang+kind+band+platform+topic so switching any of
+// those starts a fresh batch: null (not asked yet) | {mode:'asking'} | {mode:'result', items, fallback} | {mode:'idle', error}
+let hrsAiState = {};
 function hrsFindKind(act){
   return { dictation: 'dictation', reading: 'reading', readsay: 'reading', writing: 'writing', register: 'register', roleplay: 'register', glossary: 'glossary' }[act] || 'listening';
 }
-function hrsFindHtml(kind, lang){
-  const band = hrsBand(lang), list = hrsFindList(lang, kind, band), i = hrsFindIdx[lang + kind + band] || 0, site = hrsFindSite(lang, band);
-  return `<div class="hrs-find" data-fkind="${kind}" data-flang="${lang}" data-fband="${band}">
+function hrsAiKey(lang, kind, band, platKey, topic){ return lang + '|' + kind + '|' + band + '|' + platKey + '|' + (topic || ''); }
+// presetQ, when passed (even ''), overrides the usual static default so re-renders triggered by
+// picking a platform/topic, asking AI, or nudging the level don't stomp on the box's current text.
+function hrsFindHtml(kind, lang, presetQ){
+  const band = hrsBand(lang), list = hrsFindList(lang, kind, band);
+  const platforms = hrsPlatformsFor(lang);
+  const platKey = hrsFindPlatform[lang] && platforms.some(p => p.key === hrsFindPlatform[lang]) ? hrsFindPlatform[lang] : platforms[0].key;
+  const plat = platforms.find(p => p.key === platKey) || platforms[0];
+  const topic = hrsFindTopic[lang] || '';
+  // A YouTube-only channel has no domain to filter by, so its "site" button instead runs a
+  // YouTube search scoped with the channel's own name (stripped of the "(YouTube)" tag) —
+  // rather than silently falling back to an unrelated default site, which is what happened
+  // before and made picking e.g. "Learn With Safaa" show an "Al Jazeera Learning" button.
+  const channelHint = plat.label.replace(/\s*\(YouTube\)\s*$/i, '').trim();
+  const site = plat.site ? { label: plat.label, site: plat.site, channel: '' } : { label: plat.label, site: '', channel: channelHint };
+  const platOptions = platforms.map(p => `<option value="${escapeHtml(p.key)}"${p.key === platKey ? ' selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
+  const topicOptions = '<option value="">Any topic</option>' + HRS_TOPICS.map(t => `<option value="${escapeHtml(t)}"${t === topic ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+  const ai = hrsAiState[hrsAiKey(lang, kind, band, platKey, topic)];
+  const inputVal = (presetQ !== undefined) ? presetQ : (topic || list[0]);
+  return `<div class="hrs-find" data-fkind="${kind}" data-flang="${lang}" data-fband="${band}" data-fsite="${escapeHtml(site.site)}" data-fsitelabel="${escapeHtml(site.label)}" data-fchannel="${escapeHtml(site.channel)}">
     <label class="gap-mini">Find material for your level (<strong>${HRS_BAND_LABEL[band]}</strong>) — opens a web search in a new tab, edit the search first if you like</label>
-    <input type="text" data-find="q" value="${escapeHtml(list[i % list.length])}" ${lang === 'ar' ? 'dir="auto"' : ''}>
-    <div class="hrs-chips"><button class="ghost" type="button" data-findact="google">Google</button><button class="ghost" type="button" data-findact="youtube">YouTube</button><button class="ghost" type="button" data-findact="news">News</button><button class="ghost" type="button" data-findact="site">${site.label}</button><button class="ghost" type="button" data-findact="idea">↻ Another idea</button></div>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;margin:6px 0;">
+      <div style="flex:2;min-width:180px;"><label class="gap-mini">Search within</label><select data-findplat>${platOptions}</select></div>
+      <div style="flex:2;min-width:180px;"><label class="gap-mini">Topic</label><select data-findtopic>${topicOptions}</select></div>
+    </div>
+    <input type="text" data-find="q" value="${escapeHtml(inputVal)}" ${lang === 'ar' ? 'dir="auto"' : ''}>
+    <div class="hrs-chips"><button class="ghost" type="button" data-findact="google">Google</button><button class="ghost" type="button" data-findact="youtube">YouTube</button><button class="ghost" type="button" data-findact="news">News</button><button class="ghost" type="button" data-findact="site">${escapeHtml(site.label)}</button></div>
+    <div class="card-actions" style="margin-top:6px;"><button class="ghost" type="button" data-findact="ai">🤖 Ask AI for 5 ideas${topic ? ' — ' + escapeHtml(topic) : ''}</button></div>
+    ${hrsAiResultHtml(ai)}
     <div class="gap-mini">${kind === 'dictation' ? 'For dictation choose something that comes with a transcript or captions you can copy.' : kind === 'reading' ? 'For timed reading pick a text you can copy and paste in.' : 'Links only — the app can’t check what the results contain.'}</div>
     <div class="gap-mini" style="margin-top:4px;"><strong>Rule of thumb:</strong> if you don’t know about 1 word in 20, it’s too hard — step down. Aim to know at least 19 of every 20.${hrsBandShift[lang] ? ' <em>(Adjusted by hand: ' + (hrsBandShift[lang] > 0 ? 'one band up' : 'one band down') + '.)</em>' : ''}</div>
     <div class="hrs-chips"><button class="ghost" type="button" data-findact="easier"${HRS_BANDS.indexOf(band) === 0 ? ' disabled' : ''}>↓ Too hard — easier</button><button class="ghost" type="button" data-findact="harder"${HRS_BANDS.indexOf(band) === HRS_BANDS.length - 1 ? ' disabled' : ''}>↑ Too easy — harder</button>${hrsBandShift[lang] ? '<button class="ghost" type="button" data-findact="auto">Back to my level</button>' : ''}</div></div>`;
 }
-function hrsFindUrl(act, q, lang, band){
+// Renders whatever hrsAiState currently holds for this exact lang+kind+band+platform+topic combo.
+function hrsAiResultHtml(ai){
+  if(!ai) return '';
+  if(ai.mode === 'asking') return '<p class="count-note" style="margin-top:6px;">Asking AI…</p>';
+  if(ai.mode === 'idle' && ai.error) return `<div class="status-msg err" style="margin-top:6px;">${escapeHtml(ai.error)}</div>`;
+  if(ai.mode === 'result' && ai.items && ai.items.length){
+    const via = ai.fallback ? '<div class="count-note">⚠ Came from the fallback AI — double-check it.</div>' : '';
+    const rows = ai.items.map((it, idx) => `<div class="bold-row-wrap" data-aipick="${idx}" style="cursor:pointer;">
+      <div><strong>${escapeHtml(it.q || '')}</strong></div>
+      ${it.note ? `<div class="gap-mini">${escapeHtml(it.note)}</div>` : ''}
+    </div>`).join('');
+    return `<div class="wl-suggest" style="margin-top:6px;">${rows}${via}<div class="gap-mini">Tap an idea to load it into the search box above.</div></div>`;
+  }
+  return '';
+}
+function hrsFindUrl(act, q, lang, band, site, channel){
   const e = encodeURIComponent;
   if(act === 'youtube') return 'https://www.youtube.com/results?search_query=' + e(q);
   if(act === 'news') return 'https://news.google.com/search?q=' + e(q);
-  if(act === 'site') return 'https://www.google.com/search?q=' + e(q + ' site:' + hrsFindSite(lang, band).site) + '&hl=' + lang;
+  if(act === 'site'){
+    if(site) return 'https://www.google.com/search?q=' + e(q + ' site:' + site) + '&hl=' + lang;
+    if(channel) return 'https://www.youtube.com/results?search_query=' + e(channel + ' ' + q); // no owned domain — scope the YouTube search by channel name instead
+    const s = hrsFindSite(lang, band).site;
+    return 'https://www.google.com/search?q=' + e(q + (s ? ' site:' + s : '')) + '&hl=' + lang;
+  }
   return 'https://www.google.com/search?q=' + e(q) + '&hl=' + lang;
 }
 document.getElementById('hrsRoot').addEventListener('click', (e) => {
+  const aiPick = e.target.closest('[data-aipick]');
+  if(aiPick){
+    const box = aiPick.closest('.hrs-find'), input = box.querySelector('[data-find="q"]');
+    const lang = box.dataset.flang, kind = box.dataset.fkind, band = box.dataset.fband;
+    const platforms = hrsPlatformsFor(lang), platKey = hrsFindPlatform[lang] || platforms[0].key, topic = hrsFindTopic[lang] || '';
+    const ai = hrsAiState[hrsAiKey(lang, kind, band, platKey, topic)];
+    const item = ai && ai.items && ai.items[parseInt(aiPick.dataset.aipick, 10)];
+    if(item) input.value = item.q || '';
+    return;
+  }
   const b = e.target.closest('[data-findact]');
   if(!b) return;
-  const box = b.closest('.hrs-find'), input = box.querySelector('[data-find="q"]'), lang = box.dataset.flang, kind = box.dataset.fkind, band = box.dataset.fband || hrsBand(lang);
+  const box = b.closest('.hrs-find'), input = box.querySelector('[data-find="q"]'), lang = box.dataset.flang, kind = box.dataset.fkind, band = box.dataset.fband || hrsBand(lang), site = box.dataset.fsite, channel = box.dataset.fchannel;
   if(['easier', 'harder', 'auto'].includes(b.dataset.findact)){
     const step = b.dataset.findact === 'easier' ? -1 : b.dataset.findact === 'harder' ? 1 : null;
     const auto = HRS_BANDS.indexOf(band) - (hrsBandShift[lang] || 0);      // band the hours alone would give
     const want = step === null ? 0 : (hrsBandShift[lang] || 0) + step;
     hrsBandShift[lang] = Math.max(-auto, Math.min(HRS_BANDS.length - 1 - auto, want));
-    box.outerHTML = hrsFindHtml(kind, lang); return;
+    box.outerHTML = hrsFindHtml(kind, lang, input.value); return;
   }
-  if(b.dataset.findact === 'idea'){
-    const list = hrsFindList(lang, kind, band), key = lang + kind + band;
-    hrsFindIdx[key] = ((hrsFindIdx[key] || 0) + 1) % list.length;
-    input.value = list[hrsFindIdx[key]]; return;
+  if(b.dataset.findact === 'ai'){
+    const platforms = hrsPlatformsFor(lang), platKey = hrsFindPlatform[lang] || platforms[0].key;
+    hrsAskAi(lang, kind, band, platKey, hrsFindTopic[lang] || ''); return;
   }
   const q = (input.value || '').trim();
   if(!q){ gapToastMsg('Type something to search for.'); return; }
-  window.open(hrsFindUrl(b.dataset.findact, q, lang, band), '_blank', 'noopener');
+  window.open(hrsFindUrl(b.dataset.findact, q, lang, band, site, channel), '_blank', 'noopener');
 });
 document.getElementById('hrsRoot').addEventListener('change', (e) => {
-  if(e.target.id !== 'hrsAct') return;
-  const holder = document.getElementById('hrsFindHolder');
-  if(holder) holder.innerHTML = hrsFindHtml(hrsFindKind(e.target.value), uiLang());
+  if(e.target.id === 'hrsAct'){
+    const holder = document.getElementById('hrsFindHolder');
+    if(holder) holder.innerHTML = hrsFindHtml(hrsFindKind(e.target.value), uiLang());
+    return;
+  }
+  if(e.target.dataset && 'findplat' in e.target.dataset){
+    const box = e.target.closest('.hrs-find'), lang = box.dataset.flang, kind = box.dataset.fkind, input = box.querySelector('[data-find="q"]');
+    hrsFindPlatform[lang] = e.target.value;
+    box.outerHTML = hrsFindHtml(kind, lang, input.value);
+    return;
+  }
+  if(e.target.dataset && 'findtopic' in e.target.dataset){
+    const box = e.target.closest('.hrs-find'), lang = box.dataset.flang, kind = box.dataset.fkind;
+    hrsFindTopic[lang] = e.target.value;
+    box.outerHTML = hrsFindHtml(kind, lang); // topic pick deliberately replaces the box text with the topic itself
+  }
 });
+// AI search-idea generator — same callGemini/parseAiJson pipeline as Check level and
+// Sentence build's Ask AI, tailored to a specific platform/channel + CEFR band + skill (+
+// optional topic) so the 5 suggestions are concrete, platform-aware queries (like Google's
+// own autocomplete style) rather than generic topic words.
+async function hrsAskAi(lang, kind, band, platKey, topic){
+  const platforms = hrsPlatformsFor(lang);
+  const plat = platforms.find(p => p.key === platKey) || platforms[0];
+  const key = hrsAiKey(lang, kind, band, platKey, topic);
+  hrsAiState[key] = { mode: 'asking' };
+  const holder = document.getElementById('hrsFindHolder');
+  const curInput = holder && holder.querySelector('[data-find="q"]');
+  const curVal = curInput ? curInput.value : undefined;
+  if(holder) holder.innerHTML = hrsFindHtml(kind, lang, curVal);
+  const langName = lang === 'ar' ? 'Arabic' : 'English';
+  const kindLabel = { listening: 'listening practice', reading: 'reading practice', dictation: 'dictation (needs a transcript/captions)', writing: 'writing models/examples', register: 'register/politeness examples', glossary: 'vocabulary/glossary lists' }[kind] || 'listening practice';
+  const system = 'You are a search strategist helping a language learner find the best real search queries for a specific platform. Reply with ONLY one JSON object, no markdown fences.';
+  const prompt = `Learner is studying ${langName} at CEFR level ${HRS_BAND_LABEL[band]}, looking for ${kindLabel}${topic ? `, specifically about the topic "${topic}"` : ''}, specifically on/about this platform: "${plat.label}"${plat.site ? ` (site: ${plat.site})` : ' (a YouTube channel — name it directly in the query text since it has no separate website to filter by)'}.\nGive 5 concrete, realistic search-engine query suggestions (short, like Google autocomplete phrases — 3-7 words each)${topic ? ` about "${topic}"` : ''} that would surface exactly the right ${plat.site ? 'site:' + plat.site : 'channel'} content for this level and purpose. Reply with ONLY JSON: {"items":[{"q":"","note":""}]}. q = the short search phrase itself (no quotes, no "site:" prefix — that\u2019s added separately); note = one short plain sentence (max ~15 words) saying what that search finds.`;
+  try{
+    const { text, fallback } = await callGemini(prompt, { system, useSearch: false });
+    const parsed = parseAiJson(text);
+    const items = Array.isArray(parsed.items) ? parsed.items.slice(0, 5).map(it => ({ q: String((it && it.q) || '').trim(), note: String((it && it.note) || '').trim() })).filter(it => it.q) : [];
+    hrsAiState[key] = items.length ? { mode: 'result', items, fallback: !!fallback } : { mode: 'idle', error: 'AI reply had no usable suggestions — try again.' };
+  }catch(err){
+    hrsAiState[key] = { mode: 'idle', error: 'AI request failed: ' + ((err && err.message) || 'unknown error') };
+  }
+  const holder2 = document.getElementById('hrsFindHolder');
+  const input2 = holder2 && holder2.querySelector('[data-find="q"]');
+  const val2 = input2 ? input2.value : undefined;
+  if(holder2) holder2.innerHTML = hrsFindHtml(kind, lang, val2);
+}
 
 // ---------- Hours: merge + Sheet sync (pull → merge → push), one row per day per language ----------
 function hrsRowsToPush(){
