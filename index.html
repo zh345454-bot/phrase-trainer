@@ -8745,10 +8745,24 @@ async function coreRestoreGaps(){
         if(remote && (remote.last || '') > (rs.last || '')) rs.last = remote.last;
       });
     }
+    // Today's review dose: mirrors the recap merge above, but for "how many
+    // reviewed today / cap" — so switching devices mid-session continues the
+    // count instead of starting the day over at 0. gapCapState() first makes
+    // sure the local bucket is actually for today (it self-resets on a new day);
+    // only merge if the Sheet's saved dose is for that same day.
+    if(data.reviewedToday && typeof data.reviewedToday === 'object' && data.reviewedToday.date){
+      gapCapState();
+      if(data.reviewedToday.date === state.gapMeta.reviewed.date){
+        state.gapMeta.reviewed.n = Math.max(state.gapMeta.reviewed.n, Number(data.reviewedToday.n) || 0);
+        state.gapMeta.reviewed.bonus = Math.max(state.gapMeta.reviewed.bonus || 0, Number(data.reviewedToday.bonus) || 0);
+        if(data.reviewedToday.cap) state.gapMeta.cap = Math.max(state.gapMeta.cap || 25, Number(data.reviewedToday.cap) || 25);
+      } // else the Sheet's dose is for a different day (stale, or this device is already ahead) — leave local alone
+    }
     const before = state.gaps.length;
     state.gaps = mergeGaps(state.gaps, incoming);
     await saveGaps();
     renderGaps();
+    renderDashboard();
     return { ok: true, incoming: incoming.length, before, message: `Gaps: ${incoming.length} in the Sheet merged with ${before} here → ${state.gaps.length} on this device.` };
   }catch(err){
     return { ok: false, message: 'Gaps restore failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
@@ -8759,7 +8773,9 @@ async function coreBackupGaps(opts){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
   try{
-    const bodyStr = sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {} });
+    const cs = gapCapState(); // ensures reviewed.date is today's before it's sent
+    const bodyStr = sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {},
+      reviewed: { date: state.gapMeta.reviewed.date, n: state.gapMeta.reviewed.n, bonus: state.gapMeta.reviewed.bonus || 0, cap: state.gapMeta.cap || 25 } });
     const post = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       keepalive: wantKeepalive_(bodyStr, opts && opts.keepalive),
