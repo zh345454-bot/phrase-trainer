@@ -407,6 +407,15 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .flash-sentence[dir=rtl]{ font-family:'Amiri',serif; font-size:18px; }
 .word-chip{ display:inline-block; border:1px solid var(--teal); color:var(--teal); background:var(--teal-soft); padding:5px 10px; margin:3px; cursor:pointer; font-size:13px; }
 .word-chip.used{ opacity:0.35; cursor:default; }
+.level-chip{ display:inline-block; border:1px solid var(--teal); color:var(--teal); background:#fff; padding:6px 12px; margin:3px 3px 3px 0; cursor:pointer; font-size:13px; border-radius:14px; }
+.level-chip.active{ background:var(--teal); color:#fff; }
+.conv-bubble{ max-width:80%; padding:8px 12px; margin:6px 0; border-radius:12px; font-size:14px; line-height:1.4; clear:both; }
+.conv-bubble.user{ background:var(--teal-soft); float:right; border-bottom-right-radius:2px; }
+.conv-bubble.assistant{ background:#f0f0f0; float:left; border-bottom-left-radius:2px; }
+.conv-bubble[dir="rtl"]{ font-family:'Amiri',serif; font-size:16px; }
+.conv-bubble.err{ color:var(--err); }
+.conv-transcript{ overflow:auto; min-height:120px; max-height:420px; padding:4px 2px; margin-bottom:10px; }
+.conv-transcript::after{ content:""; display:block; clear:both; }
 .gc-builder{ display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
 .gc-builder-col{ flex:1; min-width:220px; }
 .gc-builder-col label{ font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft); display:block; margin-bottom:4px; }
@@ -449,6 +458,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .recap-card{ border:2px solid var(--teal); padding:12px 14px; margin:8px 0; background:var(--panel); }
 .recap-progress{ font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
 .quick-dictate.listening{ background:#B33A2E; color:#fff; }
+#convMicBtn.listening{ background:#B33A2E; color:#fff; border-color:#B33A2E; }
 .gap-timer{ font-size:24px; font-weight:700; color:var(--brass-deep); margin:8px 0; font-variant-numeric:tabular-nums; }
 .gap-timer.late{ color:#B33A2E; }
 .gap-controls{ display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12.5px; color:var(--ink-soft); margin:2px 0 8px; }
@@ -605,6 +615,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="speaking">Speaking</button>
     <button class="tab-btn" data-view="hours" id="hrsTabBtn">Hours</button>
     <button class="tab-btn" data-view="drills">Drills</button>
+    <button class="tab-btn" data-view="conversation">🗣 Conversation</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
     <button class="tab-btn" data-view="history">Library</button>
@@ -959,6 +970,61 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div id="drillsSpeakingLine" style="margin-bottom:8px;"></div>
       <div class="count-note" style="margin-bottom:10px;">A realistic daily structure. The ordering matters more than the exact minutes: production and active recall first, passive review last.</div>
       <div id="dailyPlan"></div>
+    </div>
+  </section>
+
+  <!-- CONVERSATION PRACTICE -->
+  <section class="view" id="view-conversation">
+    <div class="panel">
+      <h2>🔊 Voice tester</h2>
+      <p class="count-note" style="margin-bottom:10px;">Handy for checking the two Groq/Orpheus voices on their own, separate from a live conversation.</p>
+      <div class="field" style="max-width:220px;">
+        <label>Language</label>
+        <select id="convTtsLang">
+          <option value="en">English</option>
+          <option value="ar">Arabic (Saudi)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Text to speak</label>
+        <textarea id="convTtsInput" dir="auto" style="min-height:70px;" placeholder="Type a sentence to hear it spoken...">Good afternoon. How was your day today?</textarea>
+      </div>
+      <div class="card-actions" style="margin-top:6px;">
+        <button class="primary" id="convTtsSpeakBtn">🔊 Speak</button>
+      </div>
+      <div class="status-msg" id="convTtsStatus"></div>
+      <audio id="convTtsAudio" style="display:none;"></audio>
+    </div>
+    <div class="panel">
+      <h2>🗣 Conversation practice</h2>
+      <p class="count-note" style="margin-bottom:10px;">Speak or type your turn; the AI replies at the level you pick (tap a chip any time — including mid-conversation — to change it; nothing above resets) and speaks its reply back in the fixed voice for that language. Words you weren't already tracking get quietly added to WordLevels in the background as you go.</p>
+      <div class="field" style="max-width:220px;">
+        <label>Language</label>
+        <select id="convChatLang">
+          <option value="en">English</option>
+          <option value="ar">Arabic (Saudi)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Level</label>
+        <div id="convLevelChips"></div>
+      </div>
+      <div class="field">
+        <label>Conversation</label>
+        <div class="conv-transcript" id="convTranscript"></div>
+      </div>
+      <div class="card-actions" style="margin-top:2px; gap:8px; align-items:flex-start;">
+        <textarea id="convChatInput" dir="auto" style="min-height:44px; flex:1;" placeholder="Type or record your turn... (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button id="convMicBtn" title="Record your turn">🎤</button>
+        <button class="primary" id="convChatSendBtn">Send</button>
+      </div>
+      <div class="card-actions" style="margin-top:8px; align-items:center;">
+        <button id="convChatResetBtn">New conversation</button>
+        <label style="display:flex; align-items:center; gap:5px; font-size:13px; font-weight:normal; margin:0;">
+          <input type="checkbox" id="convAutoSpeak" checked style="width:auto;"> Speak replies aloud
+        </label>
+      </div>
+      <div class="status-msg" id="convChatStatus"></div>
     </div>
   </section>
 
@@ -5261,6 +5327,381 @@ document.getElementById('restoreBankBtn').addEventListener('click', async ()=>{
   const r = await coreRestoreBank();
   statusEl.textContent = r.ok ? 'Restored ' + state.bank.length + ' phrases (with review progress) from the sheet.' : r.message;
   statusEl.className = r.ok ? 'status-msg' : 'status-msg err';
+});
+
+// ---------- Conversation practice: text-to-speech (Batch 1) ----------
+// Calls the Apps Script's Groq Orpheus endpoint (type: 'tts') and gets back
+// one or more base64 WAV clips (long text is split into <=200-char chunks
+// server-side, since that's Orpheus's per-request cap). Returns
+// { ok, message, clips } — never throws, same shape as the other core*
+// sync helpers above.
+async function coreSpeakText(text, lang){
+  const url = state.settings.webAppUrl;
+  if(!url) return { ok: false, message: 'Add your Apps Script Web App URL in Sheet settings first.' };
+  const clean = (text || '').trim();
+  if(!clean) return { ok: false, message: 'Nothing to speak.' };
+  try{
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'tts', text: clean, lang: lang === 'ar' ? 'ar' : 'en' })
+    });
+    const data = await res.json();
+    throwIfRejected(data);
+    if(!data.clips || !data.clips.length) return { ok: false, message: 'No audio came back.' };
+    return { ok: true, clips: data.clips };
+  }catch(err){
+    return { ok: false, message: (err && err.message) ? err.message : 'Speech generation failed.' };
+  }
+}
+
+// Plays a list of { audio: base64Wav } clips back to back through one
+// <audio> element (sequential, since the browser can only decode one src at
+// a time on this element) — returns once the last clip finishes.
+function playTtsClips(clips){
+  const el = document.getElementById('convTtsAudio');
+  return clips.reduce((chain, clip) => chain.then(() => new Promise((resolve, reject) => {
+    el.onended = resolve;
+    el.onerror = () => reject(new Error('Playback failed.'));
+    el.src = 'data:audio/wav;base64,' + clip.audio;
+    el.play().catch(reject);
+  })), Promise.resolve());
+}
+
+document.getElementById('convTtsSpeakBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('convTtsStatus');
+  const btn = document.getElementById('convTtsSpeakBtn');
+  const lang = document.getElementById('convTtsLang').value;
+  const text = document.getElementById('convTtsInput').value;
+  btn.disabled = true;
+  statusEl.textContent = 'Generating speech...';
+  statusEl.className = 'status-msg';
+  const r = await coreSpeakText(text, lang);
+  if(!r.ok){
+    statusEl.textContent = r.message;
+    statusEl.className = 'status-msg err';
+    btn.disabled = false;
+    return;
+  }
+  statusEl.textContent = 'Playing (' + r.clips.length + ' clip' + (r.clips.length === 1 ? '' : 's') + ')...';
+  try{
+    await playTtsClips(r.clips);
+    statusEl.textContent = 'Done.';
+  }catch(err){
+    statusEl.textContent = err && err.message ? err.message : 'Playback failed.';
+    statusEl.className = 'status-msg err';
+  }
+  btn.disabled = false;
+});
+
+// ---------- Conversation practice: text/voice chat, level control, WordLevels feed ----------
+// Session-only by design (per your answer) — persisted to localStorage only (so a
+// reload doesn't lose it), never synced to the Sheet/another device. Reuses the SAME
+// level ladder as the vocab-milestone feature (VOCAB_BENCHMARKS) rather than inventing
+// a second one, and the SAME callGemini() used by Ask AI / Grammar check, so this gets
+// the existing Gemini-key rotation + Groq fallback for free.
+let convHistory = []; // [{ role: 'user'|'assistant', content }]
+let convLevel = null; // set on first renderConvLevelChips() call
+let convBubbleSeq = 0;
+let convClipsById = {}; // bubbleId -> TTS clips already generated, for the 🔊 replay button
+let convRecorder = null, convChunks = [];
+
+function buildConvSystemPrompt(lang, level){
+  const langName = lang === 'ar' ? 'Saudi Arabic' : 'English';
+  const scaleName = lang === 'ar' ? 'Arabic teaching-stage scale' : 'CEFR scale';
+  return `You are a friendly conversation partner helping someone practice spoken ${langName}. `
+    + `Their current level is ${level} on the ${scaleName}. Match your vocabulary, grammar `
+    + `complexity, and sentence length to that level — simpler and shorter for a lower level, `
+    + `richer and more natural for a higher one. Keep replies short: 1-3 sentences, natural `
+    + `spoken style, like real small talk — not a lecture. Vary the topic yourself rather than `
+    + `sticking to one subject; ask a follow-up question or share something small, the way a `
+    + `real conversation partner would. `
+    + (lang === 'ar' ? 'Reply only in Arabic (Saudi dialect where natural), in Arabic script.' : 'Reply only in English.');
+}
+
+function renderConvLevelChips(){
+  const lang = document.getElementById('convChatLang').value;
+  const stages = VOCAB_BENCHMARKS[lang].stages;
+  if(!convLevel || !stages.some(s => s.label === convLevel)) convLevel = stages[Math.floor(stages.length / 2)].label;
+  const wrap = document.getElementById('convLevelChips');
+  wrap.innerHTML = stages.map(s =>
+    `<button type="button" class="level-chip${s.label === convLevel ? ' active' : ''}" data-level="${escapeHtml(s.label)}">${escapeHtml(s.label)}</button>`
+  ).join('');
+  wrap.querySelectorAll('.level-chip').forEach(chip => chip.addEventListener('click', () => {
+    convLevel = chip.dataset.level;
+    renderConvLevelChips();
+  }));
+}
+document.getElementById('convChatLang').addEventListener('change', ()=>{
+  convLevel = null; // language changed: pick a fresh default level for that language's own ladder
+  renderConvLevelChips();
+});
+
+// ---- Transcript rendering: each assistant bubble carries a hidden 🔊 replay
+// button that only appears once its audio clips exist (see convAutoSpeak). ----
+function appendConvBubble(role, text, lang){
+  const id = 'convb' + (++convBubbleSeq);
+  const wrap = document.getElementById('convTranscript');
+  const div = document.createElement('div');
+  div.className = 'conv-bubble ' + role;
+  div.id = id;
+  if(lang === 'ar') div.dir = 'rtl';
+  const span = document.createElement('span');
+  span.className = 'conv-bubble-text';
+  span.textContent = text;
+  div.appendChild(span);
+  if(role === 'assistant'){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'conv-replay-btn';
+    btn.textContent = ' 🔊';
+    btn.title = 'Play again';
+    btn.style.display = 'none';
+    btn.style.border = 'none';
+    btn.style.background = 'none';
+    btn.style.cursor = 'pointer';
+    btn.style.fontSize = '13px';
+    btn.addEventListener('click', ()=> convReplay(id));
+    div.appendChild(btn);
+  }
+  wrap.appendChild(div);
+  wrap.scrollTop = wrap.scrollHeight;
+  return id;
+}
+function updateConvBubbleText(id, text, isError){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const span = el.querySelector('.conv-bubble-text');
+  if(span) span.textContent = text; else el.textContent = text;
+  if(isError) el.classList.add('err'); else el.classList.remove('err');
+  const wrap = document.getElementById('convTranscript');
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+// ---- Batch 4: speak the AI's reply automatically (unless the checkbox is off),
+// and remember the clips on that bubble so 🔊 can replay them without a re-call. ----
+async function convAutoSpeak(bubbleId, text, lang){
+  if(!document.getElementById('convAutoSpeak').checked) return;
+  const r = await coreSpeakText(text, lang);
+  if(!r.ok) return; // silent — the text reply is already shown; audio is a bonus, not required
+  convClipsById[bubbleId] = r.clips;
+  const el = document.getElementById(bubbleId);
+  const btn = el && el.querySelector('.conv-replay-btn');
+  if(btn) btn.style.display = '';
+  try{ await playTtsClips(r.clips); }
+  catch(e){ /* autoplay can be blocked by the browser until the user has interacted with the page — the 🔊 button still works */ }
+}
+function convReplay(bubbleId){
+  const clips = convClipsById[bubbleId];
+  if(clips) playTtsClips(clips).catch(()=>{});
+}
+
+// ---- Batch 5: feed vocabulary you were exposed to into WordLevels, quietly,
+// in the background. Reuses the exact same batch-AI-leveling prompt/parsing as
+// the "Level my vocabulary" bulk tool (AI_LEVEL_CATEGORIES / matchAiCategoryIdx /
+// categoryIdxToLangLevel), just triggered automatically from conversation text
+// instead of manually from the bank. Never touches EN/AR (authoritative) — only
+// ever adds to the WordLevels staging tab, and only for words that aren't
+// already leveled anywhere. Batched (not one AI call per word) and silent on
+// failure: this is enrichment, not something that should ever interrupt a
+// conversation — anything missed here is still picked up later by the regular
+// bulk leveler.
+let convPendingWords = { en: new Map(), ar: new Map() }; // key -> display label
+let convWordFlushBusy = { en: false, ar: false };
+const CONV_WORD_FLUSH_AT = 12;
+
+function convExtractWords(text, lang){
+  const out = new Map();
+  stripBold(text || '').trim().split(/\s+/).forEach(rawTok => {
+    const key = normalizeWordKey(rawTok, lang);
+    if(!key || !/\p{L}/u.test(key)) return;
+    const raw = stripTashkeel(rawTok).replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, '');
+    if(raw && !out.has(key)) out.set(key, raw);
+  });
+  return out;
+}
+function convQueueWordsForLeveling(text, lang){
+  convExtractWords(text, lang).forEach((label, key) => {
+    if(convPendingWords[lang].has(key)) return;
+    if(wordLevelsCache.en || wordLevelsCache.ar){ // only pre-filter once the cache has actually loaded
+      const res = lookupWordLevel(label, lang);
+      if(res.status === 'leveled') return;
+    }
+    convPendingWords[lang].set(key, label);
+  });
+  if(convPendingWords[lang].size >= CONV_WORD_FLUSH_AT) convFlushWordLeveling(lang).catch(()=>{});
+}
+async function convFlushWordLeveling(lang){
+  if(convWordFlushBusy[lang]) return;
+  const pending = convPendingWords[lang];
+  if(!pending.size) return;
+  const url = state.settings.webAppUrl;
+  if(!url) return;
+  convWordFlushBusy[lang] = true;
+  const batch = [...pending.entries()];
+  pending.clear();
+  try{
+    await ensureWordLevelsLoaded(false);
+    const stillUnleveled = batch.filter(([, label]) => lookupWordLevel(label, lang).status !== 'leveled');
+    if(!stillUnleveled.length) return;
+    const langName = lang === 'ar' ? 'Arabic' : 'English';
+    const system = 'You are a vocabulary-level assessor for language learners. Reply with ONLY one JSON object, no markdown fences.';
+    const numbered = stillUnleveled.map(([, label], j) => `${j + 1}. ${label}`).join('\n');
+    const prompt = `For each numbered ${langName} word below, estimate its proficiency level.\nUse ONLY one of these categories: ${AI_LEVEL_CATEGORIES.join(', ')}.\nReply with ONLY JSON: {"items":[{"n":1,"level":""}, ...]} — one entry per number, matching the numbering exactly, no extra text.\n\n${numbered}`;
+    const { text } = await callGemini(prompt, { system, useSearch: false });
+    const parsed = parseAiJson(text);
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const delta = new Map();
+    items.forEach(it => {
+      const w = stillUnleveled[Number(it.n) - 1];
+      if(!w) return;
+      const [, label] = w;
+      const catIdx = matchAiCategoryIdx(String(it.level || '').trim());
+      if(catIdx < 0) return;
+      const matched = categoryIdxToLangLevel(catIdx, lang);
+      if(!matched) return;
+      const fullKey = lang + '|' + normalizeTermKey(label, lang);
+      const existing = wordLevelsCache.staging && wordLevelsCache.staging.get(fullKey);
+      delta.set(fullKey, { id: (existing && existing.id) || uid(), lang, term: label, level: matched, source: 'ai', note: 'From Conversation practice', updatedAt: new Date().toISOString() });
+    });
+    if(delta.size){
+      const merged = new Map(wordLevelsCache.staging || []);
+      delta.forEach((row, key) => merged.set(key, row));
+      const rows = [...merged.values()];
+      const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'wordlevels_sync', rows }) });
+      throwIfRejected(await post.json());
+      wordLevelsCache.staging = merged;
+    }
+  }catch(err){ /* silent — background enrichment only; nothing lost, just not leveled this pass */ }
+  finally{ convWordFlushBusy[lang] = false; }
+}
+
+// ---- Batch 5: persist the session locally (this device only — never synced,
+// per "session-only for now" — so a reload doesn't lose an in-progress chat). ----
+function saveConvSession(){
+  lsSet('convSession', { lang: document.getElementById('convChatLang').value, level: convLevel, history: convHistory });
+}
+function loadConvSessionIfAny(){
+  const saved = lsGet('convSession', null);
+  if(!saved || !Array.isArray(saved.history) || !saved.history.length) return;
+  const lang = saved.lang === 'ar' ? 'ar' : 'en';
+  document.getElementById('convChatLang').value = lang;
+  convLevel = saved.level || null;
+  renderConvLevelChips();
+  convHistory = saved.history;
+  document.getElementById('convTranscript').innerHTML = '';
+  convHistory.forEach(m => appendConvBubble(m.role, m.content, lang)); // clips aren't persisted — 🔊 reappears once a reply is (re)spoken live
+}
+renderConvLevelChips();
+loadConvSessionIfAny();
+
+async function sendConvTurn(){
+  const input = document.getElementById('convChatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  const lang = document.getElementById('convChatLang').value;
+  const sendBtn = document.getElementById('convChatSendBtn');
+  const statusEl = document.getElementById('convChatStatus');
+  statusEl.textContent = '';
+  statusEl.className = 'status-msg';
+  appendConvBubble('user', text, lang);
+  convHistory.push({ role: 'user', content: text });
+  convQueueWordsForLeveling(text, lang);
+  input.value = '';
+  sendBtn.disabled = true;
+  const typingId = appendConvBubble('assistant', '…', lang);
+  try{
+    const system = buildConvSystemPrompt(lang, convLevel);
+    const r = await callGemini(text, { system, history: convHistory.slice(0, -1), useSearch: false });
+    updateConvBubbleText(typingId, r.text, false);
+    convHistory.push({ role: 'assistant', content: r.text });
+    convQueueWordsForLeveling(r.text, lang);
+    saveConvSession();
+    convAutoSpeak(typingId, r.text, lang).catch(()=>{});
+  }catch(err){
+    updateConvBubbleText(typingId, '⚠ ' + (err && err.message ? err.message : 'Could not get a reply.'), true);
+    statusEl.textContent = 'That reply failed — you can edit and resend, or try again.';
+    statusEl.className = 'status-msg err';
+  }
+  sendBtn.disabled = false;
+  input.focus();
+}
+document.getElementById('convChatSendBtn').addEventListener('click', sendConvTurn);
+document.getElementById('convChatInput').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendConvTurn(); }
+});
+document.getElementById('convChatResetBtn').addEventListener('click', ()=>{
+  convHistory = [];
+  convClipsById = {};
+  document.getElementById('convTranscript').innerHTML = '';
+  document.getElementById('convChatStatus').textContent = '';
+  lsSet('convSession', null);
+  ['en', 'ar'].forEach(l => convFlushWordLeveling(l).catch(()=>{})); // flush anything still pending before it's forgotten
+});
+
+// ---- Batch 3: record your turn instead of typing it — same record-then-
+// transcribe path as Voice practice / Quick dictate (MediaRecorder → the
+// Apps Script's Whisper transcription), not the browser's live
+// SpeechRecognition API, for the same reasons noted on Quick dictate above. ----
+function convMicReset(){
+  const btn = document.getElementById('convMicBtn');
+  btn.textContent = '🎤'; btn.disabled = false; btn.classList.remove('listening');
+}
+document.getElementById('convMicBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('convMicBtn');
+  const statusEl = document.getElementById('convChatStatus');
+  if(convRecorder && convRecorder.state === 'recording'){ convRecorder.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    statusEl.textContent = 'This browser does not support audio recording.'; statusEl.className = 'status-msg err'; return;
+  }
+  if(!state.settings.webAppUrl){
+    statusEl.textContent = 'Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.'; statusEl.className = 'status-msg err'; return;
+  }
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    convChunks = [];
+    convRecorder = new MediaRecorder(stream);
+    convRecorder.ondataavailable = ev => { if(ev.data.size > 0) convChunks.push(ev.data); };
+    convRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop()); // release the mic indicator
+      const blob = new Blob(convChunks, { type: convRecorder.mimeType || 'audio/webm' });
+      convChunks = [];
+      btn.textContent = '…'; btn.disabled = true; btn.classList.remove('listening');
+      statusEl.textContent = 'Transcribing…'; statusEl.className = 'status-msg';
+      try{
+        const base64 = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(',')[1]);
+          r.onerror = () => reject(new Error('Could not read the recording.'));
+          r.readAsDataURL(blob);
+        });
+        const lang = document.getElementById('convChatLang').value;
+        const res = await fetch(state.settings.webAppUrl, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: sheetPostBody({ type: 'transcribe', audio: base64, mimeType: blob.type, language: lang })
+        });
+        const data = await res.json();
+        if(data.status !== 'ok') throw new Error(data.message || 'Transcription failed.');
+        if(!data.text){
+          statusEl.textContent = 'Nothing was heard in that recording — try again, closer to the mic.'; statusEl.className = 'status-msg err';
+        } else {
+          const box = document.getElementById('convChatInput');
+          box.value = (box.value ? box.value.trim() + ' ' : '') + data.text;
+          statusEl.textContent = ''; statusEl.className = 'status-msg';
+        }
+      }catch(err){
+        statusEl.textContent = err.message || 'Transcription failed.'; statusEl.className = 'status-msg err';
+      }
+      convMicReset();
+    };
+    convRecorder.start();
+    btn.textContent = '⏺'; btn.classList.add('listening');
+    statusEl.textContent = 'Recording — speak now, then tap 🎤 to stop.'; statusEl.className = 'status-msg';
+  }catch(err){
+    statusEl.textContent = 'Could not access the microphone.'; statusEl.className = 'status-msg err';
+    convMicReset();
+  }
 });
 
 // ---------- Grammar notebook backup / restore ----------
