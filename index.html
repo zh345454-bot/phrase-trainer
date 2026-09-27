@@ -4594,7 +4594,7 @@ async function coreSyncDrills(){
     const d = getDrillSnapshot();
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
       body: sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
         voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro })
     });
@@ -4672,12 +4672,29 @@ async function coreRestoreDrills(){
 // mobile browsers. That's what made it look like gaps "don't sync to all devices":
 // you'd log one right before switching apps, and the pending push just evaporated.
 // Flushing on both visibilitychange(hidden) and pagehide covers the browsers that
-// only reliably fire one or the other.
+// only reliably fire one or the other — but flushing still isn't enough by itself:
+// coreSyncGaps() (and its drills/hours/library siblings) is a PULL then a PUSH, two
+// separate network round trips, and a browser that's actively hiding/unloading the
+// tab essentially never lets both finish in time. So the flush below skips the pull
+// and fires a single push-only request with `keepalive: true`, which is what
+// browsers actually keep alive past unload. The pull isn't lost, just deferred: the
+// next time the app opens, the normal coreRestoreX() catch-up above picks up
+// whatever the other device pushed in the meantime.
 function flushPendingSyncs(){
-  if(drillSyncTimer){ clearTimeout(drillSyncTimer); drillSyncTimer = null; coreSyncDrills().catch(()=>{}); }
-  if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreSyncGaps().catch(()=>{}); }
-  if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreSyncHours().catch(()=>{}); }
-  if(ptSyncTimer){ clearTimeout(ptSyncTimer); ptSyncTimer = null; coreSyncParallelTexts().catch(()=>{}); }
+  if(drillSyncTimer){
+    clearTimeout(drillSyncTimer); drillSyncTimer = null;
+    if(state.settings.webAppUrl){
+      const d = getDrillSnapshot();
+      fetch(state.settings.webAppUrl, {
+        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
+        body: sheetPostBody({ type: 'drill_sync', date: d.date, target: d.target, completed: d.completed,
+          voicePractice: d.voicePractice, writeCheck: d.writeCheck, addPhrase: d.addPhrase, newIntro: d.newIntro })
+      }).catch(()=>{});
+    }
+  }
+  if(gapSyncTimer){ clearTimeout(gapSyncTimer); gapSyncTimer = null; coreBackupGaps().catch(()=>{}); }
+  if(hrsSyncTimer){ clearTimeout(hrsSyncTimer); hrsSyncTimer = null; coreBackupHours().catch(()=>{}); }
+  if(ptSyncTimer){ clearTimeout(ptSyncTimer); ptSyncTimer = null; coreBackupParallelTexts().catch(()=>{}); }
 }
 document.addEventListener('visibilitychange', ()=>{
   if(document.hidden){ flushPendingSyncs(); return; }
@@ -4900,7 +4917,7 @@ async function coreBackupParallelTexts(){
   if(!url) return noUrlResult();
   try{
     const res = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
       body: sheetPostBody({ type: 'paralleltexts_sync', entries: state.parallelTexts.map(p => ({
         id: p.id, topic: p.topic, date: p.date, docUrl: p.docUrl, docId: p.docId || '',
         english: p.english, arabic: p.arabic, createdAt: p.createdAt || ''
@@ -8726,7 +8743,7 @@ async function coreBackupGaps(){
   if(!url) return noUrlResult();
   try{
     const post = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true,
       body: sheetPostBody({ type: 'gaps_sync', entries: state.gaps.map(gapToRow).concat((state.gapTomb || []).map(t => ({ id: t.id, status: 'deleted', updatedAt: t.at }))), recap: state.gapMeta.recap || {} })
     });
     throwIfRejected(await post.json());
@@ -10536,7 +10553,7 @@ async function coreBackupHours(){
   if(!url) return noUrlResult();
   try{
     const rows = hrsRowsToPush();
-    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'hours_sync', rows }) });
+    const post = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, keepalive: true, body: sheetPostBody({ type: 'hours_sync', rows }) });
     throwIfRejected(await post.json());
     return { ok: true, message: `Hours: ${rows.length} day-rows backed up.` };
   }catch(err){
