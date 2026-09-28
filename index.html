@@ -2145,10 +2145,14 @@ function searchIncludes(haystack, query){
   return !q || foldSearch(haystack).includes(q);
 }
 
-// Special category value used only by the Practice set picker: everything you've starred.
+// Special category values used across the Bank/Practice/Review category filters:
+// everything you've starred, and — so nothing slips through unstarred by
+// accident — everything you haven't.
 const STARRED_CATEGORY = '__starred__';
+const NOT_STARRED_CATEGORY = '__not_starred__';
 function matchesFilter(p, query, category, boldFilter){
   if(category === STARRED_CATEGORY){ if(!p.starred) return false; }
+  else if(category === NOT_STARRED_CATEGORY){ if(p.starred) return false; }
   else if(category && p.category !== category) return false;
   if(boldFilter){
     const enBold = extractBoldSegments(p.en).length > 0;
@@ -2187,13 +2191,17 @@ function updateCategoryDropdowns(){
     // the one place browsing by category size is actually useful; the
     // practice/review pickers stay plain so they don't get crowded.
     const withCounts = id === 'bankCategoryFilter';
-    // The Practice set picker also gets "★ Starred" (with how many are starred) at the top.
-    const starredOpt = (id === 'practiceCategoryFilter' || id === 'reviewCategoryFilter')
-      ? `<option value="${STARRED_CATEGORY}">★ Starred (${state.bank.filter(p => p.starred).length})</option>` : '';
+    // All three get "★ Starred" and "☆ Not yet starred" at the top (with
+    // counts), so a missed phrase is as easy to spot in the Bank itself as
+    // it already was when building a Practice/Review set.
+    const starredCount = state.bank.filter(p => p.starred).length;
+    const notStarredCount = state.bank.length - starredCount;
+    const starredOpt = `<option value="${STARRED_CATEGORY}">★ Starred (${starredCount})</option>`
+      + `<option value="${NOT_STARRED_CATEGORY}">☆ Not yet starred (${notStarredCount})</option>`;
     sel.innerHTML = '<option value="">All categories</option>' + starredOpt + cats.map(c=>
       `<option value="${escapeHtml(c)}">${escapeHtml(c)}${withCounts ? ' | ' + counts[c] : ''}</option>`
     ).join('');
-    if(cats.includes(current) || (starredOpt && current === STARRED_CATEGORY)) sel.value = current;
+    if(cats.includes(current) || current === STARRED_CATEGORY || current === NOT_STARRED_CATEGORY) sel.value = current;
   });
 }
 
