@@ -1353,6 +1353,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <input type="text" id="ptFolderLinkInput" placeholder="https://drive.google.com/drive/folders/...">
     </div>
     <p style="margin-top:-8px; font-size:11.5px;">Where the Library tab saves each bilingual text as its own Google Doc. Paste the folder's share link (or just its ID) — create the folder once in Drive, then paste it here.</p>
+    <div class="field">
+      <label>Practice log maintenance</label>
+      <button id="logResyncBtn">Force full re-sync of Practice log</button>
+    </div>
+    <p style="margin-top:-8px; font-size:11.5px;">The Log sheet used to grow a new row every day a phrase was practiced again — that's fixed now (one row per phrase, like Bank). Rows already sitting in the Sheet from before this fix won't clean themselves up on their own, though: go clear all the data rows in the Log tab (keep the header row), then tap this once — it re-sends everything currently on this device so the sheet rebuilds cleanly, one row per phrase. Only needs doing once.</p>
+    <div class="status-msg" id="logResyncStatus"></div>
     <div class="modal-actions">
       <button class="ghost" id="closeSettings">Cancel</button>
       <button class="primary" id="saveSettings">Save</button>
@@ -1471,7 +1477,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 </div>
 
 <script>
-let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], parallelTexts: [], settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15, driveFolderLink: '' } };
+let state = { bank: [], log: [], practicedDates: [], grammar: [], quran: [], parallelTexts: [], dailyActivity: {}, settings: { webAppUrl: '', sharedSecret: '', geminiApiKey: '', geminiModel: '', geminiModelOverride: '', googleSearchApiKey: '', googleSearchCx: '', newPerDayCap: 15, driveFolderLink: '' } };
 
 // ---------- Local storage (this app runs standalone, so we use the browser's
 // own localStorage rather than any host-provided storage API) ----------
@@ -1490,7 +1496,8 @@ async function loadState(){
   state.bank = lsGet('bank', []);
   state.log = lsGet('log', []);
   state.practicedDates = lsGet('practicedDates', []);
-  pruneOldLogEntries(); // trims already-synced rows older than the retention window; safe on every load since the full history stays in the Sheet (Pull anytime) and streaks are read from practicedDates, not the raw rows
+  state.dailyActivity = lsGet('dailyActivity', {});
+  pruneOldLogEntries(); // trims dailyActivity + already-synced Log rows older than the retention window; streaks are read from practicedDates, which this never touches
   await saveLog();
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
@@ -1526,7 +1533,7 @@ async function loadState(){
   if(!Array.isArray(state.parallelTexts)) state.parallelTexts = [];
 }
 async function saveBank(){ lsSet('bank', state.bank); }
-async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); }
+async function saveLog(){ lsSet('log', state.log); lsSet('practicedDates', state.practicedDates); lsSet('dailyActivity', state.dailyActivity); }
 async function saveSettings(){ lsSet('settings', state.settings); }
 async function saveQuran(){ lsSet('quran', state.quran); }
 async function saveGaps(){ lsSet('gaps', state.gaps); lsSet('gapMeta', state.gapMeta); lsSet('gapTomb', state.gapTomb || []); }
@@ -1569,6 +1576,9 @@ function pruneOldLogEntries(){
   mergePracticedDates(); // capture every date into the permanent record before any rows built from it are dropped
   const cutoff = new Date(Date.now() - LOG_RETENTION_DAYS * 86400000).toISOString().slice(0, 10);
   state.log = state.log.filter(l => !l.synced || (l.date || '9999-99-99') >= cutoff);
+  // dailyActivity is local-only (never synced — see addLogEntry/dashPractice below), so
+  // nothing here needs a "still unsynced, keep it" exception the way Log's own prune does.
+  Object.keys(state.dailyActivity).forEach(d => { if(d < cutoff) delete state.dailyActivity[d]; });
 }
 
 // ---------- Speech ----------
@@ -3582,25 +3592,38 @@ function getGeminiUsageBySlot(){
 // Review / Quick review bake the numeric rating straight into the category
 // text ("Review · rated 4/5 · Grammar"), which is otherwise a stable label.
 // Ignoring just that number when matching means re-rating the same phrase
-// later the same day still finds and updates today's row instead of
-// treating a changed score as a brand-new category and appending again —
-// this is why the Log sheet was growing fast specifically from reviews.
+// later still finds and updates its row instead of treating a changed score
+// as a brand-new category and appending again.
 function logMatchCategory(category){
   return String(category || '').replace(/rated \d\/5/i, 'rated _/5');
 }
+// dailyActivity is a separate, LOCAL-ONLY (never synced to the Sheet — see
+// dashPractice below) per-day/per-lang tally of how many times addLogEntry()
+// fired. It exists ONLY so the two dashboard stats that used to sum Log rows
+// across a date window (the weekly practice count, and Hours' "estimated
+// input from other activity") still work now that Log itself no longer keeps
+// one row per day — see the note on addLogEntry.
+function bumpDailyActivity(lang, date){
+  if(!state.dailyActivity[date]) state.dailyActivity[date] = { en: 0, ar: 0 };
+  state.dailyActivity[date][lang] = (state.dailyActivity[date][lang] || 0) + 1;
+}
 async function addLogEntry(text, lang, category){
   const date = todayStr();
-  // Upsert by (date, lang, category, phrase): logging the exact same thing
-  // again today — e.g. clicking "Log EN" more than once, or a double-tap —
-  // bumps this row's count instead of creating another diary row. The count
-  // column is what actually reflects "how many times", the row count no
-  // longer does.
-  const existing = state.log.find(l => l.date === date && l.lang === lang && logMatchCategory(l.category) === logMatchCategory(category) && l.phrase === text);
+  bumpDailyActivity(lang, date);
+  // Upsert by (lang, category, phrase) — NOT date. Log now mirrors how Bank
+  // itself works: one row per thing, kept up to date in place, rather than a
+  // new row every day it's practiced again. Practicing the exact same phrase
+  // under the exact same category on day 30 just moves this one row's date
+  // forward and bumps its count — it doesn't add a 30th row. (Windowed stats
+  // that used to read the day-by-day spread out of these rows now read
+  // dailyActivity above instead, which doesn't need Log to keep that history.)
+  const existing = state.log.find(l => l.lang === lang && logMatchCategory(l.category) === logMatchCategory(category) && l.phrase === text);
   if(existing){
     existing.count = (existing.count || 1) + 1;
+    existing.date = date;
     existing.time = timeStr();
     existing.category = category; // keep the latest rating/category text visible
-    existing.synced = false; // count changed since it was last synced
+    existing.synced = false; // changed since it was last synced
   } else {
     state.log.unshift({ date, time: timeStr(), lang, category, phrase: text, count: 1, synced: false });
   }
@@ -5245,6 +5268,7 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     version: 1,
     bank: state.bank,
     log: state.log,
+    dailyActivity: state.dailyActivity,
     practicedDates: state.practicedDates,
     grammar: state.grammar,
     quran: state.quran,
@@ -5284,6 +5308,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
     if(!confirm(`This replaces your ${sectionsPresent.join(', ')} on this device with the contents of this file (${summary}), from ${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'an unknown date'}. Continue?`)) return;
     if(Array.isArray(payload.bank)) state.bank = payload.bank;
     if(Array.isArray(payload.log)) state.log = payload.log;
+    if(payload.dailyActivity && typeof payload.dailyActivity === 'object') state.dailyActivity = payload.dailyActivity;
     if(Array.isArray(payload.practicedDates)) state.practicedDates = payload.practicedDates;
     mergePracticedDates(); // backfill from the restored log too, in case this backup predates practicedDates
     if(Array.isArray(payload.grammar)) state.grammar = payload.grammar;
@@ -9907,8 +9932,12 @@ function dashRelogs(lang, from, to){
 function dashLogged(lang, from, to){
   return state.gaps.filter(g => g.lang === lang).reduce((n, g) => n + ((g.logDates && g.logDates.length) ? g.logDates : [g.date]).filter(d => d >= from && d <= to).length, 0);
 }
+// Reads dailyActivity, not Log — Log now keeps only one row per phrase (see
+// addLogEntry), so it no longer has the day-by-day spread this needs.
 function dashPractice(lang, from, to){
-  return state.log.filter(l => l.lang === lang && l.date >= from && l.date <= to).reduce((n, l) => n + (l.count || 1), 0);
+  let n = 0;
+  Object.keys(state.dailyActivity).forEach(d => { if(d >= from && d <= to) n += (state.dailyActivity[d][lang] || 0); });
+  return n;
 }
 // One line per day of backlog, kept locally so a trend can be shown.
 function dashRecordSnapshot(){
@@ -10159,7 +10188,7 @@ function hrsRange(lang, from, to){
 // 1 min per gap review, seconds you entered for Speaking-cycle runs).
 function hrsEstimated(lang, from, to){
   let study = 0, speaking = 0;
-  state.log.forEach(l => { if(l.lang === lang && l.date >= from && l.date <= to) study += 2 * (l.count || 1); });
+  Object.keys(state.dailyActivity).forEach(d => { if(d >= from && d <= to) study += 2 * (state.dailyActivity[d][lang] || 0); });
   state.gaps.forEach(g => { if(g.lang === lang) (g.attempts || []).forEach(a => { if(a.d >= from && a.d <= to) study += 1; }); });
   spkCycles(lang).forEach(c => ['cold', 'rep1', 'rep2', 'transfer'].forEach(k => { const r = c[k]; if(r && r.date >= from && r.date <= to) speaking += (r.secs || 0) / 60; }));
   return { study, speaking, total: study + speaking };
