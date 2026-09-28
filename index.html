@@ -1844,6 +1844,17 @@ document.getElementById('testAiBtn').addEventListener('click', async (ev)=>{
   }
   btn.disabled = false; btn.textContent = 'Test AI connections';
 });
+document.getElementById('logResyncBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('logResyncStatus');
+  if(!confirm('This re-sends every phrase currently in your local Practice log to the Sheet, one row per phrase. Make sure you\'ve already cleared the Log tab\'s existing data rows first, or you\'ll just get a mix of old and new rows. Continue?')) return;
+  statusEl.textContent = 'Re-syncing…';
+  statusEl.className = 'status-msg';
+  state.log.forEach(l => { l.synced = false; });
+  await saveLog();
+  const r = await coreSyncLog();
+  statusEl.textContent = r && r.message ? r.message : 'Done.';
+  statusEl.className = (r && r.ok === false) ? 'status-msg err' : 'status-msg';
+});
 
 // ---------- Phrase bank ----------
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -5515,14 +5526,29 @@ function updateConvBubbleText(id, text, isError){
 // and remember the clips on that bubble so 🔊 can replay them without a re-call. ----
 async function convAutoSpeak(bubbleId, text, lang){
   if(!document.getElementById('convAutoSpeak').checked) return;
+  const statusEl = document.getElementById('convChatStatus');
   const r = await coreSpeakText(text, lang);
-  if(!r.ok) return; // silent — the text reply is already shown; audio is a bonus, not required
+  if(!r.ok){
+    // Surfaced (not silent) on purpose: a TTS failure has no other visible
+    // sign — the text reply already showed fine — so silently swallowing it
+    // just looks like "no sound" with no way to tell why. It doesn't
+    // interrupt the conversation (the text stays, you can keep typing).
+    statusEl.textContent = '🔇 Could not speak that reply: ' + r.message;
+    statusEl.className = 'status-msg err';
+    return;
+  }
   convClipsById[bubbleId] = r.clips;
   const el = document.getElementById(bubbleId);
   const btn = el && el.querySelector('.conv-replay-btn');
   if(btn) btn.style.display = '';
   try{ await playTtsClips(r.clips); }
-  catch(e){ /* autoplay can be blocked by the browser until the user has interacted with the page — the 🔊 button still works */ }
+  catch(e){
+    // The clips generated fine — this is the browser blocking autoplay, not
+    // a TTS failure — so point at the fix (tap 🔊) rather than the generic
+    // "could not speak" message above, which would be misleading here.
+    statusEl.textContent = 'Reply ready but your browser blocked autoplay — tap 🔊 next to it to hear it.';
+    statusEl.className = 'status-msg err';
+  }
 }
 function convReplay(bubbleId){
   const clips = convClipsById[bubbleId];
