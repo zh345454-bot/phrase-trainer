@@ -2772,9 +2772,14 @@ function isKnownKey(w, lang, known){
 
 // Every distinct bare word already used anywhere in the bank, for one
 // language — the "already known" pool that new words are measured against.
+// A CFA glossary term counts as ONE unique word (its whole normalised term), never as its component words.
+function entryWordKeys(p, lang){
+  const ks = wordKeysOf(lang === 'ar' ? p.ar : p.en, lang);
+  return (p.kind === 'cfa' && ks.length > 1) ? [ks.join(' ')] : ks;
+}
 function bankWordSet(lang, exactOnly){
   const set = new Set();
-  state.bank.forEach(p => wordKeysOf(lang === 'ar' ? p.ar : p.en, lang).forEach(w => set.add(w)));
+  state.bank.forEach(p => entryWordKeys(p, lang).forEach(w => set.add(w)));
   if(lang === 'ar' && !exactOnly){
     // A bare word is also "known" when the bank only has a prefixed form of it.
     [...set].forEach(k => arPrefixRemainders(k).forEach(r => set.add(r)));
@@ -2851,9 +2856,9 @@ function findWordInBank(word, lang, exactOnly){
   if(lang === 'ar' && !exactOnly){
     // Same word if either is the other with an attached prefix (or both share a bare form).
     const tf = new Set(arForms(target));
-    return state.bank.find(p => wordKeysOf(p.ar, 'ar').some(k => arForms(k).some(f => tf.has(f)))) || null;
+    return state.bank.find(p => entryWordKeys(p, 'ar').some(k => arForms(k).some(f => tf.has(f)))) || null;
   }
-  return state.bank.find(p => wordKeysOf(lang === 'ar' ? p.ar : p.en, lang).includes(target)) || null;
+  return state.bank.find(p => entryWordKeys(p, lang).includes(target)) || null;
 }
 
 // Hard-blocks a single word from being saved as a new phrase if it already
@@ -4452,6 +4457,16 @@ function countUniqueWords(){
     state.bank.forEach(p => {
       ensureSrs(p);
       const added = /^\d{4}-\d{2}-\d{2}$/.test(p.dateAdded || '') ? p.dateAdded : '';
+      if(p.kind === 'cfa'){   // a CFA term counts as ONE unique word: the whole term, not its component words
+        const txt = stripBold(p[lang] || '').trim(), tkey = wordKeysOf(txt, lang).join(' ');
+        if(tkey){
+          total++;
+          const rec = map.get(tkey);
+          if(rec){ rec.count++; if(added && (!rec.first || added < rec.first)) rec.first = added; }
+          else map.set(tkey, { label: txt, count: 1, first: added });
+        }
+        return;
+      }
       stripBold(p[lang] || '').trim().split(/\s+/).forEach(rawTok => {
         const key = normalizeWordKey(rawTok, lang);
         if(!key || !/\p{L}/u.test(key)) return; // skip bare numbers / symbols
@@ -4884,7 +4899,7 @@ async function coreBackupBank(){
           starred: p.starred ? 'Yes' : '', starredAt: p.starredAt || '',
           applied: p.applied ? 'Yes' : '', appliedAt: p.appliedAt || '',
           hardChunk: p.hardChunk ? 'Yes' : '', hcPhase: p.hcPhase || '', hcPhaseAt: p.hcPhaseAt || '',
-          kind: p.kind || '', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || ''
+          kind: p.kind || '', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || '', cfaDefAr: p.cfaDefAr || '', cfaDefArStatus: p.cfaDefArStatus || ''
         };
       }) })
     });
@@ -4994,7 +5009,7 @@ async function coreRestoreBank(){
       applied: p.applied === 'Yes' || p.applied === true,
       appliedAt: p.appliedAt || null,
       hardChunk: p.hardChunk === 'Yes' || p.hardChunk === true, hcPhase: p.hcPhase || '', hcPhaseAt: p.hcPhaseAt || null,
-      ...(p.kind === 'cfa' ? { kind: 'cfa', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || '' } : {}),
+      ...(p.kind === 'cfa' ? { kind: 'cfa', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || '', cfaDefAr: p.cfaDefAr || '', cfaDefArStatus: p.cfaDefArStatus || '' } : {}),
       srs: {
         station: parseInt(p.station, 10) || 1,
         reps: parseInt(p.reps, 10) || 0,
@@ -11241,6 +11256,7 @@ function glsStatusBadge(s){ return '<span class="station-pill">' + escapeHtml(s 
 // or accepted by you, so unverified drafts never inflate the Arabic word counts.
 function glsApply(p, r){
   p.en = glsBoldTerm(r.canonicalTerm); p.cfaDef = r.definitionEN || ''; p.cfaAr = r.arabicTerm || '';
+  p.cfaDefAr = r.arabicDefinition || ''; p.cfaDefArStatus = r.arabicDefStatus || '';
   p.cfaArStatus = r.arabicStatus || ''; p.cfaTopic = r.topic || ''; p.cfaStatus = r.status || 'Raw';
   p.category = 'CFA \u00b7 ' + (r.topic || 'Uncategorised');
   if(!p.ar && r.arabicTerm && r.arabicStatus === 'Source-checked') p.ar = glsBoldTerm(r.arabicTerm);
@@ -11248,16 +11264,19 @@ function glsApply(p, r){
 }
 function glsGathered(){
   const bank = glsBank(), en = new Set(), ar = new Set();
-  bank.forEach(p => { wordKeysOf(p.en, 'en').forEach(k => en.add(k)); wordKeysOf(p.ar, 'ar').forEach(k => ar.add(k)); });
+  bank.forEach(p => { entryWordKeys(p, 'en').forEach(k => en.add(k)); entryWordKeys(p, 'ar').forEach(k => ar.add(k)); });
   return { terms: bank.length, words: en.size, arWords: ar.size };
 }
 function cfaHeaderRow(){
   const g = glsGathered(); if(!g.terms) return '';
-  return '<div class="hs-row" title="CFA glossary terms in your bank. Their words are already inside the totals above; this line shows how much of it is CFA-related."><span class="hs-num">' + g.terms + '</span> CFA terms<span class="hs-sep">\u00b7</span><span class="hs-num">' + g.words + '</span> CFA-related EN words</div>';
+  return '<div class="hs-row" title="CFA glossary terms in your bank. Each term is counted as one unique word inside the totals above; this line shows how much of it is CFA."><span class="hs-num">' + g.terms + '</span> CFA terms<span class="hs-sep">\u00b7</span>each counted as one unique word</div>';
 }
 function cfaCardHtml(p){
   const draft = (!p.ar && p.cfaAr) ? '<div class="gap-mini" dir="rtl" style="text-align:right;">Arabic draft (' + escapeHtml(p.cfaArStatus || 'Drafted') + ', not counted): ' + escapeHtml(p.cfaAr) + '</div>' : '';
-  return '<div class="gap-mini">' + escapeHtml(p.cfaTopic || '') + (p.cfaStatus ? ' \u00b7 ' + escapeHtml(p.cfaStatus) : '') + '</div><div>' + escapeHtml(p.cfaDef || '') + '</div>' + draft;
+  const defAr = p.cfaDefAr ? '<div dir="rtl" style="text-align:right; margin-top:6px;">' + escapeHtml(p.cfaDefAr) + ' <span class="gap-mini">(' + escapeHtml(p.cfaDefArStatus || 'Drafted') + ')</span></div>' : '';
+  // the definition stays hidden until tapped, so the term works as the recall prompt
+  return '<div class="gap-mini">' + escapeHtml(p.cfaTopic || '') + (p.cfaStatus ? ' \u00b7 ' + escapeHtml(p.cfaStatus) : '') + '</div>' + draft
+    + '<details style="margin-top:4px;"><summary>Show definition</summary><div>' + escapeHtml(p.cfaDef || '') + '</div>' + defAr + '</details>';
 }
 
 // ---- search Master ----
@@ -11279,7 +11298,7 @@ function glsState(r){
   const b = glsFind(r.id);
   if(!b) return 'master';
   const same = stripBold(b.en || '') === (r.canonicalTerm || '') && (b.cfaDef || '') === (r.definitionEN || '') && (b.cfaAr || '') === (r.arabicTerm || '')
-    && (b.cfaArStatus || '') === (r.arabicStatus || '') && (b.cfaTopic || '') === (r.topic || '') && (b.cfaStatus || 'Raw') === (r.status || 'Raw');
+    && (b.cfaArStatus || '') === (r.arabicStatus || '') && (b.cfaDefAr || '') === (r.arabicDefinition || '') && (b.cfaDefArStatus || '') === (r.arabicDefStatus || '') && (b.cfaTopic || '') === (r.topic || '') && (b.cfaStatus || 'Raw') === (r.status || 'Raw');
   return same ? 'inbank' : 'differs';
 }
 function glsEditForm(r){
@@ -11292,7 +11311,10 @@ function glsEditForm(r){
     '<label>Subcategory <input type="text" id="glsE_category" value="' + v('category') + '"></label>' +
     '<label>Definition (the raw tab keeps the original) <textarea id="glsE_definitionEN" rows="4">' + v('definitionEN') + '</textarea></label>' +
     '<label>Arabic term <input type="text" id="glsE_arabicTerm" dir="rtl" value="' + v('arabicTerm') + '"></label>' +
-    '<label>Arabic status <select id="glsE_arabicStatus"><option value=""></option>' + opt(['Drafted','Source-checked','Conflict'], r.arabicStatus) + '</select></label>' +
+    '<label>Arabic definition <textarea id="glsE_arabicDefinition" rows="4" dir="rtl">' + v('arabicDefinition') + '</textarea></label>' +
+    '<div><button class="ghost" type="button" data-glsact="aidef">✨ Draft Arabic definition (AI)</button></div>' +
+    '<label>Arabic definition status <select id="glsE_arabicDefStatus"><option value=""></option>' + opt(['Drafted','Source-checked','Conflict'], r.arabicDefStatus) + '</select></label>' +
+    '<label>Arabic term status <select id="glsE_arabicStatus"><option value=""></option>' + opt(['Drafted','Source-checked','Conflict'], r.arabicStatus) + '</select></label>' +
     '<label>Often kept in English <select id="glsE_oftenKeptInEnglish"><option value=""></option>' + opt(['Yes','No'], r.oftenKeptInEnglish) + '</select></label>' +
     '<label>Status <select id="glsE_status">' + opt(['Raw','Reviewed','Approved'], r.status || 'Raw') + '</select></label>' +
     '<div><button class="primary" type="button" data-glsact="save" data-id="' + escapeHtml(r.id) + '">Save to Master</button> <button class="ghost" type="button" data-glsact="cancel">Cancel</button></div>' +
@@ -11353,10 +11375,22 @@ function glsMigrate(){
   });
   lsSet('glossary_migrated_backup', old); lsSet('glossary', []); lsSet('bank', state.bank);
 }
+async function glsAiDef(){
+  const box = document.getElementById('glsStatus');
+  const term = document.getElementById('glsE_canonicalTerm').value, def = document.getElementById('glsE_definitionEN').value;
+  box.textContent = 'Drafting Arabic definition…';
+  try{
+    const system = 'You translate CFA Level I glossary definitions into clear Modern Standard Arabic, using standard Arabic finance terminology. Translate only what the definition says: do not add, explain or omit anything. Reply with the Arabic text only.';
+    const { text } = await callGemini('Term: ' + term + '\nDefinition: ' + def, { system, useSearch: false });
+    document.getElementById('glsE_arabicDefinition').value = String(text || '').trim();
+    document.getElementById('glsE_arabicDefStatus').value = 'Drafted';
+    box.textContent = 'Draft added — review it, then Save to Master.';
+  }catch(err){ box.textContent = err.code === 'missing-api-key' ? 'Add a Gemini key first (Sheet & AI settings).' : 'AI draft failed: ' + err.message; }
+}
 async function glsSaveEdit(id){
   const url = state.settings.webAppUrl, box = document.getElementById('glsStatus');
   const fields = {};
-  ['canonicalTerm','acronymVariants','topic','category','definitionEN','arabicTerm','arabicStatus','oftenKeptInEnglish','status'].forEach(k => { fields[k] = document.getElementById('glsE_' + k).value; });
+  ['canonicalTerm','acronymVariants','topic','category','definitionEN','arabicTerm','arabicStatus','arabicDefinition','arabicDefStatus','oftenKeptInEnglish','status'].forEach(k => { fields[k] = document.getElementById('glsE_' + k).value; });
   box.textContent = 'Saving to Master…';
   try{
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'glossary_update', id: id, fields: fields }) });
@@ -11375,7 +11409,7 @@ function glsRender(){
   const acq = bank.filter(p => { ensureSrs(p); return p.practiceCount > 0 && p.srs.station >= S.acqStation; }).length;
   const by = {}; bank.forEach(p => { const t = p.cfaTopic || 'Uncategorised'; by[t] = (by[t] || 0) + 1; });
   const arOk = bank.filter(p => p.ar).length;
-  document.getElementById('glsStats').innerHTML = '<div><strong>' + g.terms + '</strong> CFA terms · <strong>' + g.words + '</strong> CFA-related unique EN words · Arabic accepted ' + arOk + ' · Acquired ' + acq + ' (station ' + S.acqStation + '+)</div>'
+  document.getElementById('glsStats').innerHTML = '<div><strong>' + g.terms + '</strong> CFA terms · counted as <strong>' + g.words + '</strong> unique words · Arabic accepted ' + arOk + ' · Acquired ' + acq + ' (station ' + S.acqStation + '+)</div>'
     + '<div>' + (Object.keys(by).sort().map(t => escapeHtml(t) + ' ' + by[t]).join(' · ') || 'Nothing pulled yet — search Master above.') + '</div>';
   glsRenderResults();
 }
@@ -11396,6 +11430,7 @@ document.getElementById('view-glossary').addEventListener('click', e => {
   else if(act === 'edit'){ glsEditId = id; glsRenderResults(); }
   else if(act === 'cancel'){ glsEditId = null; glsRenderResults(); }
   else if(act === 'save') glsSaveEdit(id);
+  else if(act === 'aidef') glsAiDef();
 });
 </script>
 </body>
