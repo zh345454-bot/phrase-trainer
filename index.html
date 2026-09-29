@@ -616,6 +616,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="hours" id="hrsTabBtn">Hours</button>
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="conversation">🗣 Conversation</button>
+    <button class="tab-btn" data-view="glossary">📘 Glossary</button>
     <button class="tab-btn" data-view="grammar">Grammar Hub</button>
     <button class="tab-btn" data-view="quran">Qur'an Translation</button>
     <button class="tab-btn" data-view="history">Library</button>
@@ -919,6 +920,32 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </section>
 
   <!-- DRILLS -->
+  <section class="view" id="view-glossary">
+    <div class="panel">
+      <h2>CFA Glossary</h2>
+      <p class="gap-mini">Search your Master sheet and pull terms into this bank. Terms are counted one by one here and never touch the phrase-bank word counts. Edits are written back to the Master sheet.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="glsQuery" placeholder="Search term, acronym, Arabic or definition (empty = browse)" style="flex:1; min-width:200px;">
+        <button class="primary" type="button" id="glsSearchBtn">Search Master</button>
+      </div>
+      <div id="glsStatus" class="gap-mini" style="margin-top:6px;"></div>
+      <div id="glsResults"></div>
+    </div>
+    <div class="panel">
+      <h3>My glossary bank</h3>
+      <div id="glsStats" class="gap-mini"></div>
+      <div id="glsReview"></div>
+      <details style="margin-top:10px;"><summary>Glossary settings</summary>
+        <div style="display:grid; gap:8px; margin-top:8px;">
+          <label>New terms introduced per day <input type="number" id="glsNewCap" min="1" max="50" style="width:70px;"></label>
+          <label>A term counts as acquired at station (1–7) <input type="number" id="glsAcqSt" min="1" max="7" style="width:70px;"></label>
+          <label>Arabic on the card <select id="glsShowAr"><option value="off">Off</option><option value="back">Back</option><option value="front">Front</option></select></label>
+          <label><input type="checkbox" id="glsAllowRaw"> Show terms that are not yet Approved in search</label>
+        </div>
+      </details>
+    </div>
+  </section>
+
   <section class="view" id="view-gaps">
     <div class="panel">
       <h2>Speaking gaps</h2>
@@ -1502,6 +1529,7 @@ async function loadState(){
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
   state.gaps = lsGet('gaps', []);
+  state.glossary = lsGet('glossary', []);
   state.gapTomb = lsGet('gapTomb', []);   // ids of deleted gaps, so a sync can't bring them back
   if(!Array.isArray(state.gapTomb)) state.gapTomb = [];
   state.uiLang = lsGet('uiLang', 'en');
@@ -1733,6 +1761,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
       if(state.settings.webAppUrl) coreRestoreGaps().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
     }
     if(btn.dataset.view === 'today') renderDashboard();
+    if(btn.dataset.view === 'glossary') glsRender();
     if(btn.dataset.view === 'history'){
       renderParallelTexts();
       if(state.settings.webAppUrl) coreRestoreParallelTexts().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
@@ -11181,6 +11210,183 @@ document.addEventListener('keydown', (e) => {
     renderBank();
   }
 })();
+
+// ================= CFA Glossary: its own bank, counted term by term =================
+// Deliberately separate from state.bank: nothing here feeds the unique-word counters,
+// bold-word totals, CEFR levels or the shared daily-plan counters. Master (Google Sheet)
+// is the single source of truth; edits are written back to it, the local copy only
+// follows once the write succeeds.
+const GLS_TOPICS = ['Quantitative Methods','Economics','Financial Statement Analysis','Corporate Issuers','Equity Investments','Fixed Income','Derivatives','Alternative Investments','Portfolio Management','Ethics & Professional Standards','General Investment Concepts','Cross-topic CFA Concepts'];
+const GLS_CMP = ['canonicalTerm','acronymVariants','topic','category','definitionEN','arabicTerm','arabicStatus','oftenKeptInEnglish','status'];
+let glsResults = [], glsEditId = null, glsCurId = null, glsShown = false, glsSetObj = null;
+
+function glsBank(){ return state.glossary || (state.glossary = []); }
+function glsSettings(){
+  if(!glsSetObj) glsSetObj = Object.assign({ newCap: 5, acqStation: 4, showAr: 'back', allowRaw: true }, lsGet('glsSettings', {}));
+  return glsSetObj;
+}
+function glsSave(){ lsSet('glossary', glsBank()); }
+function glsDay(){
+  const t = todayStr(); let d = lsGet('glsDay', null);
+  if(!d || d.date !== t){ d = { date: t, reviews: 0, introduced: 0 }; lsSet('glsDay', d); }
+  return d;
+}
+function glsBump(k){ const d = glsDay(); d[k] = (d[k] || 0) + 1; lsSet('glsDay', d); }
+function glsStatusBadge(s){ return '<span class="station-pill">' + escapeHtml(s || 'Raw') + '</span>'; }
+
+// ---- search Master ----
+async function glsSearchRun(){
+  const url = state.settings.webAppUrl, box = document.getElementById('glsStatus');
+  if(!url){ box.textContent = 'Add your Apps Script Web App URL in Sheet settings first.'; return; }
+  box.textContent = 'Searching Master…';
+  try{
+    const q = document.getElementById('glsQuery').value.trim();
+    const res = await fetch(sheetGetUrl(url, { type: 'glossary_search', q: q, limit: 30 }));
+    const data = await res.json(); throwIfRejected(data);
+    if(!data.results) throw new Error('your Apps Script doesn\u2019t have the Glossary update yet — paste in the updated script and redeploy first');
+    glsResults = data.results;
+    box.textContent = data.total + ' match' + (data.total === 1 ? '' : 'es') + (data.total > glsResults.length ? ' — showing the first ' + glsResults.length + ', narrow the search' : '');
+  }catch(err){ glsResults = []; box.textContent = 'Search failed: ' + err.message; }
+  glsRenderResults();
+}
+function glsState(r){
+  const b = glsBank().find(x => x.id === r.id);
+  if(!b) return 'master';
+  return GLS_CMP.some(k => String(b[k] || '') !== String(r[k] || '')) ? 'differs' : 'inbank';
+}
+function glsEditForm(r){
+  const v = k => escapeHtml(r[k] || '');
+  const opt = (list, cur) => list.map(x => '<option' + (x === cur ? ' selected' : '') + '>' + escapeHtml(x) + '</option>').join('');
+  return '<div style="display:grid; gap:6px; margin-top:8px;">' +
+    '<label>Term <input type="text" id="glsE_canonicalTerm" value="' + v('canonicalTerm') + '"></label>' +
+    '<label>Acronym / variants <input type="text" id="glsE_acronymVariants" value="' + v('acronymVariants') + '"></label>' +
+    '<label>Topic <select id="glsE_topic"><option value=""></option>' + opt(GLS_TOPICS, r.topic) + '</select></label>' +
+    '<label>Subcategory <input type="text" id="glsE_category" value="' + v('category') + '"></label>' +
+    '<label>Definition (the raw tab keeps the original) <textarea id="glsE_definitionEN" rows="4">' + v('definitionEN') + '</textarea></label>' +
+    '<label>Arabic term <input type="text" id="glsE_arabicTerm" dir="rtl" value="' + v('arabicTerm') + '"></label>' +
+    '<label>Arabic status <select id="glsE_arabicStatus"><option value=""></option>' + opt(['Drafted','Source-checked','Conflict'], r.arabicStatus) + '</select></label>' +
+    '<label>Often kept in English <select id="glsE_oftenKeptInEnglish"><option value=""></option>' + opt(['Yes','No'], r.oftenKeptInEnglish) + '</select></label>' +
+    '<label>Status <select id="glsE_status">' + opt(['Raw','Reviewed','Approved'], r.status || 'Raw') + '</select></label>' +
+    '<div><button class="primary" type="button" data-glsact="save" data-id="' + escapeHtml(r.id) + '">Save to Master</button> <button class="ghost" type="button" data-glsact="cancel">Cancel</button></div>' +
+    '</div>';
+}
+function glsRenderResults(){
+  const box = document.getElementById('glsResults');
+  const list = glsResults.filter(r => glsSettings().allowRaw || r.status === 'Approved');
+  if(!list.length){ box.innerHTML = ''; return; }
+  box.innerHTML = list.map(r => {
+    const st = glsState(r), id = escapeHtml(r.id);
+    const badge = st === 'master' ? '<span class="station-pill">Master only</span>'
+      : st === 'inbank' ? '<span class="station-pill">✓ In bank</span>'
+      : '<span class="station-pill" style="color:#b45309;border-color:#b45309;">In bank · differs from Master</span>';
+    const actions = (st === 'master' ? '<button class="primary" type="button" data-glsact="pull" data-id="' + id + '">＋ Pull into bank</button> ' : '') +
+      (st === 'differs' ? '<button class="ghost" type="button" data-glsact="refresh" data-id="' + id + '">Update bank from Master</button> ' : '') +
+      '<button class="ghost" type="button" data-glsact="edit" data-id="' + id + '">✎ Edit</button>';
+    const def = String(r.definitionEN || '');
+    return '<div class="due-card" style="margin-top:10px;">' +
+      '<div><strong>' + escapeHtml(r.canonicalTerm) + '</strong>' + (r.acronymVariants ? ' <span class="gap-mini">(' + escapeHtml(r.acronymVariants) + ')</span>' : '') + ' ' + glsStatusBadge(r.status) + ' ' + badge + '</div>' +
+      '<div class="gap-mini">' + escapeHtml([r.topic, r.category].filter(Boolean).join(' · ')) + '</div>' +
+      (r.arabicTerm ? '<div dir="rtl" style="text-align:right;">' + escapeHtml(r.arabicTerm) + ' <span class="gap-mini">' + escapeHtml(r.arabicStatus || '') + '</span></div>' : '') +
+      '<div class="gap-mini">' + escapeHtml(def.length > 220 ? def.slice(0, 220) + '…' : def) + '</div>' +
+      (r.flag ? '<div class="gap-mini" style="color:#b45309;">⚠ ' + escapeHtml(r.flag) + '</div>' : '') +
+      '<div style="margin-top:6px;">' + actions + '</div>' +
+      (glsEditId === r.id ? glsEditForm(r) : '') + '</div>';
+  }).join('');
+}
+function glsCopyFields(dst, r){
+  GLS_CMP.concat(['flag', 'relatedTerms']).forEach(k => { dst[k] = r[k] || ''; });
+  return dst;
+}
+function glsPull(id){
+  const r = glsResults.find(x => x.id === id); if(!r || glsBank().some(x => x.id === id)) return;
+  const t = todayStr();
+  glsBank().push(glsCopyFields({ id: id, pulledAt: t, practiceCount: 0, lastReviewed: '', introducedAt: '',
+    srs: { station: 1, reps: 0, nextReview: t, dateAdded: t } }, r));
+  glsSave(); glsRender();
+}
+function glsRefresh(id){
+  const r = glsResults.find(x => x.id === id), b = glsBank().find(x => x.id === id);
+  if(r && b){ glsCopyFields(b, r); glsSave(); glsRender(); }
+}
+async function glsSaveEdit(id){
+  const url = state.settings.webAppUrl, box = document.getElementById('glsStatus');
+  const fields = {};
+  ['canonicalTerm','acronymVariants','topic','category','definitionEN','arabicTerm','arabicStatus','oftenKeptInEnglish','status'].forEach(k => { fields[k] = document.getElementById('glsE_' + k).value; });
+  box.textContent = 'Saving to Master…';
+  try{
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'glossary_update', id: id, fields: fields }) });
+    const data = await res.json(); throwIfRejected(data);
+    const r = glsResults.find(x => x.id === id); if(r) Object.assign(r, fields);
+    const b = glsBank().find(x => x.id === id); if(b){ Object.assign(b, fields); glsSave(); }
+    glsEditId = null;
+    box.textContent = (data.changed && data.changed.length) ? 'Saved to Master (' + data.changed.join(', ') + ').' : 'Nothing changed.';
+  }catch(err){ box.textContent = 'Save failed — nothing was changed: ' + err.message; }
+  glsRender();
+}
+
+// ---- review (Level A): same 7-station rules, but its own queue, cap and counters ----
+function glsQueue(){
+  const t = todayStr(), room = Math.max(0, glsSettings().newCap - glsDay().introduced);
+  const due = glsBank().filter(p => p.introducedAt && (p.srs.nextReview || t) <= t);
+  return due.concat(glsBank().filter(p => !p.introducedAt).slice(0, room));
+}
+function glsRate(id, rating){
+  const p = glsBank().find(x => x.id === id); if(!p) return;
+  const t = todayStr();
+  if(!p.introducedAt){ p.introducedAt = t; glsBump('introduced'); }
+  let st = p.srs.station;
+  if(rating >= 4){
+    p.srs.reps += 1;
+    if(st < 7 && p.srs.reps >= MIN_TO_ADVANCE[st]){ st += 1; p.srs.station = st; p.srs.reps = 0; p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
+    else if(st === 7){ p.srs.nextReview = addDays(t, MAINTENANCE_GAP_DAYS); }
+    else { p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
+  } else if(rating === 3){ p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st] || 1); }
+  else { st = Math.max(1, st - (rating === 2 ? 1 : 2)); p.srs.station = st; p.srs.reps = 0; p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
+  p.practiceCount = (p.practiceCount || 0) + 1; p.lastReviewed = t;   // the one row per term is the log: only these fields change
+  glsBump('reviews'); glsSave(); glsShown = false; glsCurId = null; glsRender();
+}
+function glsRenderReview(){
+  const box = document.getElementById('glsReview'), q = glsQueue(), S = glsSettings();
+  if(!glsBank().length){ box.innerHTML = '<p class="gap-mini">Nothing in the bank yet — search Master above and pull a few terms.</p>'; return; }
+  if(!q.length){ box.innerHTML = '<p class="gap-mini">✓ Nothing due right now.</p>'; return; }
+  const p = q.find(x => x.id === glsCurId) || q[0]; glsCurId = p.id;
+  const ar = p.arabicTerm ? '<div dir="rtl" style="font-size:20px; text-align:right;">' + escapeHtml(p.arabicTerm) + '</div>' : '';
+  let h = '<div class="due-card"><div class="gap-mini">' + q.length + ' in today\u2019s queue · station ' + p.srs.station + '/7</div><div style="font-size:20px;"><strong>' + escapeHtml(p.canonicalTerm) + '</strong>' + (p.acronymVariants ? ' <span class="gap-mini">(' + escapeHtml(p.acronymVariants) + ')</span>' : '') + '</div>' + (S.showAr === 'front' ? ar : '');
+  if(!glsShown) h += '<button class="primary" type="button" data-glsact="show">Show definition</button>';
+  else {
+    h += '<p>' + escapeHtml(p.definitionEN) + '</p>' + (S.showAr === 'back' ? ar : '') + '<div class="gap-mini">How well did you recall it?</div>' +
+      [[5,'Perfect'],[4,'Good'],[3,'Okay'],[2,'Struggled'],[1,'Forgot']].map(x => '<button class="ghost" type="button" data-glsact="rate" data-r="' + x[0] + '" data-id="' + escapeHtml(p.id) + '">' + x[0] + ' ' + x[1] + '</button>').join(' ');
+  }
+  box.innerHTML = h + '</div>';
+}
+function glsRender(){
+  const S = glsSettings(), bank = glsBank(), d = glsDay();
+  document.getElementById('glsNewCap').value = S.newCap; document.getElementById('glsAcqSt').value = S.acqStation;
+  document.getElementById('glsShowAr').value = S.showAr; document.getElementById('glsAllowRaw').checked = !!S.allowRaw;
+  const intro = bank.filter(p => p.introducedAt).length, acq = bank.filter(p => p.introducedAt && p.srs.station >= S.acqStation).length;
+  document.getElementById('glsStats').textContent = 'In bank ' + bank.length + ' · Introduced ' + intro + ' · Acquired ' + acq + ' (station ' + S.acqStation + '+) · Today: ' + d.reviews + ' reviewed, ' + d.introduced + '/' + S.newCap + ' new';
+  glsRenderResults(); glsRenderReview();
+}
+document.getElementById('glsSearchBtn').addEventListener('click', glsSearchRun);
+document.getElementById('glsQuery').addEventListener('keydown', e => { if(e.key === 'Enter') glsSearchRun(); });
+['glsNewCap','glsAcqSt','glsShowAr','glsAllowRaw'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+  const S = glsSettings();
+  S.newCap = Math.max(1, parseInt(document.getElementById('glsNewCap').value, 10) || 5);
+  S.acqStation = Math.min(7, Math.max(1, parseInt(document.getElementById('glsAcqSt').value, 10) || 4));
+  S.showAr = document.getElementById('glsShowAr').value; S.allowRaw = document.getElementById('glsAllowRaw').checked;
+  lsSet('glsSettings', S); glsRender();
+}));
+document.getElementById('view-glossary').addEventListener('click', e => {
+  const b = e.target.closest('[data-glsact]'); if(!b) return;
+  const act = b.dataset.glsact, id = b.dataset.id;
+  if(act === 'pull') glsPull(id);
+  else if(act === 'refresh') glsRefresh(id);
+  else if(act === 'edit'){ glsEditId = id; glsRenderResults(); }
+  else if(act === 'cancel'){ glsEditId = null; glsRenderResults(); }
+  else if(act === 'save') glsSaveEdit(id);
+  else if(act === 'show'){ glsShown = true; glsRenderReview(); }
+  else if(act === 'rate') glsRate(id, parseInt(b.dataset.r, 10));
+});
 </script>
 </body>
 </html>
