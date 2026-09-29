@@ -923,7 +923,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-glossary">
     <div class="panel">
       <h2>CFA Glossary</h2>
-      <p class="gap-mini">Search your Master sheet and pull terms into this bank. Terms are counted one by one here and never touch the phrase-bank word counts. Edits are written back to the Master sheet.</p>
+      <p class="gap-mini">Search your Master sheet and pull terms into your phrase bank. A pulled term is a normal bank entry (term in bold, category "CFA · topic"), so Bank, Practice, Review, Starred and the word counters all handle it. Pulling one counts toward today's new phrases. Edits are written back to the Master sheet.</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <input type="text" id="glsQuery" placeholder="Search term, acronym, Arabic or definition (empty = browse)" style="flex:1; min-width:200px;">
         <button class="primary" type="button" id="glsSearchBtn">Search Master</button>
@@ -932,14 +932,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <div id="glsResults"></div>
     </div>
     <div class="panel">
-      <h3>My glossary bank</h3>
+      <h3>CFA terms gathered</h3>
       <div id="glsStats" class="gap-mini"></div>
-      <div id="glsReview"></div>
+      <p class="gap-mini">Study them in the normal Review / Practice tabs: pick "CFA terms only" (or one "CFA · topic") in the category filter.</p>
       <details style="margin-top:10px;"><summary>Glossary settings</summary>
         <div style="display:grid; gap:8px; margin-top:8px;">
-          <label>New terms introduced per day <input type="number" id="glsNewCap" min="1" max="50" style="width:70px;"></label>
           <label>A term counts as acquired at station (1–7) <input type="number" id="glsAcqSt" min="1" max="7" style="width:70px;"></label>
-          <label>Arabic on the card <select id="glsShowAr"><option value="off">Off</option><option value="back">Back</option><option value="front">Front</option></select></label>
           <label><input type="checkbox" id="glsAllowRaw"> Show terms that are not yet Approved in search</label>
         </div>
       </details>
@@ -1529,7 +1527,7 @@ async function loadState(){
   state.grammar = lsGet('grammar', []);
   state.quran = lsGet('quran', []);
   state.gaps = lsGet('gaps', []);
-  state.glossary = lsGet('glossary', []);
+  glsMigrate();
   state.gapTomb = lsGet('gapTomb', []);   // ids of deleted gaps, so a sync can't bring them back
   if(!Array.isArray(state.gapTomb)) state.gapTomb = [];
   state.uiLang = lsGet('uiLang', 'en');
@@ -2200,9 +2198,13 @@ function searchIncludes(haystack, query){
 // accident — everything you haven't.
 const STARRED_CATEGORY = '__starred__';
 const NOT_STARRED_CATEGORY = '__not_starred__';
+const CFA_CATEGORY = '__cfa__';
+const LANG_CATEGORY = '__lang__';
 function matchesFilter(p, query, category, boldFilter){
   if(category === STARRED_CATEGORY){ if(!p.starred) return false; }
   else if(category === NOT_STARRED_CATEGORY){ if(p.starred) return false; }
+  else if(category === CFA_CATEGORY){ if(p.kind !== 'cfa') return false; }
+  else if(category === LANG_CATEGORY){ if(p.kind === 'cfa') return false; }
   else if(category && p.category !== category) return false;
   if(boldFilter){
     const enBold = extractBoldSegments(p.en).length > 0;
@@ -2246,12 +2248,14 @@ function updateCategoryDropdowns(){
     // it already was when building a Practice/Review set.
     const starredCount = state.bank.filter(p => p.starred).length;
     const notStarredCount = state.bank.length - starredCount;
+    const cfaCount = state.bank.filter(p => p.kind === 'cfa').length;
     const starredOpt = `<option value="${STARRED_CATEGORY}">★ Starred (${starredCount})</option>`
-      + `<option value="${NOT_STARRED_CATEGORY}">☆ Not yet starred (${notStarredCount})</option>`;
+      + `<option value="${NOT_STARRED_CATEGORY}">☆ Not yet starred (${notStarredCount})</option>`
+      + (cfaCount ? `<option value="${CFA_CATEGORY}">📘 CFA terms only (${cfaCount})</option><option value="${LANG_CATEGORY}">Language phrases only (${state.bank.length - cfaCount})</option>` : '');
     sel.innerHTML = '<option value="">All categories</option>' + starredOpt + cats.map(c=>
       `<option value="${escapeHtml(c)}">${escapeHtml(c)}${withCounts ? ' | ' + counts[c] : ''}</option>`
     ).join('');
-    if(cats.includes(current) || current === STARRED_CATEGORY || current === NOT_STARRED_CATEGORY) sel.value = current;
+    if(cats.includes(current) || current === STARRED_CATEGORY || current === NOT_STARRED_CATEGORY || current === CFA_CATEGORY || current === LANG_CATEGORY) sel.value = current;
   });
 }
 
@@ -2279,6 +2283,7 @@ function phraseCardHtml(p, opts){
     <div class="phrase-texts">
       <div class="phrase-en">${mdToHtml(p.en)}</div>
       ${p.ar ? `<div class="phrase-ar" dir="rtl">${mdToHtml(p.ar)}</div>` : ''}
+      ${p.kind === 'cfa' ? cfaCardHtml(p) : ''}
       ${p.category ? `<div class="tag">${escapeHtml(p.category)}</div>` : ''}
       ${metaLine}
       ${starredLine}
@@ -4609,6 +4614,7 @@ function renderHeaderStats(){
     + `<div class="hs-row"><span class="hs-num">${totals.en}</span> EN bold words<span class="hs-sep">·</span><span class="hs-num">${totals.ar}</span> AR bold words</div>`
     + `<div class="hs-row" title="Every distinct word across all your phrases, bolded or not"><span class="hs-num">${words.en.unique.toLocaleString()}</span> EN unique words<span class="hs-sep">·</span><span class="hs-num">${words.ar.unique.toLocaleString()}</span> AR unique words`
     + `<button type="button" class="hs-toggle" id="hsToggleBtn" aria-expanded="${hsDetailsOpen}">${hsDetailsOpen ? 'hide details ▴' : 'details ▾'}</button></div>`
+    + cfaHeaderRow()
     + (hsDetailsOpen ? `<div class="hs-details" id="hsDetails">${hsDetailsHtml(totals, countUniqueBoldWords(), words)}</div>` : '');
 }
 document.addEventListener('click', (e)=>{
@@ -4876,7 +4882,9 @@ async function coreBackupBank(){
           nextReview: p.srs.nextReview, dateAdded: p.srs.dateAdded,
           hotLayerDone: (p.hotLayerDone || []).join(';'),
           starred: p.starred ? 'Yes' : '', starredAt: p.starredAt || '',
-          applied: p.applied ? 'Yes' : '', appliedAt: p.appliedAt || ''
+          applied: p.applied ? 'Yes' : '', appliedAt: p.appliedAt || '',
+          hardChunk: p.hardChunk ? 'Yes' : '', hcPhase: p.hcPhase || '', hcPhaseAt: p.hcPhaseAt || '',
+          kind: p.kind || '', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || ''
         };
       }) })
     });
@@ -4985,6 +4993,8 @@ async function coreRestoreBank(){
       starredAt: p.starredAt || null,
       applied: p.applied === 'Yes' || p.applied === true,
       appliedAt: p.appliedAt || null,
+      hardChunk: p.hardChunk === 'Yes' || p.hardChunk === true, hcPhase: p.hcPhase || '', hcPhaseAt: p.hcPhaseAt || null,
+      ...(p.kind === 'cfa' ? { kind: 'cfa', cfaId: p.cfaId || '', cfaDef: p.cfaDef || '', cfaAr: p.cfaAr || '', cfaArStatus: p.cfaArStatus || '', cfaTopic: p.cfaTopic || '', cfaStatus: p.cfaStatus || '' } : {}),
       srs: {
         station: parseInt(p.station, 10) || 1,
         reps: parseInt(p.reps, 10) || 0,
@@ -11218,21 +11228,37 @@ document.addEventListener('keydown', (e) => {
 // follows once the write succeeds.
 const GLS_TOPICS = ['Quantitative Methods','Economics','Financial Statement Analysis','Corporate Issuers','Equity Investments','Fixed Income','Derivatives','Alternative Investments','Portfolio Management','Ethics & Professional Standards','General Investment Concepts','Cross-topic CFA Concepts'];
 const GLS_CMP = ['canonicalTerm','acronymVariants','topic','category','definitionEN','arabicTerm','arabicStatus','oftenKeptInEnglish','status'];
-let glsResults = [], glsEditId = null, glsCurId = null, glsShown = false, glsSetObj = null;
-
-function glsBank(){ return state.glossary || (state.glossary = []); }
+let glsResults = [], glsEditId = null, glsSetObj = null;
+function glsBank(){ return state.bank.filter(p => p.kind === 'cfa'); }
+function glsFind(cfaId){ return state.bank.find(p => p.kind === 'cfa' && p.cfaId === cfaId); }
 function glsSettings(){
-  if(!glsSetObj) glsSetObj = Object.assign({ newCap: 5, acqStation: 4, showAr: 'back', allowRaw: true }, lsGet('glsSettings', {}));
+  if(!glsSetObj) glsSetObj = Object.assign({ acqStation: 4, allowRaw: true }, lsGet('glsSettings', {}));
   return glsSetObj;
 }
-function glsSave(){ lsSet('glossary', glsBank()); }
-function glsDay(){
-  const t = todayStr(); let d = lsGet('glsDay', null);
-  if(!d || d.date !== t){ d = { date: t, reviews: 0, introduced: 0 }; lsSet('glsDay', d); }
-  return d;
-}
-function glsBump(k){ const d = glsDay(); d[k] = (d[k] || 0) + 1; lsSet('glsDay', d); }
+function glsBoldTerm(t){ return t ? '**' + String(t).replace(/\*\*/g, '') + '**' : ''; }
 function glsStatusBadge(s){ return '<span class="station-pill">' + escapeHtml(s || 'Raw') + '</span>'; }
+// Master row -> bank entry. Arabic only enters the counted `ar` side once Source-checked
+// or accepted by you, so unverified drafts never inflate the Arabic word counts.
+function glsApply(p, r){
+  p.en = glsBoldTerm(r.canonicalTerm); p.cfaDef = r.definitionEN || ''; p.cfaAr = r.arabicTerm || '';
+  p.cfaArStatus = r.arabicStatus || ''; p.cfaTopic = r.topic || ''; p.cfaStatus = r.status || 'Raw';
+  p.category = 'CFA \u00b7 ' + (r.topic || 'Uncategorised');
+  if(!p.ar && r.arabicTerm && r.arabicStatus === 'Source-checked') p.ar = glsBoldTerm(r.arabicTerm);
+  return p;
+}
+function glsGathered(){
+  const bank = glsBank(), en = new Set(), ar = new Set();
+  bank.forEach(p => { wordKeysOf(p.en, 'en').forEach(k => en.add(k)); wordKeysOf(p.ar, 'ar').forEach(k => ar.add(k)); });
+  return { terms: bank.length, words: en.size, arWords: ar.size };
+}
+function cfaHeaderRow(){
+  const g = glsGathered(); if(!g.terms) return '';
+  return '<div class="hs-row" title="CFA glossary terms in your bank. Their words are already inside the totals above; this line shows how much of it is CFA-related."><span class="hs-num">' + g.terms + '</span> CFA terms<span class="hs-sep">\u00b7</span><span class="hs-num">' + g.words + '</span> CFA-related EN words</div>';
+}
+function cfaCardHtml(p){
+  const draft = (!p.ar && p.cfaAr) ? '<div class="gap-mini" dir="rtl" style="text-align:right;">Arabic draft (' + escapeHtml(p.cfaArStatus || 'Drafted') + ', not counted): ' + escapeHtml(p.cfaAr) + '</div>' : '';
+  return '<div class="gap-mini">' + escapeHtml(p.cfaTopic || '') + (p.cfaStatus ? ' \u00b7 ' + escapeHtml(p.cfaStatus) : '') + '</div><div>' + escapeHtml(p.cfaDef || '') + '</div>' + draft;
+}
 
 // ---- search Master ----
 async function glsSearchRun(){
@@ -11250,9 +11276,11 @@ async function glsSearchRun(){
   glsRenderResults();
 }
 function glsState(r){
-  const b = glsBank().find(x => x.id === r.id);
+  const b = glsFind(r.id);
   if(!b) return 'master';
-  return GLS_CMP.some(k => String(b[k] || '') !== String(r[k] || '')) ? 'differs' : 'inbank';
+  const same = stripBold(b.en || '') === (r.canonicalTerm || '') && (b.cfaDef || '') === (r.definitionEN || '') && (b.cfaAr || '') === (r.arabicTerm || '')
+    && (b.cfaArStatus || '') === (r.arabicStatus || '') && (b.cfaTopic || '') === (r.topic || '') && (b.cfaStatus || 'Raw') === (r.status || 'Raw');
+  return same ? 'inbank' : 'differs';
 }
 function glsEditForm(r){
   const v = k => escapeHtml(r[k] || '');
@@ -11281,6 +11309,7 @@ function glsRenderResults(){
       : '<span class="station-pill" style="color:#b45309;border-color:#b45309;">In bank · differs from Master</span>';
     const actions = (st === 'master' ? '<button class="primary" type="button" data-glsact="pull" data-id="' + id + '">＋ Pull into bank</button> ' : '') +
       (st === 'differs' ? '<button class="ghost" type="button" data-glsact="refresh" data-id="' + id + '">Update bank from Master</button> ' : '') +
+      (st !== 'master' && glsAcceptable(r.id) ? '<button class="ghost" type="button" data-glsact="acceptar" data-id="' + id + '">Accept Arabic into bank</button> ' : '') +
       '<button class="ghost" type="button" data-glsact="edit" data-id="' + id + '">✎ Edit</button>';
     const def = String(r.definitionEN || '');
     return '<div class="due-card" style="margin-top:10px;">' +
@@ -11293,20 +11322,36 @@ function glsRenderResults(){
       (glsEditId === r.id ? glsEditForm(r) : '') + '</div>';
   }).join('');
 }
-function glsCopyFields(dst, r){
-  GLS_CMP.concat(['flag', 'relatedTerms']).forEach(k => { dst[k] = r[k] || ''; });
-  return dst;
+function glsAcceptable(id){ const b = glsFind(id); return !!(b && b.cfaAr && !b.ar); }
+function glsAfterChange(){
+  if(typeof updateCategoryDropdowns === 'function') updateCategoryDropdowns();
+  if(typeof renderBank === 'function') renderBank();
+  if(typeof renderHeaderStats === 'function') renderHeaderStats();
+  glsRender();
 }
 function glsPull(id){
-  const r = glsResults.find(x => x.id === id); if(!r || glsBank().some(x => x.id === id)) return;
-  const t = todayStr();
-  glsBank().push(glsCopyFields({ id: id, pulledAt: t, practiceCount: 0, lastReviewed: '', introducedAt: '',
-    srs: { station: 1, reps: 0, nextReview: t, dateAdded: t } }, r));
-  glsSave(); glsRender();
+  const r = glsResults.find(x => x.id === id); if(!r || glsFind(id)) return;
+  state.bank.unshift(glsApply({ id: uid(), en: '', ar: '', category: '', practiceCount: 0, lastPracticed: null, starred: false, kind: 'cfa', cfaId: id }, r));
+  saveBank(); countTask('addPhrase'); glsAfterChange();   // same daily "new phrases" counter as any other phrase
 }
 function glsRefresh(id){
-  const r = glsResults.find(x => x.id === id), b = glsBank().find(x => x.id === id);
-  if(r && b){ glsCopyFields(b, r); glsSave(); glsRender(); }
+  const r = glsResults.find(x => x.id === id), b = glsFind(id);
+  if(r && b){ glsApply(b, r); saveBank(); glsAfterChange(); }
+}
+function glsAccept(id){
+  const b = glsFind(id);
+  if(b && b.cfaAr){ b.ar = glsBoldTerm(b.cfaAr); saveBank(); glsAfterChange(); }
+}
+// One-time: move terms pulled in the first glossary version (its own list) into the main bank, keeping review progress.
+function glsMigrate(){
+  const old = lsGet('glossary', []); if(!old.length) return;
+  old.forEach(g => {
+    if(glsFind(g.id)) return;
+    const p = glsApply({ id: uid(), en: '', ar: '', category: '', practiceCount: g.practiceCount || 0, lastPracticed: g.lastReviewed || null, starred: false, kind: 'cfa', cfaId: g.id }, g);
+    if(g.srs) p.srs = { station: g.srs.station || 1, reps: g.srs.reps || 0, nextReview: g.srs.nextReview || todayStr(), dateAdded: g.pulledAt || todayStr(), hotLayerDone: [] };
+    state.bank.unshift(p);
+  });
+  lsSet('glossary_migrated_backup', old); lsSet('glossary', []); lsSet('bank', state.bank);
 }
 async function glsSaveEdit(id){
   const url = state.settings.webAppUrl, box = document.getElementById('glsStatus');
@@ -11317,63 +11362,29 @@ async function glsSaveEdit(id){
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: sheetPostBody({ type: 'glossary_update', id: id, fields: fields }) });
     const data = await res.json(); throwIfRejected(data);
     const r = glsResults.find(x => x.id === id); if(r) Object.assign(r, fields);
-    const b = glsBank().find(x => x.id === id); if(b){ Object.assign(b, fields); glsSave(); }
+    const b = glsFind(id); if(b){ glsApply(b, Object.assign({}, r || {}, fields)); saveBank(); }
     glsEditId = null;
     box.textContent = (data.changed && data.changed.length) ? 'Saved to Master (' + data.changed.join(', ') + ').' : 'Nothing changed.';
   }catch(err){ box.textContent = 'Save failed — nothing was changed: ' + err.message; }
-  glsRender();
+  glsAfterChange();
 }
 
-// ---- review (Level A): same 7-station rules, but its own queue, cap and counters ----
-function glsQueue(){
-  const t = todayStr(), room = Math.max(0, glsSettings().newCap - glsDay().introduced);
-  const due = glsBank().filter(p => p.introducedAt && (p.srs.nextReview || t) <= t);
-  return due.concat(glsBank().filter(p => !p.introducedAt).slice(0, room));
-}
-function glsRate(id, rating){
-  const p = glsBank().find(x => x.id === id); if(!p) return;
-  const t = todayStr();
-  if(!p.introducedAt){ p.introducedAt = t; glsBump('introduced'); }
-  let st = p.srs.station;
-  if(rating >= 4){
-    p.srs.reps += 1;
-    if(st < 7 && p.srs.reps >= MIN_TO_ADVANCE[st]){ st += 1; p.srs.station = st; p.srs.reps = 0; p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
-    else if(st === 7){ p.srs.nextReview = addDays(t, MAINTENANCE_GAP_DAYS); }
-    else { p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
-  } else if(rating === 3){ p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st] || 1); }
-  else { st = Math.max(1, st - (rating === 2 ? 1 : 2)); p.srs.station = st; p.srs.reps = 0; p.srs.nextReview = addDays(t, STATION_GAP_DAYS[st]); }
-  p.practiceCount = (p.practiceCount || 0) + 1; p.lastReviewed = t;   // the one row per term is the log: only these fields change
-  glsBump('reviews'); glsSave(); glsShown = false; glsCurId = null; glsRender();
-}
-function glsRenderReview(){
-  const box = document.getElementById('glsReview'), q = glsQueue(), S = glsSettings();
-  if(!glsBank().length){ box.innerHTML = '<p class="gap-mini">Nothing in the bank yet — search Master above and pull a few terms.</p>'; return; }
-  if(!q.length){ box.innerHTML = '<p class="gap-mini">✓ Nothing due right now.</p>'; return; }
-  const p = q.find(x => x.id === glsCurId) || q[0]; glsCurId = p.id;
-  const ar = p.arabicTerm ? '<div dir="rtl" style="font-size:20px; text-align:right;">' + escapeHtml(p.arabicTerm) + '</div>' : '';
-  let h = '<div class="due-card"><div class="gap-mini">' + q.length + ' in today\u2019s queue · station ' + p.srs.station + '/7</div><div style="font-size:20px;"><strong>' + escapeHtml(p.canonicalTerm) + '</strong>' + (p.acronymVariants ? ' <span class="gap-mini">(' + escapeHtml(p.acronymVariants) + ')</span>' : '') + '</div>' + (S.showAr === 'front' ? ar : '');
-  if(!glsShown) h += '<button class="primary" type="button" data-glsact="show">Show definition</button>';
-  else {
-    h += '<p>' + escapeHtml(p.definitionEN) + '</p>' + (S.showAr === 'back' ? ar : '') + '<div class="gap-mini">How well did you recall it?</div>' +
-      [[5,'Perfect'],[4,'Good'],[3,'Okay'],[2,'Struggled'],[1,'Forgot']].map(x => '<button class="ghost" type="button" data-glsact="rate" data-r="' + x[0] + '" data-id="' + escapeHtml(p.id) + '">' + x[0] + ' ' + x[1] + '</button>').join(' ');
-  }
-  box.innerHTML = h + '</div>';
-}
 function glsRender(){
-  const S = glsSettings(), bank = glsBank(), d = glsDay();
-  document.getElementById('glsNewCap').value = S.newCap; document.getElementById('glsAcqSt').value = S.acqStation;
-  document.getElementById('glsShowAr').value = S.showAr; document.getElementById('glsAllowRaw').checked = !!S.allowRaw;
-  const intro = bank.filter(p => p.introducedAt).length, acq = bank.filter(p => p.introducedAt && p.srs.station >= S.acqStation).length;
-  document.getElementById('glsStats').textContent = 'In bank ' + bank.length + ' · Introduced ' + intro + ' · Acquired ' + acq + ' (station ' + S.acqStation + '+) · Today: ' + d.reviews + ' reviewed, ' + d.introduced + '/' + S.newCap + ' new';
-  glsRenderResults(); glsRenderReview();
+  const S = glsSettings(), bank = glsBank(), g = glsGathered();
+  document.getElementById('glsAcqSt').value = S.acqStation; document.getElementById('glsAllowRaw').checked = !!S.allowRaw;
+  const acq = bank.filter(p => { ensureSrs(p); return p.practiceCount > 0 && p.srs.station >= S.acqStation; }).length;
+  const by = {}; bank.forEach(p => { const t = p.cfaTopic || 'Uncategorised'; by[t] = (by[t] || 0) + 1; });
+  const arOk = bank.filter(p => p.ar).length;
+  document.getElementById('glsStats').innerHTML = '<div><strong>' + g.terms + '</strong> CFA terms · <strong>' + g.words + '</strong> CFA-related unique EN words · Arabic accepted ' + arOk + ' · Acquired ' + acq + ' (station ' + S.acqStation + '+)</div>'
+    + '<div>' + (Object.keys(by).sort().map(t => escapeHtml(t) + ' ' + by[t]).join(' · ') || 'Nothing pulled yet — search Master above.') + '</div>';
+  glsRenderResults();
 }
 document.getElementById('glsSearchBtn').addEventListener('click', glsSearchRun);
 document.getElementById('glsQuery').addEventListener('keydown', e => { if(e.key === 'Enter') glsSearchRun(); });
-['glsNewCap','glsAcqSt','glsShowAr','glsAllowRaw'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+['glsAcqSt','glsAllowRaw'].forEach(id => document.getElementById(id).addEventListener('change', () => {
   const S = glsSettings();
-  S.newCap = Math.max(1, parseInt(document.getElementById('glsNewCap').value, 10) || 5);
   S.acqStation = Math.min(7, Math.max(1, parseInt(document.getElementById('glsAcqSt').value, 10) || 4));
-  S.showAr = document.getElementById('glsShowAr').value; S.allowRaw = document.getElementById('glsAllowRaw').checked;
+  S.allowRaw = document.getElementById('glsAllowRaw').checked;
   lsSet('glsSettings', S); glsRender();
 }));
 document.getElementById('view-glossary').addEventListener('click', e => {
@@ -11381,11 +11392,10 @@ document.getElementById('view-glossary').addEventListener('click', e => {
   const act = b.dataset.glsact, id = b.dataset.id;
   if(act === 'pull') glsPull(id);
   else if(act === 'refresh') glsRefresh(id);
+  else if(act === 'acceptar') glsAccept(id);
   else if(act === 'edit'){ glsEditId = id; glsRenderResults(); }
   else if(act === 'cancel'){ glsEditId = null; glsRenderResults(); }
   else if(act === 'save') glsSaveEdit(id);
-  else if(act === 'show'){ glsShown = true; glsRenderReview(); }
-  else if(act === 'rate') glsRate(id, parseInt(b.dataset.r, 10));
 });
 </script>
 </body>
