@@ -1023,6 +1023,18 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel">
       <h2>🗣 Conversation practice</h2>
       <p class="count-note" style="margin-bottom:10px;">Speak or type your turn; the AI replies at the level you pick (tap a chip any time — including mid-conversation — to change it; nothing above resets) and speaks its reply back in the fixed voice for that language. Words you weren't already tracking get quietly added to WordLevels in the background as you go.</p>
+      <div class="field">
+        <label>Practice mode</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <select id="convMode" style="max-width:220px;"><option value="chat">Free conversation</option><option value="explain">Explain a CFA term</option></select>
+          <span id="convExplainPick" style="display:none; gap:8px; flex-wrap:wrap; align-items:center;">
+            <select id="convTermSel" style="max-width:300px;"></select>
+            <button type="button" id="convTermStart" class="primary">Start</button>
+          </span>
+        </div>
+        <div id="convExplainInfo" class="gap-mini" style="margin-top:6px;"></div>
+        <div id="convExplainRate" style="margin-top:6px;"></div>
+      </div>
       <div class="field" style="max-width:220px;">
         <label>Language</label>
         <select id="convChatLang">
@@ -5739,12 +5751,13 @@ async function sendConvTurn(){
   sendBtn.disabled = true;
   const typingId = appendConvBubble('assistant', '…', lang);
   try{
-    const system = buildConvSystemPrompt(lang, convLevel, convIsMsa());
+    const system = buildConvSystemPrompt(lang, convLevel, convIsMsa()) + convExplainAddendum(lang);
     const r = await callGemini(text, { system, history: convHistory.slice(0, -1), useSearch: false });
     updateConvBubbleText(typingId, r.text, false);
     convHistory.push({ role: 'assistant', content: r.text });
     convQueueWordsForLeveling(r.text, lang);
     saveConvSession();
+    if(convExplain) convExplainRender();
     convAutoSpeak(typingId, r.text, lang).catch(()=>{});
   }catch(err){
     updateConvBubbleText(typingId, '⚠ ' + (err && err.message ? err.message : 'Could not get a reply.'), true);
@@ -11446,6 +11459,98 @@ document.getElementById('view-glossary').addEventListener('click', e => {
   else if(act === 'cancel'){ glsEditId = null; glsRenderResults(); }
   else if(act === 'save') glsSaveEdit(id);
   else if(act === 'aidef') glsAiDef();
+});
+
+// ================= Conversation: "Explain a CFA term" mode =================
+// The term is the prompt; the official definition goes to the AI (not shown to you) so it can check your
+// CONTENT as well as your language. One rating per term applies the normal Review spacing (rateReview),
+// updates the same bank row and the same one-row-per-item log, exactly like rating it in Review.
+let convExplain = null;   // { id, rated }
+function convExTerm(){ return convExplain ? state.bank.find(x => x.id === convExplain.id) : null; }
+function convExplainAddendum(lang){
+  const p = convExTerm(); if(!p) return '';
+  const term = stripBold(p.en || '');
+  let s = ' MODE: CFA TERM EXPLANATION COACH. The learner is explaining the CFA Level I term "' + term + '" in their own words. '
+    + 'Official definition from the curriculum glossary (authoritative, use it to judge the content): "' + (p.cfaDef || '(not available)') + '". '
+    + 'For EVERY learner turn reply in this order, briefly: (1) CONTENT CHECK against the official definition: what is correct, what is missing or wrong. Be specific, never invent facts beyond the definition, and say so if you cannot tell whether a claim is right. '
+    + '(2) LANGUAGE CORRECTIONS: list the learner\'s actual mistakes (grammar, word choice, unnatural phrasing) with the corrected wording; do not rewrite everything. '
+    + '(3) A short improved model explanation (2-3 sentences) at the learner\'s level. Then invite them to try again.';
+  if(lang === 'ar'){
+    s += ' Because the learner is practising Arabic, add ONE plain-English line under the content check stating whether the finance meaning was right, so it is never unclear.';
+    if(p.cfaAr) s += ' Suggested Arabic term for this concept (an unverified draft, not authoritative, mention it only as a suggestion): ' + p.cfaAr + '.';
+  }
+  return s;
+}
+function convExOrdered(){
+  const t = todayStr(), cfa = state.bank.filter(p => p.kind === 'cfa');
+  cfa.forEach(ensureSrs);
+  return cfa.slice().sort((a, b) => {
+    const da = a.srs.nextReview <= t ? 0 : 1, db = b.srs.nextReview <= t ? 0 : 1;
+    return da - db || String(a.lastPracticed || '').localeCompare(String(b.lastPracticed || ''));
+  });
+}
+function convExFillOptions(){
+  const sel = document.getElementById('convTermSel'), keep = sel.value, t = todayStr(), list = convExOrdered();
+  sel.innerHTML = '<option value="">Pick for me (due first)</option>' + list.map(p => '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(stripBold(p.en || '')) + (p.srs.nextReview <= t ? ' · due' : '') + '</option>').join('');
+  if(keep) sel.value = keep;
+}
+function convExplainRender(){
+  const info = document.getElementById('convExplainInfo'), rate = document.getElementById('convExplainRate');
+  const p = convExTerm();
+  if(!p){ info.innerHTML = ''; rate.innerHTML = ''; return; }
+  const lang = convLang();
+  info.innerHTML = 'Explaining: <strong>' + escapeHtml(stripBold(p.en || '')) + '</strong> · ' + escapeHtml(p.cfaTopic || '')
+    + (lang === 'en' ? ' <button type="button" id="convExToAr">➡ Now explain it in Arabic</button>' : '')
+    + ' <details style="display:inline-block; margin-left:6px;"><summary>Peek at the official definition</summary>' + escapeHtml(p.cfaDef || '') + '</details>';
+  const answered = convHistory.some(m => m.role === 'assistant');
+  if(convExplain.rated){ rate.innerHTML = '<span class="gap-mini">✓ Rated. Next review ' + escapeHtml((ensureSrs(p), p.srs.nextReview)) + '. Pick another term to continue.</span>'; }
+  else if(answered){
+    rate.innerHTML = '<div class="gap-mini">How well did you explain it (content and language)?</div>'
+      + [[5,'Perfect'],[4,'Good'],[3,'Okay'],[2,'Struggled'],[1,'Forgot']].map(x => '<button type="button" data-convexrate="' + x[0] + '">' + x[0] + ' ' + x[1] + '</button>').join(' ');
+  } else rate.innerHTML = '';
+}
+function convExStart(){
+  const sel = document.getElementById('convTermSel'), list = convExOrdered();
+  if(!list.length){ document.getElementById('convExplainInfo').textContent = 'Pull some CFA terms into your bank first (Glossary tab).'; return; }
+  const p = (sel.value && list.find(x => x.id === sel.value)) || list[0];
+  convExplain = { id: p.id, rated: false };
+  convHistory = []; convClipsById = {};
+  document.getElementById('convTranscript').innerHTML = '';
+  document.getElementById('convChatStatus').textContent = '';
+  const lang = convLang(), term = stripBold(p.en || '');
+  appendConvBubble('assistant', lang === 'en'
+    ? 'Explain \u201c' + term + '\u201d in your own words (2\u20134 sentences). I\u2019ll check your content against the official definition and correct your language.'
+    : 'اشرح مصطلح \u00ab' + term + '\u00bb بكلماتك الخاصة في جملتين إلى أربع جمل، وسأتحقق من المعنى وأصحّح لغتك.', lang);
+  saveConvSession(); convExplainRender();
+}
+async function convExRateNow(r){
+  const p = convExTerm(); if(!p || convExplain.rated) return;
+  convExplain.rated = true;
+  rateReview(p, r);
+  p.practiceCount = (p.practiceCount || 0) + 1; p.lastPracticed = todayStr();
+  await saveBank();
+  await addLogEntry(p.en, 'en', 'Explain \u00b7 rated ' + r + '/5' + (p.category ? ' \u00b7 ' + p.category : ''));
+  convExplainRender();
+  if(typeof renderDailyPlan === 'function') renderDailyPlan();
+}
+document.getElementById('convMode').addEventListener('change', () => {
+  const on = document.getElementById('convMode').value === 'explain';
+  document.getElementById('convExplainPick').style.display = on ? 'inline-flex' : 'none';
+  if(on) convExFillOptions(); else convExplain = null;
+  convExplainRender();
+});
+document.getElementById('convTermSel').addEventListener('focus', convExFillOptions);
+document.getElementById('convTermStart').addEventListener('click', convExStart);
+document.getElementById('convChatLang').addEventListener('change', () => { convExplainRender(); });
+document.getElementById('convExplainRate').addEventListener('click', e => {
+  const b = e.target.closest('[data-convexrate]'); if(b) convExRateNow(parseInt(b.dataset.convexrate, 10));
+});
+document.getElementById('convExplainInfo').addEventListener('click', e => {
+  if(!e.target.closest('#convExToAr')) return;
+  const sel = document.getElementById('convChatLang'); sel.value = 'ar-msa'; sel.dispatchEvent(new Event('change'));
+  convHistory = []; convClipsById = {}; document.getElementById('convTranscript').innerHTML = '';
+  const p = convExTerm(); if(p) appendConvBubble('assistant', '\u0627\u0634\u0631\u062d \u0645\u0635\u0637\u0644\u062d \u00ab' + stripBold(p.en || '') + '\u00bb \u0628\u0643\u0644\u0645\u0627\u062a\u0643 \u0627\u0644\u062e\u0627\u0635\u0629 \u0641\u064a \u062c\u0645\u0644\u062a\u064a\u0646 \u0625\u0644\u0649 \u0623\u0631\u0628\u0639 \u062c\u0645\u0644\u060c \u0648\u0633\u0623\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0645\u0639\u0646\u0649 \u0648\u0623\u0635\u062d\u0651\u062d \u0644\u063a\u062a\u0643.', 'ar');
+  saveConvSession(); convExplainRender();
 });
 </script>
 </body>
