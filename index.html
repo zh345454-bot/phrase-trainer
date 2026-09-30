@@ -1028,6 +1028,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
         <select id="convChatLang">
           <option value="en">English</option>
           <option value="ar">Arabic (Saudi)</option>
+          <option value="ar-msa">Arabic (Standard / MSA)</option>
         </select>
       </div>
       <div class="field">
@@ -5504,8 +5505,13 @@ let convBubbleSeq = 0;
 let convClipsById = {}; // bubbleId -> TTS clips already generated, for the 🔊 replay button
 let convRecorder = null, convChunks = [];
 
-function buildConvSystemPrompt(lang, level){
-  const langName = lang === 'ar' ? 'Saudi Arabic' : 'English';
+// The chat select has three choices (en, ar = Saudi, ar-msa = Standard Arabic). Levels, TTS voice,
+// transcription and word-levelling all keep using the BASE language ('en' | 'ar'); only the prompt cares about the dialect.
+function convChoice(){ return document.getElementById('convChatLang').value; }
+function convLang(){ return convChoice() === 'en' ? 'en' : 'ar'; }
+function convIsMsa(){ return convChoice() === 'ar-msa'; }
+function buildConvSystemPrompt(lang, level, msa){
+  const langName = lang === 'ar' ? (msa ? 'Modern Standard Arabic (fus-ha)' : 'Saudi Arabic') : 'English';
   const scaleName = lang === 'ar' ? 'Arabic teaching-stage scale' : 'CEFR scale';
   return `You are a friendly conversation partner helping someone practice spoken ${langName}. `
     + `Their current level is ${level} on the ${scaleName}. Match your vocabulary, grammar `
@@ -5514,11 +5520,15 @@ function buildConvSystemPrompt(lang, level){
     + `spoken style, like real small talk — not a lecture. Vary the topic yourself rather than `
     + `sticking to one subject; ask a follow-up question or share something small, the way a `
     + `real conversation partner would. `
-    + (lang === 'ar' ? 'Reply only in Arabic (Saudi dialect where natural), in Arabic script, and fully vowelled with tashkeel (diacritics) on every word, so there is no ambiguity in how it is read aloud.' : 'Reply only in English.');
+    + (lang === 'ar'
+      ? (msa
+        ? 'Reply only in Modern Standard Arabic (al-fus-ha), in Arabic script, and fully vowelled with tashkeel (diacritics) on every word, so there is no ambiguity in how it is read aloud. Do NOT use any regional dialect words or grammar: use standard vocabulary and standard case endings, in the natural formal-but-conversational register of an official meeting, a news interview or a presentation, not stiff classical prose.'
+        : 'Reply only in Arabic (Saudi dialect where natural), in Arabic script, and fully vowelled with tashkeel (diacritics) on every word, so there is no ambiguity in how it is read aloud.')
+      : 'Reply only in English.');
 }
 
 function renderConvLevelChips(){
-  const lang = document.getElementById('convChatLang').value;
+  const lang = convLang();
   const stages = VOCAB_BENCHMARKS[lang].stages;
   if(!convLevel || !stages.some(s => s.label === convLevel)) convLevel = stages[Math.floor(stages.length / 2)].label;
   const wrap = document.getElementById('convLevelChips');
@@ -5530,9 +5540,12 @@ function renderConvLevelChips(){
     renderConvLevelChips();
   }));
 }
+let convLastBase = null;
 document.getElementById('convChatLang').addEventListener('change', ()=>{
-  convLevel = null; // language changed: pick a fresh default level for that language's own ladder
+  if(convLang() !== convLastBase) convLevel = null; // base language changed: fresh default level for that ladder; Saudi <-> Standard keeps the level
+  convLastBase = convLang();
   renderConvLevelChips();
+  saveConvSession();
 });
 
 // ---- Transcript rendering: each assistant bubble carries a hidden 🔊 replay
@@ -5692,13 +5705,15 @@ async function convFlushWordLeveling(lang){
 // ---- Batch 5: persist the session locally (this device only — never synced,
 // per "session-only for now" — so a reload doesn't lose an in-progress chat). ----
 function saveConvSession(){
-  lsSet('convSession', { lang: document.getElementById('convChatLang').value, level: convLevel, history: convHistory });
+  lsSet('convSession', { lang: convChoice(), level: convLevel, history: convHistory });
 }
 function loadConvSessionIfAny(){
   const saved = lsGet('convSession', null);
   if(!saved || !Array.isArray(saved.history) || !saved.history.length) return;
-  const lang = saved.lang === 'ar' ? 'ar' : 'en';
-  document.getElementById('convChatLang').value = lang;
+  const choice = (saved.lang === 'ar' || saved.lang === 'ar-msa') ? saved.lang : 'en';
+  const lang = choice === 'en' ? 'en' : 'ar';
+  document.getElementById('convChatLang').value = choice;
+  convLastBase = lang;
   convLevel = saved.level || null;
   renderConvLevelChips();
   convHistory = saved.history;
@@ -5712,7 +5727,7 @@ async function sendConvTurn(){
   const input = document.getElementById('convChatInput');
   const text = input.value.trim();
   if(!text) return;
-  const lang = document.getElementById('convChatLang').value;
+  const lang = convLang();
   const sendBtn = document.getElementById('convChatSendBtn');
   const statusEl = document.getElementById('convChatStatus');
   statusEl.textContent = '';
@@ -5724,7 +5739,7 @@ async function sendConvTurn(){
   sendBtn.disabled = true;
   const typingId = appendConvBubble('assistant', '…', lang);
   try{
-    const system = buildConvSystemPrompt(lang, convLevel);
+    const system = buildConvSystemPrompt(lang, convLevel, convIsMsa());
     const r = await callGemini(text, { system, history: convHistory.slice(0, -1), useSearch: false });
     updateConvBubbleText(typingId, r.text, false);
     convHistory.push({ role: 'assistant', content: r.text });
@@ -5789,7 +5804,7 @@ document.getElementById('convMicBtn').addEventListener('click', async ()=>{
           r.onerror = () => reject(new Error('Could not read the recording.'));
           r.readAsDataURL(blob);
         });
-        const lang = document.getElementById('convChatLang').value;
+        const lang = convLang();
         const res = await fetch(state.settings.webAppUrl, {
           method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: sheetPostBody({ type: 'transcribe', audio: base64, mimeType: blob.type, language: lang })
