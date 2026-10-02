@@ -717,7 +717,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-starred">
     <div class="panel">
       <h2>★ Starred</h2>
-      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin. Filter by how long something's been starred, then select several and unstar them together.</div>
+      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin. Pick a date from the last 30 days to see what you starred that day, then select several and unstar them together.</div>
       <div class="field-row" style="margin-top:10px;">
         <div class="field">
           <label>Search</label>
@@ -758,16 +758,19 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           </select>
         </div>
       </div>
-      <div class="field-row">
-        <div class="field" style="max-width:170px;">
-          <label>Starred at least (days)</label>
-          <input type="number" id="starredMinDays" min="0" placeholder="e.g. 30">
+      <div class="field-row" style="align-items:flex-end;">
+        <div class="field" style="max-width:200px;">
+          <label>Starred on (last 30 days)</label>
+          <input type="date" id="starredDate">
         </div>
-        <div class="field" style="max-width:170px;">
-          <label>Starred at most (days)</label>
-          <input type="number" id="starredMaxDays" min="0" placeholder="e.g. 90">
+        <div class="field" style="max-width:none; flex-direction:row; gap:8px; align-items:flex-end;">
+          <button class="ghost" type="button" id="starredDatePrev">‹ Earlier day</button>
+          <button class="ghost" type="button" id="starredDateNext">Later day ›</button>
+          <button class="ghost" type="button" id="starredDateClear">All dates</button>
         </div>
       </div>
+      <div class="count-note" id="starredDateNote"></div>
+      <div id="starredDayChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
       <div class="count-note" id="starredCapNote"></div>
       <div class="field-row" id="starredBulkBar" style="display:none; align-items:center; gap:12px;">
         <label class="star-select-wrap" style="font-size:13px;"><input type="checkbox" id="starredSelectAll"> Select all visible</label>
@@ -2323,7 +2326,23 @@ function phraseCardHtml(p, opts){
     </div>`;
 }
 
-let starredFilter = { query: '', type: '', lang: '', bold: '', applied: '', minDays: '', maxDays: '' };
+let starredFilter = { query: '', type: '', lang: '', bold: '', applied: '', date: '' };
+const STARRED_WINDOW_DAYS = 30;   // only the last 30 days can be picked; older stars show under "All dates" only
+function localDateStr(d){ const x = d instanceof Date ? d : new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); }
+function starredWindow(){ const lo = new Date(); lo.setDate(lo.getDate() - STARRED_WINDOW_DAYS); return { min: localDateStr(lo), max: localDateStr(new Date()) }; }
+function shiftLocalDate(ds, delta){ const [y, m, d] = ds.split('-').map(Number); const x = new Date(y, m - 1, d + delta); return localDateStr(x); }
+function starredMatches(item){
+  if(starredFilter.type && item.type !== starredFilter.type) return false;
+  if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
+  if(starredFilter.bold === 'any' && !(item.bold.en || item.bold.ar)) return false;
+  if(starredFilter.bold === 'en' && !item.bold.en) return false;
+  if(starredFilter.bold === 'ar' && !item.bold.ar) return false;
+  if(starredFilter.applied === 'yes' && !(item.type === 'phrase' && item.ref.applied)) return false;
+  if(starredFilter.applied === 'no' && item.type === 'phrase' && item.ref.applied) return false;
+  if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
+  if(starredFilter.date && item.date !== starredFilter.date) return false;   // stars with no recorded date never match a picked day
+  return true;
+}
 let starredSelected = new Set(); // composite "type:id" keys, for bulk unstar
 
 // Collects every starred item across the three things that can be starred
@@ -2345,7 +2364,8 @@ function collectStarredItems(){
       // a bank phrase carries both languages, so it matches either filter
       langs: [p.en ? 'en' : null, p.ar ? 'ar' : null].filter(Boolean),
       haystack: [p.en, p.ar, p.category].join(' '),
-      days: daysStarred(p.starredAt)
+      days: daysStarred(p.starredAt),
+      date: p.starredAt ? localDateStr(p.starredAt) : null
     });
   });
   state.grammar.filter(g=>g.starred).forEach(g=>{
@@ -2354,7 +2374,8 @@ function collectStarredItems(){
       langs: [g.language === 'Arabic' ? 'ar' : 'en'],
       haystack: [g.title, g.category, g.rule_summary, g.user_notes, (g.tags||[]).join(' '),
         (g.examples||[]).map(ex=>`${ex.target||''} ${ex.translation||''}`).join(' ')].join(' '),
-      days: daysStarred(g.starredAt)
+      days: daysStarred(g.starredAt),
+      date: g.starredAt ? localDateStr(g.starredAt) : null
     });
   });
   state.quran.filter(q=>q.starred).forEach(q=>{
@@ -2362,7 +2383,8 @@ function collectStarredItems(){
       type: 'quran', label: 'Qur\'an', ref: q, key: 'quran:' + q.id,
       langs: ['ar'],
       haystack: [q.reference, q.arabic, q.translation, q.altTranslation, q.tafsirArabic, q.altTafsirArabic, q.note].join(' '),
-      days: daysStarred(q.starredAt)
+      days: daysStarred(q.starredAt),
+      date: q.starredAt ? localDateStr(q.starredAt) : null
     });
   });
   items.forEach(item => { item.bold = itemBoldFlags(item); });
@@ -2422,6 +2444,24 @@ function starredCardHtml(item){
   return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true, showApplied: true, showHardChunk: true, showSentenceBuild: true });
 }
 
+function starredSyncDateUi(all){
+  const inp = document.getElementById('starredDate'); if(!inp) return;
+  const w = starredWindow();
+  inp.min = w.min; inp.max = w.max;
+  if(starredFilter.date && (starredFilter.date < w.min || starredFilter.date > w.max)) starredFilter.date = '';   // slid out of the 30-day window
+  inp.value = starredFilter.date;
+  const inWin = all.filter(i => i.date && i.date >= w.min && i.date <= w.max);
+  const counts = {}; inWin.forEach(i => { counts[i.date] = (counts[i.date] || 0) + 1; });
+  const chips = document.getElementById('starredDayChips');
+  chips.innerHTML = Object.keys(counts).sort().reverse().map(d => {
+    const label = new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    return '<button type="button" class="ghost" data-stardate="' + d + '" style="padding:4px 10px;' + (d === starredFilter.date ? ' font-weight:700; border-width:2px;' : '') + '">' + label + ' · ' + counts[d] + '</button>';
+  }).join('');
+  const older = all.filter(i => !i.date || i.date < w.min).length;
+  document.getElementById('starredDateNote').textContent = (starredFilter.date ? (counts[starredFilter.date] || 0) + ' starred on ' + starredFilter.date + ' · ' : '')
+    + inWin.length + ' starred in the last ' + STARRED_WINDOW_DAYS + ' days'
+    + (older ? ' · ' + older + ' older or undated (visible under "All dates" only)' : '');
+}
 function renderStarred(){
   const list = document.getElementById('starredList');
   const countNote = document.getElementById('starredCountNote');
@@ -2433,24 +2473,8 @@ function renderStarred(){
   const liveKeys = new Set(all.map(i=>i.key));
   starredSelected.forEach(k=>{ if(!liveKeys.has(k)) starredSelected.delete(k); });
 
-  const q = starredFilter.query.toLowerCase();
-  const min = starredFilter.minDays === '' ? null : parseInt(starredFilter.minDays, 10);
-  const max = starredFilter.maxDays === '' ? null : parseInt(starredFilter.maxDays, 10);
-  const matches = all.filter(item=>{
-    if(starredFilter.type && item.type !== starredFilter.type) return false;
-    if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
-    if(starredFilter.bold === 'any' && !(item.bold.en || item.bold.ar)) return false;
-    if(starredFilter.bold === 'en' && !item.bold.en) return false;
-    if(starredFilter.bold === 'ar' && !item.bold.ar) return false;
-    // "Applied" only makes sense for phrases; grammar/Qur'an entries have no such marker, so
-    // they never match "Applied only" and always count as "not yet applied".
-    if(starredFilter.applied === 'yes' && !(item.type === 'phrase' && item.ref.applied)) return false;
-    if(starredFilter.applied === 'no' && item.type === 'phrase' && item.ref.applied) return false;
-    if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
-    if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
-    if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
-    return true;
-  });
+  starredSyncDateUi(all);
+  const matches = all.filter(starredMatches);
 
   if(all.length === 0){
     countNote.textContent = '';
@@ -2507,22 +2531,27 @@ document.getElementById('starredTypeFilter').addEventListener('change', e=>{ sta
 document.getElementById('starredLangFilter').addEventListener('change', e=>{ starredFilter.lang = e.target.value; renderStarred(); });
 document.getElementById('starredBoldFilter').addEventListener('change', e=>{ starredFilter.bold = e.target.value; renderStarred(); });
 document.getElementById('starredAppliedFilter').addEventListener('change', e=>{ starredFilter.applied = e.target.value; renderStarred(); });
-document.getElementById('starredMinDays').addEventListener('input', e=>{ starredFilter.minDays = e.target.value; renderStarred(); });
-document.getElementById('starredMaxDays').addEventListener('input', e=>{ starredFilter.maxDays = e.target.value; renderStarred(); });
+document.getElementById('starredDate').addEventListener('change', e=>{
+  const v = e.target.value, w = starredWindow();
+  starredFilter.date = (v && v >= w.min && v <= w.max) ? v : '';   // out-of-window typing is rejected
+  renderStarred();
+});
+document.getElementById('starredDatePrev').addEventListener('click', ()=>{
+  const w = starredWindow(), cur = starredFilter.date || shiftLocalDate(w.max, 1);
+  const next = shiftLocalDate(cur, -1); starredFilter.date = next < w.min ? w.min : next; renderStarred();
+});
+document.getElementById('starredDateNext').addEventListener('click', ()=>{
+  const w = starredWindow(), cur = starredFilter.date || shiftLocalDate(w.max, -1);
+  const next = shiftLocalDate(cur, 1); starredFilter.date = next > w.max ? w.max : next; renderStarred();
+});
+document.getElementById('starredDateClear').addEventListener('click', ()=>{ starredFilter.date = ''; renderStarred(); });
+document.getElementById('starredDayChips').addEventListener('click', e=>{
+  const b = e.target.closest('[data-stardate]'); if(!b) return;
+  starredFilter.date = starredFilter.date === b.dataset.stardate ? '' : b.dataset.stardate; renderStarred();
+});
 
 document.getElementById('starredSelectAll').addEventListener('change', e=>{
-  const all = collectStarredItems();
-  const q = starredFilter.query.toLowerCase();
-  const min = starredFilter.minDays === '' ? null : parseInt(starredFilter.minDays, 10);
-  const max = starredFilter.maxDays === '' ? null : parseInt(starredFilter.maxDays, 10);
-  const visible = all.filter(item=>{
-    if(starredFilter.type && item.type !== starredFilter.type) return false;
-    if(starredFilter.lang && !item.langs.includes(starredFilter.lang)) return false;
-    if(starredFilter.query && !searchIncludes(item.haystack, starredFilter.query)) return false;
-    if(min !== null && !isNaN(min) && (item.days === null || item.days < min)) return false;
-    if(max !== null && !isNaN(max) && (item.days === null || item.days > max)) return false;
-    return true;
-  });
+  const visible = collectStarredItems().filter(starredMatches);
   if(e.target.checked) visible.forEach(v=>starredSelected.add(v.key));
   else visible.forEach(v=>starredSelected.delete(v.key));
   renderStarred();
