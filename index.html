@@ -95,6 +95,19 @@ header.top .sub{
 /* Second stats row (unique words) + expandable details, kept in the same
    right-aligned block as the bold totals so the header stays one tidy unit. */
 .header-stats .hs-row{ line-height:1.7; }
+.link-toggle{
+  background:none; border:none; padding:0 0 0 8px; margin:0;
+  font-family:inherit; font-size:inherit; letter-spacing:inherit;
+  color:var(--brass-deep); cursor:pointer; text-decoration:underline;
+  text-underline-offset:2px;
+}
+.starred-jump{
+  position:fixed; right:14px; bottom:18px; z-index:60; display:none;
+  background:var(--paper); color:var(--brass-deep); border:1px solid var(--brass-deep);
+  border-radius:999px; padding:9px 14px; font-family:inherit; font-size:13px;
+  box-shadow:0 2px 10px rgba(0,0,0,.18); cursor:pointer;
+}
+.starred-jump.show{ display:block; }
 .header-stats .hs-toggle{
   background:none; border:none; padding:0 0 0 8px; margin:0;
   font-family:inherit; font-size:inherit; letter-spacing:inherit;
@@ -758,19 +771,22 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
           </select>
         </div>
       </div>
-      <div class="field-row" style="align-items:flex-end;">
-        <div class="field" style="max-width:200px;">
-          <label>Starred on (last 30 days)</label>
-          <input type="date" id="starredDate">
+      <div class="count-note" id="starredDateHead" style="margin-top:10px;">📅 Date filter · <span id="starredDateSummary">All dates</span> <button type="button" class="link-toggle" id="starredDateToggle">hide ▴</button></div>
+      <div id="starredDateBody">
+        <div class="field-row" style="align-items:flex-end;">
+          <div class="field" style="max-width:200px;">
+            <label>Starred on (last 30 days)</label>
+            <input type="date" id="starredDate">
+          </div>
+          <div class="field" style="max-width:none; flex-direction:row; gap:8px; align-items:flex-end;">
+            <button class="ghost" type="button" id="starredDatePrev">‹ Earlier day</button>
+            <button class="ghost" type="button" id="starredDateNext">Later day ›</button>
+            <button class="ghost" type="button" id="starredDateClear">All dates</button>
+          </div>
         </div>
-        <div class="field" style="max-width:none; flex-direction:row; gap:8px; align-items:flex-end;">
-          <button class="ghost" type="button" id="starredDatePrev">‹ Earlier day</button>
-          <button class="ghost" type="button" id="starredDateNext">Later day ›</button>
-          <button class="ghost" type="button" id="starredDateClear">All dates</button>
-        </div>
+        <div class="count-note" id="starredDateNote"></div>
+        <div id="starredDayChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
       </div>
-      <div class="count-note" id="starredDateNote"></div>
-      <div id="starredDayChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
       <div class="count-note" id="starredCapNote"></div>
       <div class="field-row" id="starredBulkBar" style="display:none; align-items:center; gap:12px;">
         <label class="star-select-wrap" style="font-size:13px;"><input type="checkbox" id="starredSelectAll"> Select all visible</label>
@@ -778,7 +794,9 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       </div>
       <div class="count-note" id="starredCountNote"></div>
       <div id="starredList"></div>
+      <div style="margin-top:12px;"><button class="ghost" type="button" id="starredJumpBottom">↑ Back to date filter</button></div>
     </div>
+    <button type="button" class="starred-jump" id="starredJumpFloat">↑ Date filter</button>
   </section>
 
   <!-- PRACTICE & LOG -->
@@ -2444,6 +2462,15 @@ function starredCardHtml(item){
   return selectRow + phraseCardHtml(item.ref, { showDelete: true, showLog: true, showEdit: true, showStarredDays: true, showApplied: true, showHardChunk: true, showSentenceBuild: true });
 }
 
+let starredDateOpen = lsGet('starredDateOpen', true) !== false;
+function starredApplyDateOpen(){
+  document.getElementById('starredDateBody').style.display = starredDateOpen ? '' : 'none';
+  document.getElementById('starredDateToggle').textContent = starredDateOpen ? 'hide ▴' : 'show ▾';
+}
+function starredJumpToDate(){
+  if(!starredDateOpen){ starredDateOpen = true; lsSet('starredDateOpen', true); starredApplyDateOpen(); }
+  document.getElementById('starredDateHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 function starredSyncDateUi(all){
   const inp = document.getElementById('starredDate'); if(!inp) return;
   const w = starredWindow();
@@ -2458,6 +2485,9 @@ function starredSyncDateUi(all){
     return '<button type="button" class="ghost" data-stardate="' + d + '" style="padding:4px 10px;' + (d === starredFilter.date ? ' font-weight:700; border-width:2px;' : '') + '">' + label + ' · ' + counts[d] + '</button>';
   }).join('');
   const older = all.filter(i => !i.date || i.date < w.min).length;
+  document.getElementById('starredDateSummary').textContent = starredFilter.date
+    ? new Date(starredFilter.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : 'All dates';
+  starredApplyDateOpen();
   document.getElementById('starredDateNote').textContent = (starredFilter.date ? (counts[starredFilter.date] || 0) + ' starred on ' + starredFilter.date + ' · ' : '')
     + inWin.length + ' starred in the last ' + STARRED_WINDOW_DAYS + ' days'
     + (older ? ' · ' + older + ' older or undated (visible under "All dates" only)' : '');
@@ -2545,6 +2575,15 @@ document.getElementById('starredDateNext').addEventListener('click', ()=>{
   const next = shiftLocalDate(cur, 1); starredFilter.date = next > w.max ? w.max : next; renderStarred();
 });
 document.getElementById('starredDateClear').addEventListener('click', ()=>{ starredFilter.date = ''; renderStarred(); });
+document.getElementById('starredDateToggle').addEventListener('click', ()=>{ starredDateOpen = !starredDateOpen; lsSet('starredDateOpen', starredDateOpen); starredApplyDateOpen(); });
+document.getElementById('starredJumpBottom').addEventListener('click', starredJumpToDate);
+document.getElementById('starredJumpFloat').addEventListener('click', starredJumpToDate);
+// the floating button appears only while the date-filter header is scrolled out of view (it lives inside the Starred tab, so it is hidden on every other tab)
+if('IntersectionObserver' in window){
+  new IntersectionObserver(entries => {
+    document.getElementById('starredJumpFloat').classList.toggle('show', !entries[0].isIntersecting);
+  }, { threshold: 0 }).observe(document.getElementById('starredDateHead'));
+}
 document.getElementById('starredDayChips').addEventListener('click', e=>{
   const b = e.target.closest('[data-stardate]'); if(!b) return;
   starredFilter.date = starredFilter.date === b.dataset.stardate ? '' : b.dataset.stardate; renderStarred();
