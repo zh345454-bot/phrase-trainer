@@ -513,6 +513,32 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .dash-tile .val.na{ font-size:15px; color:var(--ink-soft); font-weight:600; }
 .dash-tile .dir{ font-size:12px; color:var(--ink-soft); margin:2px 0 6px; }
 .dash-warn{ border-left:4px solid #B33A2E; background:#FBEDEA; padding:8px 12px; margin:8px 0; font-size:13px; }
+.mom-card{ border:1px solid var(--line); background:var(--panel); padding:14px 16px; margin:12px 0; }
+.mom-card h3{ margin:0 0 6px; font-size:17px; }
+.mom-why{ font-family:'Newsreader',serif; font-size:17px; line-height:1.35; margin:2px 0 4px; }
+.mom-why .ph{ color:var(--ink-soft); font-style:italic; }
+.mom-sub{ font-size:12.5px; color:var(--ink-soft); margin:3px 0 6px; }
+.mom-streak{ font-size:20px; font-weight:700; }
+.mom-row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+.mom-bar{ height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin:6px 0; }
+.mom-bar > span{ display:block; height:100%; background:var(--teal); }
+.mom-chips{ display:flex; gap:6px; flex-wrap:wrap; margin:4px 0 8px; }
+.mom-chip{ border:1px solid var(--line); background:var(--paper); color:var(--ink); padding:6px 11px; border-radius:999px; font:inherit; font-size:13px; cursor:pointer; }
+.mom-chip.on{ background:var(--teal); color:#fff; border-color:var(--teal); }
+.mom-link{ background:none; border:none; padding:0 2px; font:inherit; font-size:12.5px; color:var(--brass-deep); text-decoration:underline; cursor:pointer; }
+.mom-lab{ font-size:13px; display:inline-flex; align-items:center; gap:6px; margin:4px 10px 4px 0; }
+.mom-panel{ border-top:1px dashed var(--line); margin-top:8px; padding-top:6px; }
+.mom-recs{ display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; margin:8px 0 4px; }
+.mom-set summary{ font-size:12.5px; color:var(--ink-soft); cursor:pointer; margin-top:8px; }
+.mom-pill{ position:fixed; left:14px; bottom:calc(16px + env(safe-area-inset-bottom, 0px)); z-index:70; display:none; align-items:center;
+  background:var(--teal); color:#fff; border:none; border-radius:999px; padding:10px 15px; font:inherit; font-size:13.5px; font-weight:600;
+  box-shadow:0 2px 10px rgba(0,0,0,.28); cursor:pointer; }
+.mom-pill.reached{ background:var(--brass-deep); }
+.mom-sheet{ position:fixed; left:10px; right:10px; bottom:calc(66px + env(safe-area-inset-bottom, 0px)); max-width:440px; max-height:72vh; overflow:auto; z-index:70; display:none;
+  background:var(--panel); border:2px solid var(--brass-deep); padding:14px 16px; box-shadow:0 6px 24px rgba(0,0,0,.28); }
+.mom-step{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+.mom-step.done > span:first-child{ color:var(--ink-soft); text-decoration:line-through; }
+
 .dash-info{ border-left:4px solid var(--line); background:#F4F1E8; padding:8px 12px; margin:8px 0; font-size:13px; }
 .dash-review li{ margin:5px 0; font-size:13.5px; }
 /* ---------- Hours & skills log ---------- */
@@ -10189,6 +10215,7 @@ function renderDashboard(){
   if(st.c && !st.complete && st.dayN > 10) warns.push(['warn', `Your ${LANG_NAMES[lang]} speaking cycle is on day ${st.dayN} — finish it or start a new one.`]);
   if(st.c && st.complete){ const since = daysBetween(st.c.start, today); if(since > 14) warns.push(['info', `Your last ${LANG_NAMES[lang]} speaking cycle started ${since} days ago. The routine works best weekly.`]); }
   html += warns.map(([k, m]) => `<div class="dash-${k}">${escapeHtml(m)}</div>`).join('');
+  try{ html += momentumHtml(lang); }catch(e){ console.error('momentum card', e); }
 
   // ---- next best action ----
   if(items.length){
@@ -10268,6 +10295,295 @@ document.getElementById('dashRoot').addEventListener('click', (e) => {
   if(a.dataset.lang){ state.uiLang = a.dataset.lang; lsSet('uiLang', state.uiLang); }
   const b = document.querySelector('.tab-btn[data-view="' + a.dataset.view + '"]'); if(b) b.click();
 });
+
+
+// =====================================================================
+// MOMENTUM — focus blocks, a forgiving streak, personal records, a stamina ladder
+// and an energy log. Built on the four things that keep people practising: choice
+// (you pick the order), visible progress (streak, records), a start that costs almost
+// nothing (“Just 2 minutes”), and a reason you can see every day.
+// The streak is read from your Hours data, so it is identical on every device.
+// Blocks, energy ratings and the stamina level stay on THIS device (not synced).
+// =====================================================================
+var MOM_STAMINA = [20, 30, 45, 60, 75, 90];
+var MOM_STEPS = [
+  { k: 'gaps',  label: 'Gap review',          view: 'gaps' },
+  { k: 'bank',  label: 'Bank review',         view: 'review' },
+  { k: 'input', label: 'Listening / reading', view: 'hours' },
+  { k: 'speak', label: 'Speaking cycle',      view: 'speaking' },
+  { k: 'talk',  label: 'AI conversation',     view: 'conversation' },
+  { k: 'write', label: 'Write & check',       view: 'practice' }
+];
+var MOM_ITEM_TO_STEP = { gaps: 'gaps', bank: 'bank', input: 'input', spk: 'speak', voicePractice: 'write', writeCheck: 'write' };
+var MOM_SLOTS = ['Night', 'Morning', 'Midday', 'Afternoon', 'Evening'];
+var momDraft = { open: false, lang: '', len: 0, energy: 0, steps: [] };
+var momSheetOpen = false, momFinishing = false;
+
+function momData(){
+  const d = lsGet('momentum', null) || {};
+  if(!Array.isArray(d.blocks)) d.blocks = [];
+  if(typeof d.why !== 'string') d.why = '';
+  if(!(d.threshold >= 1)) d.threshold = 10;
+  if(!(d.level >= 0 && d.level < MOM_STAMINA.length)) d.level = 0;
+  if(!d.active) d.active = null;
+  return d;
+}
+function momSave(d){ lsSet('momentum', d); }
+function momTarget(){ return MOM_STAMINA[momData().level]; }
+function momStepDef(k){ return MOM_STEPS.find(s => s.k === k) || MOM_STEPS[0]; }
+function momSlot(iso){ const h = new Date(iso).getHours(); return h < 5 ? 'Night' : h < 11 ? 'Morning' : h < 15 ? 'Midday' : h < 19 ? 'Afternoon' : 'Evening'; }
+
+// ---- streak: a day counts at `threshold` logged minutes (both languages together).
+// One rest day is allowed per rolling 7 days; a second miss inside that window ends the streak.
+function momDayMin(date){ return hrsDayTotals('en', date).total + hrsDayTotals('ar', date).total; }
+function momStreakInfo(){
+  const th = momData().threshold, today = todayStr();
+  const dates = [...new Set([...hrsDates('en'), ...hrsDates('ar')])].sort();
+  const out = { cur: 0, best: 0, restAvailable: true, restUsedOn: '', pending: false, todayMin: momDayMin(today) };
+  if(!dates.length) return out;
+  let d = dates[0] < addDays(today, -730) ? addDays(today, -730) : dates[0];
+  let cur = 0, lastMiss = null;
+  while(d <= today){
+    const act = momDayMin(d) >= th;
+    if(act){ cur++; if(cur > out.best) out.best = cur; }
+    else if(d === today){ out.pending = cur > 0; }
+    else if(cur > 0 && (lastMiss === null || daysBetween(lastMiss, d) >= 7)){ lastMiss = d; }
+    else { cur = 0; lastMiss = null; }
+    d = addDays(d, 1);
+  }
+  out.cur = cur;
+  out.restAvailable = lastMiss === null || daysBetween(lastMiss, today) >= 7;
+  out.restUsedOn = (lastMiss && daysBetween(lastMiss, today) < 7) ? lastMiss : '';
+  return out;
+}
+
+// ---- personal records (from data that already exists)
+function momRecords(lang, st){
+  const today = todayStr(), rec = [];
+  let bestDay = { min: 0, date: '' };
+  [...new Set([...hrsDates('en'), ...hrsDates('ar')])].forEach(d => { const m = momDayMin(d); if(m > bestDay.min) bestDay = { min: m, date: d }; });
+  if(bestDay.min > 0) rec.push({ label: 'Most minutes in a day', val: Math.round(bestDay.min) + ' min', fresh: bestDay.date === today });
+  if(st.best >= 2) rec.push({ label: 'Longest streak', val: st.best + ' days', fresh: st.cur === st.best && st.cur >= 3 });
+  const blocks = momData().blocks;
+  let lb = null; blocks.forEach(b => { if(!lb || b.minutes > lb.minutes) lb = b; });
+  if(lb) rec.push({ label: 'Longest focus block', val: Math.round(lb.minutes) + ' min', fresh: lb.date === today });
+  const rates = spkCycles(lang).filter(c => c.transfer && c.transfer.words >= spkMin(lang)).map(c => spkRate(c.transfer)).filter(r => r !== null);
+  if(rates.length >= 2){ const best = Math.min(...rates); rec.push({ label: LANG_NAMES[lang] + ': fewest errors per 100 words', val: String(best), fresh: rates[rates.length - 1] === best }); }
+  return rec;
+}
+
+// ---- what your own blocks say about you
+function momInsights(){
+  const bl = momData().blocks.filter(b => b.minutes >= 5), lines = [];
+  const withE = bl.filter(b => b.eBefore && b.eAfter).slice(-20);
+  if(withE.length >= 5){
+    const up = withE.filter(b => b.eAfter >= b.eBefore).length;
+    lines.push(`You finished ${up} of your last ${withE.length} rated blocks with energy equal to or higher than when you started. Starting is the hard part, not the work.`);
+  }
+  if(bl.length >= 6){
+    const by = {}; bl.forEach(b => { const s = momSlot(b.startedAt); (by[s] = by[s] || []).push(b.minutes); });
+    let best = null;
+    MOM_SLOTS.forEach(s => { const a = by[s]; if(a && a.length >= 2){ const avg = a.reduce((x, y) => x + y, 0) / a.length; if(!best || avg > best.avg) best = { s, avg, n: a.length }; } });
+    if(best) lines.push(`Your longest blocks start in the ${best.s.toLowerCase()} (average ${Math.round(best.avg)} min over ${best.n} blocks). Protect that slot.`);
+  }
+  return lines;
+}
+
+// ---- stamina ladder: raise the target after 3 blocks in a row that reach 90% of it
+function momCheckLevelUp(d){
+  const target = MOM_STAMINA[d.level], last = d.blocks.slice(-3);
+  if(d.level >= MOM_STAMINA.length - 1 || last.length < 3) return '';
+  if(!last.every(b => b.planned === target && b.minutes >= target * 0.9)) return '';
+  const rated = last.filter(b => b.eAfter);
+  if(rated.length && rated.reduce((n, b) => n + b.eAfter, 0) / rated.length < 2.5) return '';
+  d.level++;
+  return `Stamina level up: your block target is now ${MOM_STAMINA[d.level]} min.`;
+}
+
+function momStepsFromOutstanding(lang){
+  const seen = [];
+  try{ dashOutstanding(lang).forEach(it => { const k = MOM_ITEM_TO_STEP[it.key]; if(k && !seen.includes(k)) seen.push(k); }); }catch(e){}
+  return seen.slice(0, 5);
+}
+
+// ---- the card on Today
+function momentumHtml(lang){
+  const d = momData(), st = momStreakInfo(), a = d.active, hf = hrsForecast(lang), target = momTarget();
+  const draft = momDraft;
+  const why = d.why ? escapeHtml(d.why) : '<span class="ph">Add one line about why you are doing this. You will see it every day.</span>';
+  const next = hf.next ? `next level ${hf.next.label} is about ${Math.round(hf.next.h - hf.total)} h away` : 'goal level reached by hours';
+  let streakLine;
+  if(st.cur === 0) streakLine = '<span class="mom-streak">Start a streak today</span><div class="mom-sub">A day counts once you log ' + d.threshold + ' minutes in the Hours tab (or finish a block that adds them).</div>';
+  else streakLine = `<span class="mom-streak">🔥 ${st.cur} day${st.cur === 1 ? '' : 's'}</span><div class="mom-sub">${st.pending ? 'Today is still open. ' : ''}${st.restAvailable ? 'One rest day is available this week; missing a day will not end the streak.' : 'Rest day used on ' + st.restUsedOn + '. Another miss before it clears would end the streak.'}</div>`;
+  const pct = Math.min(100, Math.round(st.todayMin / target * 100));
+  let html = `<div class="mom-card"><h3>Momentum</h3>
+    <div class="mom-why">🎯 ${why} <button type="button" class="mom-link" data-mom="why">edit</button></div>
+    <div class="mom-sub">${LANG_NAMES[lang]}: about ${escapeHtml(hf.levelNow)} by hours · ${next}</div>
+    ${streakLine}
+    <div class="mom-bar"><span style="width:${pct}%"></span></div>
+    <div class="mom-sub">${Math.round(st.todayMin)} min logged today · block target ${target} min</div>`;
+  if(a){
+    html += `<div class="mom-row"><button class="primary" type="button" data-mom="opensheet">Block running · open it</button></div>`;
+  } else if(!draft.open){
+    html += `<div class="mom-row"><button class="primary" type="button" data-mom="openstart">Start a focus block</button><button class="ghost" type="button" data-mom="tiny">Just 2 minutes</button></div>`;
+  } else {
+    const dl = draft.lang || lang, dlen = draft.len || target;
+    html += `<div class="mom-panel"><div class="mom-row">
+        <label class="mom-lab">Language <select data-mom-sel="lang"><option value="en"${dl === 'en' ? ' selected' : ''}>English</option><option value="ar"${dl === 'ar' ? ' selected' : ''}>Arabic</option></select></label>
+        <label class="mom-lab">Length <select data-mom-sel="len">${MOM_STAMINA.map(m => `<option value="${m}"${m === dlen ? ' selected' : ''}>${m} min${m === target ? ' (your level)' : ''}</option>`).join('')}</select></label></div>
+      <div class="mom-sub">Energy right now (optional)</div>
+      <div class="mom-chips">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="mom-chip${draft.energy === n ? ' on' : ''}" data-mom="energy" data-n="${n}">${n}</button>`).join('')}</div>
+      <div class="mom-sub">Choose what to do, in the order you want. Tap again to remove.</div>
+      <div class="mom-chips">${MOM_STEPS.map(s => { const i = draft.steps.indexOf(s.k); return `<button type="button" class="mom-chip${i >= 0 ? ' on' : ''}" data-mom="step" data-k="${s.k}">${i >= 0 ? (i + 1) + '. ' : ''}${s.label}</button>`; }).join('')}</div>
+      <div class="mom-row"><button class="ghost" type="button" data-mom="suggest">Use today’s suggestion</button><button class="primary" type="button" data-mom="start">Start block</button><button class="ghost" type="button" data-mom="closestart">Cancel</button></div></div>`;
+  }
+  const rec = momRecords(lang, st), ins = momInsights();
+  if(rec.length) html += `<div class="mom-recs">${rec.map(r => `<span class="mom-rec">${r.fresh ? '🏆 ' : ''}${escapeHtml(r.label)}: <strong>${escapeHtml(r.val)}</strong></span>`).join('')}</div>`;
+  if(ins.length) html += `<ul class="dash-review">${ins.map(l => '<li>' + escapeHtml(l) + '</li>').join('')}</ul>`;
+  html += `<details class="mom-set"><summary>Momentum settings</summary>
+      <label class="mom-lab">A day counts at <input type="number" min="1" max="240" value="${d.threshold}" data-mom-sel="threshold" style="width:70px;"> minutes</label>
+      <label class="mom-lab">Block target <select data-mom-sel="level">${MOM_STAMINA.map((m, i) => `<option value="${i}"${i === d.level ? ' selected' : ''}>${m} min</option>`).join('')}</select></label>
+      <div class="mom-sub">The target rises by itself after 3 blocks in a row that reach 90% of it. Blocks and energy ratings are saved on this device only; the streak comes from your synced Hours.</div></details></div>`;
+  return html;
+}
+
+// ---- starting, running and finishing a block
+function momStart(tiny){
+  const d = momData();
+  if(d.active){ momSheetOpen = true; momRenderSheet(); return; }
+  const lang = momDraft.lang || uiLang();
+  let steps = momDraft.steps.slice();
+  if(tiny && !steps.length) steps = momStepsFromOutstanding(lang).slice(0, 1);
+  d.active = { id: uid(), start: Date.now(), startISO: new Date().toISOString(), lang, planned: tiny ? momTarget() : (momDraft.len || momTarget()),
+    steps, done: [], eBefore: tiny ? 0 : (momDraft.energy || 0), tiny: !!tiny, tinyShown: false };
+  momSave(d);
+  momDraft = { open: false, lang: '', len: 0, energy: 0, steps: [] };
+  momSheetOpen = true; momFinishing = false;
+  momRefresh();
+}
+function momRefresh(){ momRenderSheet(); momTick(); if(typeof renderDashboard === 'function') renderDashboard(); }
+function momElapsedMin(a){ return (Date.now() - a.start) / 60000; }
+function momHoursLogged(a){
+  return state.hours.sessions.filter(x => x.dev === state.hours.deviceId && x.lang === a.lang && x.updatedAt >= a.startISO).reduce((n, x) => n + (Number(x.minutes) || 0), 0);
+}
+function momFinishSave(){
+  const d = momData(), a = d.active; if(!a) return;
+  const sh = document.getElementById('momSheet');
+  const minutes = Math.round(parseFloat(sh.querySelector('[data-mf="minutes"]').value) * 10) / 10;
+  if(!(minutes > 0) || minutes > 600){ const m = sh.querySelector('[data-mf-status]'); m.textContent = 'Enter the minutes (more than 0, at most 600).'; m.className = 'status-msg err'; return; }
+  const eAfter = parseInt((sh.querySelector('.mom-chip.on[data-mom="eafter"]') || {}).dataset?.n, 10) || 0;
+  const addBox = sh.querySelector('[data-mf="addhours"]');
+  const addMin = addBox && addBox.checked ? Math.max(0, Math.round((minutes - momHoursLogged(a)) * 10) / 10) : 0;
+  const blk = { id: a.id, date: todayStr(), startedAt: a.startISO, lang: a.lang, planned: a.planned, minutes, eBefore: a.eBefore || 0, eAfter, steps: a.steps, done: a.done };
+  d.blocks.push(blk); d.blocks = d.blocks.slice(-300);
+  const up = momCheckLevelUp(d);
+  if(addMin >= 1){
+    const skill = sh.querySelector('[data-mf="skill"]').value;
+    const sess = { id: uid(), dev: state.hours.deviceId, date: todayStr(), lang: a.lang, skill: HRS_SKILLS.includes(skill) ? skill : 'study', activity: 'other', title: 'Focus block', minutes: addMin,
+      source: 'manual', rating: 0, words: 0, note: '', startedAt: a.startISO, updatedAt: new Date().toISOString(), newWords: 0 };
+    state.hours.sessions.push(sess); state.hours.selfSeen[hrsKey(sess.date, sess.lang)] = true;
+    hrsSave(); bumpHrsSyncInBackground();
+  }
+  d.active = null; momSave(d);
+  momSheetOpen = false; momFinishing = false;
+  gapToastMsg(`Block saved: ${Math.round(minutes)} min.${addMin >= 1 ? ' ' + Math.round(addMin) + ' min added to Hours.' : ''}${up ? ' ' + up : ''}`);
+  momRefresh();
+  try{ if(typeof renderHours === 'function') renderHours(); }catch(e){}
+}
+
+// ---- floating pill + sheet
+function momEnsureUi(){
+  if(document.getElementById('momPill') || !document.body) return;
+  const pill = document.createElement('button'); pill.id = 'momPill'; pill.type = 'button'; pill.className = 'mom-pill';
+  const sheet = document.createElement('div'); sheet.id = 'momSheet'; sheet.className = 'mom-sheet';
+  document.body.appendChild(pill); document.body.appendChild(sheet);
+  pill.addEventListener('click', () => { momSheetOpen = !momSheetOpen; momRenderSheet(); });
+  sheet.addEventListener('click', momSheetClick);
+}
+function momTick(){
+  momEnsureUi();
+  const pill = document.getElementById('momPill'); if(!pill) return;
+  const a = momData().active;
+  if(!a){ pill.style.display = 'none'; const sh = document.getElementById('momSheet'); if(sh) sh.style.display = 'none'; return; }
+  const el = momElapsedMin(a), sec = Math.floor(el * 60);
+  pill.style.display = 'flex';
+  pill.classList.toggle('reached', el >= a.planned);
+  pill.textContent = el >= a.planned ? `✓ ${Math.floor(sec / 60)} min · target reached` : `⏱ ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} / ${a.planned} min`;
+  if(a.tiny && !a.tinyShown && el >= 2){
+    a.tinyShown = true; const d = momData(); d.active.tinyShown = true; momSave(d);
+    gapToastMsg('Two minutes done. The hardest part is over. Keep going, or finish with credit whenever you like.');
+  }
+}
+function momRenderSheet(){
+  momEnsureUi();
+  const sh = document.getElementById('momSheet'); if(!sh) return;
+  const a = momData().active;
+  if(!a || !momSheetOpen){ sh.style.display = 'none'; return; }
+  const el = momElapsedMin(a), pct = Math.min(100, Math.round(el / a.planned * 100));
+  let html = `<div class="mom-row" style="justify-content:space-between;"><strong>${LANG_NAMES[a.lang]} focus block</strong><button class="mom-link" type="button" data-mom="closesheet">hide</button></div>
+    <div class="mom-bar"><span style="width:${pct}%"></span></div><div class="mom-sub">${Math.floor(el)} of ${a.planned} min${el >= a.planned ? ' · target reached, finish when you are ready' : ''}</div>`;
+  if(!momFinishing){
+    if(a.steps.length){
+      html += '<div class="mom-steps">' + a.steps.map((k, i) => { const s = momStepDef(k), done = a.done.includes(k);
+        return `<div class="mom-step${done ? ' done' : ''}"><span>${done ? '✓' : (i + 1) + '.'} ${s.label}</span><span><button class="ghost" type="button" data-mom="go" data-k="${k}">Go</button> <button class="ghost" type="button" data-mom="done" data-k="${k}">${done ? 'Undo' : 'Done'}</button></span></div>`; }).join('') + '</div>';
+    } else html += '<div class="mom-sub">No steps chosen. Practise anything, then finish the block here.</div>';
+    html += `<div class="mom-row"><button class="primary" type="button" data-mom="finish">Finish block</button><button class="ghost" type="button" data-mom="cancel">Discard</button></div>`;
+  } else {
+    const logged = momHoursLogged(a), cap = Math.min(el, 240), mins = Math.max(1, Math.round(cap)), short = Math.max(0, mins - logged);
+    html += `<div class="mom-sub">Minutes to count</div><input type="number" min="1" max="600" data-mf="minutes" value="${mins}" style="width:90px;">
+      <div class="mom-sub">Energy now</div><div class="mom-chips">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="mom-chip" data-mom="eafter" data-n="${n}">${n}</button>`).join('')}</div>`;
+    if(short >= 1) html += `<label class="mom-lab" style="display:block;"><input type="checkbox" data-mf="addhours" checked style="width:auto;"> Add about ${Math.round(short)} min to Hours as <select data-mf="skill">${HRS_SKILLS.map(k => `<option value="${k}"${k === 'study' ? ' selected' : ''}>${HRS_SKILL_LABELS[k]}</option>`).join('')}</select><div class="mom-sub">Untick it if you already ran the Hours timer for this time. ${Math.round(logged)} min were logged during the block.</div></label>`;
+    html += `<div class="status-msg" data-mf-status></div><div class="mom-row"><button class="primary" type="button" data-mom="save">Save block</button><button class="ghost" type="button" data-mom="back">Back</button></div>`;
+  }
+  sh.innerHTML = html; sh.style.display = 'block';
+}
+function momSheetClick(e){
+  const b = e.target.closest('[data-mom]'); if(!b) return;
+  const act = b.dataset.mom, d = momData(), a = d.active;
+  if(act === 'closesheet'){ momSheetOpen = false; momRenderSheet(); return; }
+  if(!a) return;
+  if(act === 'go'){
+    const s = momStepDef(b.dataset.k);
+    if(a.lang !== uiLang()){ state.uiLang = a.lang; lsSet('uiLang', state.uiLang); }
+    momSheetOpen = false; momRenderSheet();
+    const tb = document.querySelector('.tab-btn[data-view="' + s.view + '"]'); if(tb) tb.click();
+    return;
+  }
+  if(act === 'done'){ const k = b.dataset.k; a.done = a.done.includes(k) ? a.done.filter(x => x !== k) : a.done.concat(k); momSave(d); momRenderSheet(); return; }
+  if(act === 'finish'){ momFinishing = true; momRenderSheet(); return; }
+  if(act === 'back'){ momFinishing = false; momRenderSheet(); return; }
+  if(act === 'eafter'){ e.target.closest('#momSheet').querySelectorAll('[data-mom="eafter"]').forEach(x => x.classList.remove('on')); b.classList.add('on'); return; }
+  if(act === 'save'){ momFinishSave(); return; }
+  if(act === 'cancel'){ if(confirm('Discard this block? Nothing will be saved.')){ d.active = null; momSave(d); momSheetOpen = false; momFinishing = false; momRefresh(); } return; }
+}
+
+// ---- Today card events
+(function(){
+  const root = document.getElementById('dashRoot'); if(!root) return;
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mom]'); if(!b) return;
+    const act = b.dataset.mom;
+    if(act === 'why'){ const d = momData(), v = prompt('Why are you doing this? One line.', d.why); if(v !== null){ d.why = v.trim().slice(0, 140); momSave(d); renderDashboard(); } return; }
+    if(act === 'openstart'){ momDraft.open = true; renderDashboard(); return; }
+    if(act === 'closestart'){ momDraft = { open: false, lang: '', len: 0, energy: 0, steps: [] }; renderDashboard(); return; }
+    if(act === 'energy'){ const n = parseInt(b.dataset.n, 10); momDraft.energy = momDraft.energy === n ? 0 : n; renderDashboard(); return; }
+    if(act === 'step'){ const k = b.dataset.k, i = momDraft.steps.indexOf(k); if(i >= 0) momDraft.steps.splice(i, 1); else momDraft.steps.push(k); renderDashboard(); return; }
+    if(act === 'suggest'){ momDraft.steps = momStepsFromOutstanding(momDraft.lang || uiLang()); renderDashboard(); return; }
+    if(act === 'start'){ momStart(false); return; }
+    if(act === 'tiny'){ momStart(true); return; }
+    if(act === 'opensheet'){ momSheetOpen = true; momRenderSheet(); return; }
+  });
+  root.addEventListener('change', (e) => {
+    const s = e.target.closest('[data-mom-sel]'); if(!s) return;
+    const k = s.dataset.momSel;
+    if(k === 'lang'){ momDraft.lang = s.value; momDraft.open = true; }
+    else if(k === 'len'){ momDraft.len = parseInt(s.value, 10) || 0; }
+    else if(k === 'threshold'){ const d = momData(), v = parseInt(s.value, 10); if(v >= 1 && v <= 240){ d.threshold = v; momSave(d); } renderDashboard(); }
+    else if(k === 'level'){ const d = momData(), v = parseInt(s.value, 10); if(v >= 0 && v < MOM_STAMINA.length){ d.level = v; momSave(d); } renderDashboard(); }
+  });
+})();
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', momTick); else momTick();
+setInterval(momTick, 1000);
 
 
 // =====================================================================
