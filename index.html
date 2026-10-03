@@ -10952,7 +10952,7 @@ function hrsDiff(ref, hyp){
   return out;
 }
 function hrsSentenceWith(text, word){
-  const parts = (text || '').split(/(?<=[.!?\u061F\n])\s*/);
+  const parts = ((text || '').match(/[^.!?\u061F\n]*[.!?\u061F\n]+\s*|[^.!?\u061F\n]+$/g) || []);
   const lg = (hrsTpl && hrsTpl.lang) || uiLang(), w = hrsNormWord(word, lg);
   return (parts.find(x => hrsWordList(x, lg).some(o => o.n === w)) || '').trim();
 }
