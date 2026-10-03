@@ -627,6 +627,16 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   .phrase-texts{ flex:1 1 100%; min-width:0; order:1; }
   .card-actions{ order:2; width:100%; flex-wrap:wrap; margin-top:6px; }
 }
+.flu-table, .cov-table{ width:100%; border-collapse:collapse; font-size:13px; margin:8px 0; }
+.flu-table th, .flu-table td, .cov-table th, .cov-table td{ border-bottom:1px solid var(--line); padding:5px 6px; text-align:left; vertical-align:top; }
+.flu-table th, .cov-table th{ font-size:11.5px; color:var(--ink-soft); font-weight:600; }
+.flu-table input[type=number]{ width:64px; }
+.cov-wrap{ overflow-x:auto; }
+.cov-big{ font-size:34px; font-weight:700; line-height:1.1; }
+.cov-bar{ position:relative; display:flex; height:14px; margin:12px 0 2px; }
+.cov-bar span{ display:block; height:100%; }
+.cov-mark{ position:absolute; top:-4px; width:3px; height:22px; background:var(--ink); }
+.cov-scale{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--ink-soft); }
 </style>
 </head>
 <body>
@@ -652,6 +662,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="gaps">Gaps</button>
     <button class="tab-btn" data-view="speaking">Speaking</button>
+    <button class="tab-btn" data-view="coverage">📖 Coverage</button>
     <button class="tab-btn" data-view="hours" id="hrsTabBtn">Hours</button>
     <button class="tab-btn" data-view="drills">Drills</button>
     <button class="tab-btn" data-view="conversation">🗣 Conversation</button>
@@ -1028,7 +1039,12 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
   <section class="view" id="view-speaking">
     <div class="panel"><div id="spkRoot"></div></div>
+    <div class="panel"><div id="fluRoot"></div></div>
     <div class="panel"><div id="spkSync"></div></div>
+  </section>
+
+  <section class="view" id="view-coverage">
+    <div class="panel"><div id="covRoot"></div></div>
   </section>
 
   <section class="view" id="view-hours">
@@ -1601,6 +1617,8 @@ async function loadState(){
   state.spk = lsGet('speaking', { patterns: [], cycles: [] });
   if(!Array.isArray(state.spk.patterns)) state.spk.patterns = [];
   if(!Array.isArray(state.spk.cycles)) state.spk.cycles = [];
+  if(!Array.isArray(state.spk.talks)) state.spk.talks = [];
+  if(!Array.isArray(state.spk.deletedTalks)) state.spk.deletedTalks = [];
   state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
   if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -1825,6 +1843,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
       if(state.settings.webAppUrl) coreRestoreParallelTexts().catch(()=>{}); // silent catch-up; re-renders itself once it resolves
     }
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
+    if(btn.dataset.view === 'coverage') renderCoverage();
     if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
     if(btn.dataset.view === 'practice'){ renderTodayStrip(); renderSentenceBuild(); }
   });
@@ -9186,7 +9205,7 @@ document.getElementById('gapReviewBox').addEventListener('click', async (e) => {
   }
   if(e.target.id === 'gapMoreBtn'){ gapCapState(); state.gapMeta.reviewed.bonus = (state.gapMeta.reviewed.bonus || 0) + 10; await saveGaps(); renderGapReview(); return; }
   if(e.target.id === 'gapRevealBtn'){
-    gapRevealMs = gapCardStart ? Date.now() - gapCardStart.t : 0;
+    gapRevealMs = gapCardStart ? Math.max(0, Date.now() - gapCardStart.t - gapPausedMs) : 0;
     gapRevealed = true; stopGapTimer(); renderGapReview(); return;
   }
   const grate = e.target.dataset.grate, glight = e.target.dataset.glight;
@@ -9293,6 +9312,10 @@ function renderGapStats(){
       if(!at.length) return '';
       const f = at.filter(a => a.r === 5).length, sl = at.filter(a => a.r === 3).length, mi = at.filter(a => a.r <= 2).length;
       return `<p class="gap-mini"><strong>Spoken retrieval, last 14 days</strong> (quick-track gaps): ${Math.round(f / at.length * 100)}% fast · ${Math.round(sl / at.length * 100)}% slow · ${Math.round(mi / at.length * 100)}% missed, across ${at.length} reviews. The fast share is the number to grow.</p>`;
+    })()}
+    ${(() => {
+      const rl = uiLang(), rs = retrSpeed(rl, addDays(today, -13), today);
+      return rs.n >= RETR_MIN_N ? `<p class="gap-mini"><strong>Recall speed, last 14 days</strong> (${LANG_NAMES[rl]}): median <strong>${rs.median.toFixed(1)} s</strong> to say a quick-track word (${rs.n} recalls). Lower is better — more in <a href="#" data-gotab="speaking">Speaking → Fluency</a>.</p>` : '';
     })()}
     ${topics.length ? `<p class="gap-mini"><strong>By topic:</strong> ${topics.map(([t, n]) => escapeHtml(t) + ' ×' + n).join(' · ')}</p>` : ''}
     ${recurring.length ? `<p class="gap-mini"><strong>Logged more than once:</strong> ${recurring.map(g => '<span dir="' + (g.lang === 'ar' ? 'rtl' : 'ltr') + '">' + escapeHtml(g.wanted) + '</span> ×' + evs(g).length).join(' · ')}</p>` : ''}
@@ -9814,6 +9837,7 @@ function renderSpeaking(){
   html += spkPatternsPanel() + spkProgressPanel();
   root.innerHTML = html;
   if(typeof renderDrillsSpeakingLine === 'function') renderDrillsSpeakingLine();
+  if(typeof renderFluency === 'function') renderFluency();
 }
 function spkPatternStep(c){
   const lang = spkClang(c), dir = lang === 'ar' ? ' dir="rtl"' : '';
@@ -9995,6 +10019,7 @@ document.addEventListener('click', (e) => {
   lsSet('uiLang', state.uiLang);
   spkOpenStep = null; spkLast = {};
   renderSpeaking();
+  if(typeof renderCoverage === 'function') renderCoverage();
   if(typeof renderHours === 'function') renderHours();
   if(typeof renderDashboard === 'function') renderDashboard();
 });
@@ -10033,20 +10058,26 @@ function mergeSpk(local, incoming){
   cycles.sort((a, b) => (a.start || '').localeCompare(b.start || '') || String(a.id).localeCompare(String(b.id))); // same order on every device
   const counter = { en: 0, ar: 0 };
   cycles.forEach(c => { const l = c.lang === 'ar' ? 'ar' : 'en'; c.n = ++counter[l]; c.drills = c.drills || {}; c.patternIds = c.patternIds || []; c.drillTopics = c.drillTopics || []; });
-  return { patterns, cycles };
+  const gone = new Set((local && local.deletedTalks || []).concat(incoming && incoming.deletedTalks || []));
+  const talks = mergeById(local && local.talks, incoming && incoming.talks).filter(t => !gone.has(t.id));
+  talks.forEach(t => { if(!Array.isArray(t.rounds)) t.rounds = []; });
+  talks.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+  return { patterns, cycles, talks, deletedTalks: [...gone] };
 }
 function spkToRows(){
   return state.spk.patterns.map(p => ({ kind: 'pattern', id: p.id, key: p.name, data: JSON.stringify(p), updatedAt: p.updatedAt || '' }))
-    .concat(state.spk.cycles.map(c => ({ kind: 'cycle', id: c.id, key: c.start, data: JSON.stringify(c), updatedAt: c.updatedAt || '' })));
+    .concat(state.spk.cycles.map(c => ({ kind: 'cycle', id: c.id, key: c.start, data: JSON.stringify(c), updatedAt: c.updatedAt || '' })))
+    .concat((state.spk.talks || []).map(t => ({ kind: 'talk', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
 }
 function spkFromRows(rows){
-  const out = { patterns: [], cycles: [] };
+  const out = { patterns: [], cycles: [], talks: [] };
   (rows || []).forEach(r => {
     let d; try{ d = JSON.parse(r.data); }catch(e){ return; }
     if(!d || !d.id) return;
     if(!d.updatedAt) d.updatedAt = String(r.updatedAt || '');
     if(r.kind === 'pattern' && d.name) out.patterns.push(d);
     else if(r.kind === 'cycle' && d.start) out.cycles.push(d);
+    else if(r.kind === 'talk' && d.date) out.talks.push(d);
   });
   return out;
 }
@@ -10265,7 +10296,11 @@ function renderDashboard(){
   const t4 = dashTile('Backlog', `<div class="val">${nowTotal}</div>`, '↓ watch the direction, not the day', `Bank due ${getDueReviews().length} (shared by both languages) + ${LANG_NAMES[lang]} gaps due ${gl.total}${gl.overdue3 ? ' (' + gl.overdue3 + ' overdue over 3 days)' : ''}${bt.pastTotal !== null ? '<br>7 days ago (bank + both languages\u2019 gaps): ' + bt.pastTotal : '<br>Trend needs a week of history.'}`, '');
   const hf = hrsForecast(lang), hpct = hf.target > 0 ? Math.min(100, Math.round(hf.doneH / hf.target * 100)) : 100;
   const t5 = dashTile('Hours toward goal', `<div class="val">${hf.doneH.toFixed(0)} / ${Math.round(hf.target)} h</div>`, '↑ only timed or entered hours count', `${hpct}% to ${hf.goalLabel} · by hours about ${hf.levelNow}${hf.next ? ' · next ' + hf.next.label + ' in ~' + Math.round(hf.next.h - hf.total) + ' h' : ''}`, goBtn('Open Hours', 'hours', lang));
-  html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}${t5}</div>`;
+  const rsNow = retrSpeed(lang, addDays(today, -13), today), rsPrev = retrSpeed(lang, addDays(today, -27), addDays(today, -14));
+  const t6 = rsNow.n >= RETR_MIN_N
+    ? dashTile('Recall speed', `<div class="val">${rsNow.median.toFixed(1)} s</div>`, '↓ median seconds to say a quick-track word — lower is better', `Last 14 days (${rsNow.n} recalls)${rsPrev.n >= RETR_MIN_N ? ' · the 14 days before: ' + rsPrev.median.toFixed(1) + ' s' : ''}`, goBtn('Review gaps', 'gaps'))
+    : dashTile('Recall speed', `<div class="val na">Not enough data yet</div>`, '↓ median seconds to say a quick-track word — lower is better', `${rsNow.n} of ${RETR_MIN_N} timed recalls in the last 14 days`, goBtn('Review gaps', 'gaps'));
+  html += `<div class="dash-tiles">${t1}${t2}${t3}${t4}${t5}${t6}</div>`;
 
   // ---- corner ----
   const uw = countUniqueWords();
@@ -11939,6 +11974,495 @@ document.getElementById('convExplainInfo').addEventListener('click', e => {
   const p = convExTerm(); if(p) appendConvBubble('assistant', '\u0627\u0634\u0631\u062d \u0645\u0635\u0637\u0644\u062d \u00ab' + stripBold(p.en || '') + '\u00bb \u0628\u0643\u0644\u0645\u0627\u062a\u0643 \u0627\u0644\u062e\u0627\u0635\u0629 \u0641\u064a \u062c\u0645\u0644\u062a\u064a\u0646 \u0625\u0644\u0649 \u0623\u0631\u0628\u0639 \u062c\u0645\u0644\u060c \u0648\u0633\u0623\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0645\u0639\u0646\u0649 \u0648\u0623\u0635\u062d\u0651\u062d \u0644\u063a\u062a\u0643.', 'ar');
   saveConvSession(); convExplainRender();
 });
+
+// =====================================================================
+// BATCH 1 — FLUENCY STRAND
+//   (a) 4/3/2 talks: one topic, three recorded rounds (4:00 → 3:00 → 2:00).
+//       Each round is transcribed with the SAME path as Voice practice, then
+//       compared on words/min, pauses and errors per 100 words.
+//   (b) Recall speed: median seconds to say a quick-track gap word, taken
+//       from the timed Gap review cards (attempt.ms) — nothing new to log.
+// Talks live in state.spk.talks and ride the existing Speaking sync
+// (kind 'talk' in the Speaking sheet — the Apps Script needs no change).
+// =====================================================================
+const FLU_LIMITS = [240, 180, 120];   // seconds per round
+const FLU_PAUSE_MIN = 0.5;            // a silence this long (or longer) inside the talk counts as a pause
+const FLU_KEEP_TEXT = 2500;           // transcript characters stored per round
+const FLU_MIN_REC_SECS = 20;          // shorter than this is flagged as too short to compare
+let flu = { talk: null, phase: 'idle', rec: null };
+
+function fluClock(s){ s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function fluWpm(r){ return r && r.secs > 0 ? Math.round(r.words / r.secs * 60) : null; }
+function fluErrRate(r){ return r && typeof r.errors === 'number' && r.words > 0 ? Math.round(r.errors / r.words * 1000) / 10 : null; }
+function fluPausePm(r){ return r && typeof r.pauses === 'number' && r.secs > 0 ? Math.round(r.pauses / r.secs * 600) / 10 : null; }
+function fluTalks(lang){
+  lang = lang || uiLang();
+  return (state.spk.talks || []).filter(t => (t.lang === 'ar' ? 'ar' : 'en') === lang)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+}
+function fluMsg(msg, isErr){
+  flu.msg = msg || ''; flu.msgErr = !!isErr;     // kept, so a re-render does not lose it
+  const el = document.getElementById('fluStatus');
+  if(el){ el.textContent = flu.msg; el.className = 'status-msg' + (isErr ? ' err' : ''); }
+}
+
+// ---- audio analysis: where were you silent? (energy-based, from the live mic signal) ----
+// Takes frames [{t (ms), rms}] sampled every ~50 ms. Returns the spoken span (first to last
+// voiced frame, so thinking time before you start and the tail after you stop don't count)
+// and the silent gaps inside it. Returns null if there is no usable signal.
+function fluAnalyzeFrames(frames){
+  if(!frames || frames.length < 40) return null;
+  let maxGap = 0;
+  for(let i = 1; i < frames.length; i++) maxGap = Math.max(maxGap, frames[i].t - frames[i - 1].t);
+  const sorted = frames.map(f => f.rms).sort((a, b) => a - b);
+  const q = p => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+  const lo = q(0.1), hi = q(0.9);
+  if(hi < 0.01) return null;                       // practically silence: mic muted or nothing said
+  const thr = Math.max(0.006, lo + 0.2 * (hi - lo));
+  const v = frames.map(f => f.rms > thr);
+  // bridge tiny dips (≤150 ms) between voiced frames: they are consonants, not pauses
+  for(let i = 0; i < v.length;){
+    if(v[i]){ i++; continue; }
+    let j = i; while(j < v.length && !v[j]) j++;
+    if(i > 0 && j < v.length && (j - i) <= 3) for(let k = i; k < j; k++) v[k] = true;
+    i = j;
+  }
+  const first = v.indexOf(true), last = v.lastIndexOf(true);
+  if(first < 0 || last <= first) return null;
+  let pauses = 0, pauseSecs = 0, longest = 0;
+  for(let i = first; i <= last;){
+    if(v[i]){ i++; continue; }
+    let j = i; while(j <= last && !v[j]) j++;
+    const dur = (frames[Math.min(j, frames.length - 1)].t - frames[i].t) / 1000;
+    if(dur >= FLU_PAUSE_MIN){ pauses++; pauseSecs += dur; longest = Math.max(longest, dur); }
+    i = j;
+  }
+  return {
+    spanSecs: (frames[last].t - frames[first].t) / 1000 + 0.05,
+    // if the page was in the background the sampling had holes, so pause counts can't be trusted
+    pauses: maxGap < 400 ? pauses : null, pauseSecs: maxGap < 400 ? Math.round(pauseSecs * 10) / 10 : null, longest: maxGap < 400 ? Math.round(longest * 10) / 10 : null
+  };
+}
+
+async function fluTranscribe(blob, lang){
+  const base64 = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(new Error('Could not read the recording.'));
+    r.readAsDataURL(blob);
+  });
+  const res = await fetch(state.settings.webAppUrl, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: sheetPostBody({ type: 'transcribe', audio: base64, mimeType: blob.type, language: lang })
+  });
+  const data = await res.json();
+  if(data.status !== 'ok') throw new Error(data.message || 'Transcription failed.');
+  return (data.text || '').trim();
+}
+
+async function fluStartRecording(btn){
+  const talk = flu.talk; if(!talk || flu.phase !== 'idle') return;
+  if(!navigator.mediaDevices || !window.MediaRecorder){ fluMsg('This browser does not support audio recording.', true); return; }
+  if(!state.settings.webAppUrl){ fluMsg('Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.', true); return; }
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  flu.phase = 'starting';
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(err){ flu.phase = 'idle'; fluMsg('Could not access the microphone: ' + (err.message || 'permission denied.'), true); return; }
+  const limit = FLU_LIMITS[talk.rounds.length];
+  const chunks = [], frames = [];
+  const recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = ev => { if(ev.data.size > 0) chunks.push(ev.data); };
+  // level meter for pause detection (never routed to the speakers, so no feedback)
+  let ctx = null, tick = null;
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC(); if(ctx.state === 'suspended') ctx.resume();
+    const an = ctx.createAnalyser(); an.fftSize = 2048;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    tick = setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      let s = 0; for(let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+      frames.push({ t: performance.now(), rms: Math.sqrt(s / buf.length) });
+    }, 50);
+  }catch(e){ ctx = null; }
+  const t0 = Date.now();
+  const timerEl = document.getElementById('fluTimer');
+  const timerInt = setInterval(() => {
+    const s = (Date.now() - t0) / 1000;
+    if(timerEl){ timerEl.textContent = fluClock(s) + ' / ' + fluClock(limit); timerEl.className = s >= limit - 15 ? 'badge unverified' : 'badge pending'; }
+    if(s >= limit) fluStopRecording();
+  }, 250);
+  recorder.onstop = async () => {
+    clearInterval(tick); clearInterval(timerInt);
+    stream.getTracks().forEach(t => t.stop());
+    if(ctx){ try{ ctx.close(); }catch(e){} }
+    const recSecs = (Date.now() - t0) / 1000;
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    flu.rec = null; flu.phase = 'transcribing';
+    if(btn){ btn.textContent = 'Transcribing…'; btn.disabled = true; btn.dataset.fluact = 'none'; }
+    if(timerEl) timerEl.style.display = 'none';
+    fluMsg('Transcribing… a long talk can take up to a minute.');
+    try{
+      if(recSecs < 5) throw new Error('That recording was only a few seconds long — record this round again.');
+      const text = await fluTranscribe(blob, talk.lang);
+      if(!text) throw new Error('Nothing was heard in that recording — record this round again, closer to the mic.');
+      const an = fluAnalyzeFrames(frames);
+      const secs = Math.max(5, Math.round(an ? an.spanSecs : recSecs));
+      const round = { limit, recSecs: Math.round(recSecs), secs, words: spkWords(text), errors: null,
+        pauses: an ? an.pauses : null, pauseSecs: an ? an.pauseSecs : null, longest: an ? an.longest : null, transcript: text.slice(0, FLU_KEEP_TEXT) };
+      talk.rounds.push(round); talk.updatedAt = new Date().toISOString();
+      if(!state.spk.talks.includes(talk)) state.spk.talks.push(talk);
+      await saveSpk();
+      flu.phase = 'idle'; fluMsg('');
+      renderFluency();
+      if(recSecs < FLU_MIN_REC_SECS) fluMsg('That round was under ' + FLU_MIN_REC_SECS + ' seconds — too short to compare reliably.', true);
+      return;
+    }catch(err){ fluMsg(err.message || 'Transcription failed — record this round again.', true); }
+    flu.phase = 'idle'; renderFluency();
+  };
+  recorder.start();
+  flu.rec = { recorder }; flu.phase = 'recording';
+  if(btn){ btn.textContent = '■ Stop round ' + (talk.rounds.length + 1); btn.dataset.fluact = 'stop'; btn.classList.add('recording'); }
+  if(timerEl) timerEl.style.display = 'inline-block';
+  fluMsg('Recording — it stops by itself at ' + fluClock(limit) + '. Tap Stop if you finish earlier.');
+}
+function fluStopRecording(){ if(flu.rec && flu.rec.recorder.state !== 'inactive') flu.rec.recorder.stop(); }
+
+function fluVerdict(t){
+  const r = t.rounds; if(r.length < 2) return '';
+  const a = r[0], b = r[r.length - 1], min = spkMin(t.lang);
+  if(a.words < min || b.words < min) return `<div class="spk-caution">A round is under ${min} words, so the comparison below is not reliable.</div>`;
+  const parts = [];
+  const w1 = fluWpm(a), w2 = fluWpm(b);
+  if(w1 && w2) parts.push(`speed <strong>${w1} → ${w2}</strong> words/min (${w2 >= w1 ? '+' : ''}${Math.round((w2 - w1) / w1 * 100)}%)`);
+  const p1 = fluPausePm(a), p2 = fluPausePm(b);
+  if(p1 !== null && p2 !== null) parts.push(`pauses <strong>${p1} → ${p2}</strong> per minute`);
+  const e1 = fluErrRate(a), e2 = fluErrRate(b);
+  if(e1 !== null && e2 !== null) parts.push(`errors <strong>${e1} → ${e2}</strong> per 100 words`);
+  return `<div class="spk-metrics">Round 1 → round ${r.length}: ${parts.join(' · ') || 'not enough data'}.<br><span class="gap-mini">Getting faster on a talk you have just rehearsed is expected. What shows real progress is round 1 (the cold one) improving from one talk to the next — see the trend below.</span></div>`;
+}
+function fluTrendHtml(lang){
+  const min = spkMin(lang);
+  const ts = fluTalks(lang).filter(t => t.rounds[0] && t.rounds[0].words >= min);
+  if(!ts.length) return '';
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  let verdict;
+  if(ts.length < 6) verdict = `<strong>${ts.length} of 6 talks</strong> needed before a trend means anything. Keep going — one talk is noise.`;
+  else {
+    const f = ts.slice(0, 3).map(t => fluWpm(t.rounds[0])), l = ts.slice(-3).map(t => fluWpm(t.rounds[0]));
+    const d = Math.round(avg(l) - avg(f));
+    verdict = `<strong>Round-1 words/min:</strong> first 3 talks average ${Math.round(avg(f))}, latest 3 average ${Math.round(avg(l))} (<strong>${d > 0 ? '+' : ''}${d}</strong>).`;
+    const pf = ts.slice(0, 3).map(t => fluPausePm(t.rounds[0])).filter(x => x !== null), pl = ts.slice(-3).map(t => fluPausePm(t.rounds[0])).filter(x => x !== null);
+    if(pf.length && pl.length) verdict += ` Round-1 pauses per minute: ${Math.round(avg(pf) * 10) / 10} → ${Math.round(avg(pl) * 10) / 10}.`;
+  }
+  const rows = fluTalks(lang).slice(-8).reverse().map(t => {
+    const a = t.rounds[0], c = t.rounds.length > 1 ? t.rounds[t.rounds.length - 1] : null;
+    const f = (x, fn, u) => x ? (fn(x) === null ? '—' : fn(x) + (u || '')) : '—';
+    return `<tr><td>${escapeHtml(t.date)}</td><td dir="${lang === 'ar' ? 'rtl' : 'ltr'}">${escapeHtml((t.topic || '').slice(0, 40))}${t.rounds.length < 3 ? ' <span class="gap-mini">(' + t.rounds.length + '/3)</span>' : ''}</td>
+      <td>${f(a, fluWpm)}</td><td>${c && t.rounds.length === 3 ? f(c, fluWpm) : '—'}</td><td>${f(a, fluPausePm)}</td><td>${f(a, fluErrRate)}</td>
+      <td><button class="ghost" type="button" data-fluact="deltalk" data-id="${t.id}">Delete</button></td></tr>`;
+  }).join('');
+  return `<h3 style="margin:14px 0 4px;">Talks so far</h3><div class="spk-caution">${verdict}</div>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Date</th><th>Topic</th><th>R1 w/min</th><th>R3 w/min</th><th>R1 pauses/min</th><th>R1 err/100</th><th></th></tr>${rows}</table></div>`;
+}
+
+// ---- recall speed (from the timed Gap review cards) ----
+const RETR_MAX_MS = 30000;      // a card left open longer than this is not a real recall time
+const RETR_MIN_N = 8;
+function retrAttempts(lang, from, to){
+  return state.gaps.filter(g => g.lang === lang && gapTrack(g) === 'light')
+    .flatMap(g => (g.attempts || []).filter(a => a.r >= 3 && a.ms > 0 && a.ms <= RETR_MAX_MS && a.d >= from && a.d <= to));
+}
+function retrSpeed(lang, from, to){
+  const at = retrAttempts(lang, from, to);
+  if(!at.length) return { n: 0, median: null };
+  const s = at.map(a => a.ms).sort((x, y) => x - y), m = s.length >> 1;
+  return { n: s.length, median: (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) / 1000 };
+}
+function retrSpeedHtml(lang){
+  const today = todayStr();
+  const cur = retrSpeed(lang, addDays(today, -13), today), prev = retrSpeed(lang, addDays(today, -27), addDays(today, -14));
+  let h = `<h3 style="margin:14px 0 4px;">Recall speed — ${LANG_NAMES[lang]}</h3>`;
+  if(cur.n < RETR_MIN_N){
+    return h + `<div class="spk-caution">Not enough timed recalls yet: ${cur.n} of ${RETR_MIN_N} in the last 14 days. Do the timed cards in <a href="#" data-gotab="gaps">Gaps</a> (quick-track words, “Couldn’t recall”) and say the word <em>before</em> you reveal it.</div>`;
+  }
+  h += `<div class="spk-metrics"><span style="font-size:26px;font-weight:700;">${cur.median.toFixed(1)} s</span> median time to say a word — last 14 days (${cur.n} recalls; target ≤ ${gapTimerSecs()} s)${prev.n >= RETR_MIN_N ? `<br>The 14 days before: ${prev.median.toFixed(1)} s (${prev.n} recalls) → <strong>${cur.median <= prev.median ? 'faster' : 'slower'} by ${Math.abs(cur.median - prev.median).toFixed(1)} s</strong>` : ''}</div>`;
+  const wk = [];
+  for(let i = 5; i >= 0; i--){
+    const to = addDays(today, -7 * i), s = retrSpeed(lang, addDays(to, -6), to);
+    if(s.n >= 3) wk.push(`${to.slice(5)}: <strong>${s.median.toFixed(1)} s</strong> (${s.n})`);
+  }
+  if(wk.length > 1) h += `<div class="gap-mini">Median by week (week ending, recalls): ${wk.join(' · ')}</div>`;
+  return h + `<div class="gap-mini">Only quick-track words you actually recalled count (misses and cards left open over ${RETR_MAX_MS / 1000} s are left out). The time is how long you took to reveal the card, so say the word first and be honest. A single week moves around; watch the median over a month.</div>`;
+}
+
+function renderFluency(){
+  const root = document.getElementById('fluRoot'); if(!root) return;
+  if(flu.phase === 'recording' || flu.phase === 'transcribing') return;   // never wipe a live recording
+  const lang = uiLang(), t = flu.talk;
+  let html = `<h2>Fluency — 4/3/2 talks</h2>
+    <details ${fluTalks(lang).length || t ? '' : 'open'}><summary><strong>How this works</strong> (read once)</summary>
+      <p class="gap-mini">Pick one topic and speak about it three times: <strong>4 minutes, then 3, then 2</strong>. Make the same few points each time — do not read a script. The time pressure forces your words to come out faster and with fewer gaps. Each round is recorded, transcribed, and compared on <strong>words per minute</strong>, <strong>pauses</strong> (silences of ${FLU_PAUSE_MIN} s or more inside your talk, measured from the microphone) and <strong>errors per 100 words</strong>.</p>
+      <p class="gap-mini">Limits: words/min comes from a speech-to-text transcript, which tends to tidy up fillers and repeats, so it reads a little high — use it only to compare your own talks. Pause detection depends on a reasonably quiet room and a tab that stays in the foreground. The audio is never saved.</p>
+    </details>`;
+  if(t){
+    const k = t.rounds.length, dir = t.lang === 'ar' ? ' dir="rtl"' : '';
+    html += `<div class="spk-form"><div>Topic: <strong${dir}>${escapeHtml(t.topic)}</strong> <span class="gap-mini">· ${LANG_NAMES[t.lang]}</span></div>`;
+    if(k < 3){
+      html += `<p style="margin:8px 0;">Round ${k + 1} of 3 — talk for up to <strong>${fluClock(FLU_LIMITS[k])}</strong>. ${k ? 'Same points as before, in less time.' : 'Choose 3–4 points to make; you will repeat them.'}</p>
+        <div class="card-actions"><button class="primary" type="button" data-fluact="rec">● Start round ${k + 1}</button> <span class="badge pending" id="fluTimer" style="display:none;"></span></div>`;
+    }
+    if(k){
+      const rows = t.rounds.map((r, i) => {
+        const pe = fluErrRate(r), pp = fluPausePm(r);
+        return `<tr><td>${i + 1}</td><td>${fluClock(r.limit)}</td><td>${fluClock(r.secs)}</td><td>${r.words}${r.words < spkMin(t.lang) ? ' <span class="spk-warn">short</span>' : ''}</td><td><strong>${fluWpm(r) === null ? '—' : fluWpm(r)}</strong></td>
+          <td>${typeof r.pauses === 'number' ? r.pauses + (pp !== null ? ' <span class="gap-mini">(' + pp + '/min)</span>' : '') : '—'}</td><td>${typeof r.longest === 'number' ? r.longest + ' s' : '—'}</td>
+          <td><input type="number" min="0" data-fluerr="${i}" value="${typeof r.errors === 'number' ? r.errors : ''}" placeholder="count"></td><td>${pe === null ? '—' : pe}</td></tr>`;
+      }).join('');
+      html += `<div class="cov-wrap"><table class="flu-table"><tr><th>Round</th><th>Limit</th><th>Spoke</th><th>Words</th><th>Words/min</th><th>Pauses</th><th>Longest</th><th>Errors</th><th>Err/100</th></tr>${rows}</table></div>${fluVerdict(t)}
+        <div class="card-actions">${getGeminiKeys().length && t.rounds.some(r => typeof r.errors !== 'number') ? '<button class="ghost" type="button" data-fluact="ai">✨ Count errors with AI (rounds without a count)</button>' : ''}
+        ${k === 3 ? '<button class="primary" type="button" data-fluact="finish">Done — start another talk later</button>' : '<button class="ghost" type="button" data-fluact="abandon">Stop here</button>'}</div>
+        <div class="gap-mini">“Spoke” is first word to last word. Type your own error count, or let the AI estimate it (it can miss errors, and for Arabic it is rougher). Use the same counting method every time or the numbers cannot be compared.</div>`;
+    }
+    html += `<div class="status-msg${flu.msgErr ? ' err' : ''}" id="fluStatus">${escapeHtml(flu.msg || '')}</div></div>`;
+  } else {
+    const used = fluTalks(lang).slice(-6).map(x => x.topic);
+    html += `<div class="spk-form"><label>Topic for a new talk</label>
+      <div class="row2"><div style="flex:3;min-width:180px;"><input type="text" id="fluTopic"${lang === 'ar' ? ' dir="rtl"' : ''} placeholder="Something you can talk about for 4 minutes" value=""></div>
+      <div style="flex:0 0 auto;"><button class="ghost" type="button" data-fluact="suggest">Suggest a topic</button></div></div>
+      <div class="card-actions"><button class="primary" type="button" data-fluact="start">Start a ${LANG_NAMES[lang]} 4/3/2 talk</button></div>
+      <div class="status-msg${flu.msgErr ? ' err' : ''}" id="fluStatus">${escapeHtml(flu.msg || '')}</div></div>`;
+    flu._used = used;
+  }
+  html += fluTrendHtml(lang) + retrSpeedHtml(lang);
+  root.innerHTML = html;
+}
+document.getElementById('fluRoot').addEventListener('change', async (e) => {
+  const i = e.target.dataset.fluerr; if(i === undefined || !flu.talk) return;
+  const r = flu.talk.rounds[parseInt(i, 10)]; if(!r) return;
+  const n = parseInt(e.target.value, 10);
+  r.errors = isNaN(n) || n < 0 ? null : n;
+  flu.talk.updatedAt = new Date().toISOString(); await saveSpk(); renderFluency();
+});
+document.getElementById('fluRoot').addEventListener('click', async (e) => {
+  const a = e.target.closest('[data-fluact]');
+  if(!a) return;
+  e.preventDefault();
+  const act = a.dataset.fluact, lang = uiLang();
+  if(act === 'suggest'){
+    const inp = document.getElementById('fluTopic'); if(inp) inp.value = spkPickTopics(1, flu._used || [], lang)[0] || '';
+    return;
+  }
+  if(act === 'start'){
+    const topic = ((document.getElementById('fluTopic') || {}).value || '').trim();
+    if(!topic){ fluMsg('Give the talk a topic first (or tap Suggest a topic).', true); return; }
+    flu.msg = '';
+    flu.talk = { id: uid(), lang, date: todayStr(), createdAt: new Date().toISOString(), topic, rounds: [], updatedAt: new Date().toISOString() };
+    renderFluency(); return;
+  }
+  if(act === 'rec'){ fluStartRecording(a); return; }
+  if(act === 'stop'){ fluStopRecording(); return; }
+  if(act === 'finish' || act === 'abandon'){ flu.talk = null; renderFluency(); return; }
+  if(act === 'deltalk'){
+    if(!confirm('Delete this talk from your history?')) return;
+    state.spk.talks = state.spk.talks.filter(x => x.id !== a.dataset.id);
+    state.spk.deletedTalks = (state.spk.deletedTalks || []).concat([a.dataset.id]);
+    if(flu.talk && flu.talk.id === a.dataset.id) flu.talk = null;
+    await saveSpk(); renderFluency(); return;
+  }
+  if(act === 'ai' && flu.talk){
+    const t = flu.talk; a.disabled = true;
+    try{
+      for(let i = 0; i < t.rounds.length; i++){
+        if(typeof t.rounds[i].errors === 'number') continue;
+        fluMsg('Checking round ' + (i + 1) + '…');
+        t.rounds[i].errors = (await spkAnalyze(t.rounds[i].transcript, t.lang)).length;
+      }
+      t.updatedAt = new Date().toISOString(); await saveSpk(); renderFluency();
+      fluMsg('AI estimate filled in — check it, it can miss errors.');
+    }catch(err){ a.disabled = false; fluMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error') + '. You can type the counts yourself.', true); }
+  }
+});
+
+// =====================================================================
+// BATCH 2 — TEXT COVERAGE CHECKER
+// Paste an article or transcript → what share of its running words are already
+// in your bank? Uses the bank's own word rules (same cleanup, same Arabic
+// prefix merge as the add-phrase check and the unique-word count).
+// Zones: <90% too hard · 90–95% a stretch · 95–98% sweet spot · >98% too easy.
+// =====================================================================
+let cov = { text: '', title: '', lenient: false, ignore: new Set(), res: null, showAll: false, saved: false };
+const COV_LOG_MAX = 50;
+function covLog(){ const l = lsGet('coverageLog', []); return Array.isArray(l) ? l : []; }
+
+// Regular English endings, so "walked" / "walking" / "walks" can count as the bank word "walk"
+// (word-family style, which is what the 95–98% figures in the research are based on).
+function covEnStems(k){
+  const out = new Set(), add = s => { if(s && s.length >= 3) out.add(s); };
+  const undouble = b => (b.length > 3 && b[b.length - 1] === b[b.length - 2]) ? b.slice(0, -1) : null;
+  if(/['\u2019]s$/.test(k)) add(k.slice(0, -2));
+  if(k.endsWith('ies')) add(k.slice(0, -3) + 'y');
+  if(k.endsWith('es')) add(k.slice(0, -2));
+  if(k.endsWith('s') && !k.endsWith('ss')) add(k.slice(0, -1));
+  if(k.endsWith('ied')) add(k.slice(0, -3) + 'y');
+  if(k.endsWith('ed')){ const b = k.slice(0, -2); add(b); add(k.slice(0, -1)); add(undouble(b)); }
+  if(k.endsWith('ing')){ const b = k.slice(0, -3); add(b); add(b + 'e'); add(undouble(b)); }
+  if(k.endsWith('ly')) add(k.slice(0, -2));
+  return [...out];
+}
+function covAnalyze(text, lang, opts){
+  const known = bankWordSet(lang);
+  let lenKnown = null;
+  if(lang === 'en'){ lenKnown = new Set(known); known.forEach(k => covEnStems(k).forEach(s => lenKnown.add(s))); }
+  const isKnown = (k, lenient) => {
+    const set = (lenient && lenKnown) ? lenKnown : known;
+    if(isKnownKey(k, lang, set)) return true;
+    if(lang === 'en'){
+      const alt = k.indexOf("'") >= 0 ? k.replace(/'/g, '\u2019') : k.replace(/\u2019/g, "'");
+      if(alt !== k && set.has(alt)) return true;
+      if(lenient) return covEnStems(k).some(s => set.has(s));
+    }
+    return false;
+  };
+  const sents = (text.replace(/[\u2014\u2013\/]/g, ' ').match(/[^.!?\u061F\u2026\n]+[.!?\u061F\u2026]*/g) || []).map(s => s.trim().split(/\s+/).filter(Boolean)).filter(w => w.length);
+  const toks = [];
+  sents.forEach((words, si) => words.forEach((raw, wi) => {
+    const key = normalizeWordKey(raw, lang);
+    if(!key || !/\p{L}/u.test(key)) return;
+    toks.push({ key, raw: raw.replace(/^[.,!?;:"'()\-–—،؛؟«»“”‘’…]+|[.,!?;:"'()\-–—،؛؟«»“”‘’…]+$/g, ''), si, wi });
+  }));
+  let total = 0, kStrict = 0, kLen = 0, ignored = 0;
+  const unk = [], types = new Set(), typesKnown = new Set();
+  toks.forEach((t, i) => {
+    if(opts.ignore.has(t.key)){ ignored++; return; }
+    total++; types.add(t.key);
+    const s = isKnown(t.key, false), l = s || isKnown(t.key, true);
+    if(s) kStrict++; if(l) kLen++;
+    const kn = opts.lenient ? l : s;
+    if(kn) typesKnown.add(t.key); else unk.push(i);
+  });
+  const knownN = opts.lenient ? kLen : kStrict;
+  // group unknown words; Arabic prefixed forms fold into their bare form when that is also unknown (same rule as the bank count)
+  const keySet = new Set(unk.map(i => toks[i].key)), groups = new Map();
+  unk.forEach(i => {
+    const t = toks[i], root = lang === 'ar' ? resolveArRoot(t.key, keySet) : t.key;
+    let g = groups.get(root);
+    if(!g){ g = { root, count: 0, first: i, keys: new Set(), label: t.raw }; groups.set(root, g); }
+    g.count++; g.keys.add(t.key);
+    if(t.key === root && g.label !== t.raw && !g.rootSeen){ g.label = t.raw; g.rootSeen = true; }
+  });
+  const list = [...groups.values()].sort((a, b) => b.count - a.count || a.first - b.first);
+  const pct = total ? Math.round(knownN / total * 1000) / 10 : null;
+  return { lang, total, knownN, pct, pctStrict: total ? Math.round(kStrict / total * 1000) / 10 : null, pctLen: total ? Math.round(kLen / total * 1000) / 10 : null,
+           types: types.size, typesKnown: typesKnown.size, ignored, groups: list, toks, sents, lenient: !!opts.lenient, bankSize: known.size };
+}
+function covZone(p){
+  if(p === null) return null;
+  if(p < 90) return { k: 'hard', label: 'Too hard', text: 'Below about 90% known you will be guessing too much to learn from it. Choose an easier text, or learn the key words below first.' };
+  if(p < 95) return { k: 'stretch', label: 'A stretch', text: '90–95%: readable with effort. Good for short, careful study; tiring as volume practice.' };
+  if(p <= 98) return { k: 'sweet', label: 'Sweet spot', text: '95–98%: you can follow the meaning and still meet enough new words to grow. This is the zone for reading and listening volume.' };
+  return { k: 'easy', label: 'Too easy', text: 'Above 98%: almost nothing new here. Fine for speed and fluency work, but it will not grow your vocabulary much.' };
+}
+function covExample(res, g){
+  const t = res.toks[g.first], words = res.sents[t.si] || [];
+  if(words.length <= 40) return words.join(' ');
+  const a = Math.max(0, t.wi - 12), b = Math.min(words.length, t.wi + 13);
+  return (a > 0 ? '… ' : '') + words.slice(a, b).join(' ') + (b < words.length ? ' …' : '');
+}
+function covGapExists(lang, word){ const k = gapKey(lang, word); return state.gaps.some(x => gapKey(x.lang, x.wanted) === k); }
+
+function covResultHtml(res){
+  const lang = res.lang, dir = lang === 'ar' ? ' dir="rtl"' : '';
+  if(!res.total) return '<div class="spk-caution">No words found in that text.</div>';
+  const z = covZone(res.pct);
+  const mark = Math.max(0, Math.min(100, (res.pct - 80) / 20 * 100));
+  let h = `<div class="spk-metrics" style="padding:12px;">
+      <div><span class="cov-big">${res.pct}%</span> <span class="badge ${z.k === 'sweet' ? 'pending' : 'unverified'}">${z.label}</span></div>
+      <div class="cov-bar"><span style="width:50%;background:#D9B3AA"></span><span style="width:25%;background:#E8D8A4"></span><span style="width:15%;background:#AFCFA6"></span><span style="width:10%;background:#BCC8D4"></span><i class="cov-mark" style="left:calc(${mark}% - 1px)"></i></div>
+      <div class="cov-scale"><span>80%</span><span>90</span><span>95</span><span>98</span><span>100%</span></div>
+      <p style="margin:8px 0 0;">${z.text}</p>
+      <p class="gap-mini" style="margin:6px 0 0;"><strong>${res.knownN.toLocaleString()}</strong> of <strong>${res.total.toLocaleString()}</strong> running words are in your bank${res.ignored ? ' (' + res.ignored + ' ignored as names)' : ''} · ${res.typesKnown.toLocaleString()} of ${res.types.toLocaleString()} different words known · ${res.groups.length.toLocaleString()} unknown different word${res.groups.length === 1 ? '' : 's'}.${lang === 'en' ? ` With regular endings (-s, -ed, -ing…) counted as known: <strong>${res.pctLen}%</strong>; strict (exact forms only, like your bank count): <strong>${res.pctStrict}%</strong>.` : ''}</p>
+    </div>`;
+  if(res.bankSize < 200) h += `<div class="spk-caution">Your ${LANG_NAMES[lang]} bank only has ${res.bankSize} distinct words, so almost any real text will look hard. The percentage becomes meaningful as the bank grows.</div>`;
+  if(res.total < 150) h += `<div class="gap-mini spk-warn">Only ${res.total} words — a short text makes the percentage jumpy. 300+ words is steadier.</div>`;
+  h += `<div class="gap-mini">This counts words you <em>saved</em>, not words you can use. Names and places show up as unknown — tap “Ignore” on them.</div>`;
+  if(res.groups.length){
+    const top10 = res.groups.slice(0, 10).reduce((n, g) => n + g.count, 0);
+    h += `<p class="gap-mini">Learning just the top ${Math.min(10, res.groups.length)} unknown words would lift this text to about <strong>${Math.round((res.knownN + top10) / res.total * 1000) / 10}%</strong>.</p>`;
+    const shown = cov.showAll ? res.groups : res.groups.slice(0, 25);
+    h += `<div class="cov-wrap"><table class="cov-table"><tr><th>Unknown word</th><th>×</th><th>In the text</th><th></th></tr>${shown.map((g, i) => {
+      const inGaps = covGapExists(lang, g.label);
+      return `<tr><td${dir}><strong>${escapeHtml(g.label)}</strong></td><td>${g.count}</td><td class="gap-mini"${dir}>${escapeHtml(covExample(res, g))}</td>
+        <td style="white-space:nowrap;"><button class="ghost" type="button" data-covact="gap" data-i="${i}"${inGaps ? ' disabled' : ''}>${inGaps ? '✓ In Gaps' : '+ Gap'}</button>
+        <button class="ghost" type="button" data-covact="ignore" data-i="${i}" title="A name or place — leave it out of the percentage">Ignore</button></td></tr>`;
+    }).join('')}</table></div>`;
+    if(res.groups.length > 25) h += `<div class="card-actions"><button class="ghost" type="button" data-covact="toggleall">${cov.showAll ? 'Show fewer' : 'Show all ' + res.groups.length}</button></div>`;
+  }
+  h += `<div class="card-actions"><button class="ghost" type="button" data-covact="save"${cov.saved ? ' disabled' : ''}>${cov.saved ? '✓ Saved to history' : 'Save this result to history'}</button>${cov.ignore.size ? '<button class="ghost" type="button" data-covact="resetignore">Reset ignored words (' + cov.ignore.size + ')</button>' : ''}</div>`;
+  return h;
+}
+function renderCoverage(){
+  const root = document.getElementById('covRoot'); if(!root) return;
+  const lang = uiLang(), dir = lang === 'ar' ? ' dir="rtl"' : '';
+  if(cov.res && cov.res.lang !== lang){ cov.res = null; cov.saved = false; }
+  const log = covLog().filter(x => x.lang === lang).slice(-8).reverse();
+  root.innerHTML = `<h2>Text coverage checker</h2>${langToggleHtml()}
+    <p class="gap-mini">Paste any article, transcript or subtitle text and see how much of it is already in your ${LANG_NAMES[lang]} bank. For reading and listening practice, aim for <strong>95–98%</strong>: below about 90% is too hard, above 98% is too easy.</p>
+    <div class="spk-form">
+      <label>Title (optional — so you can recognise it in the history)</label><input type="text" data-cov="title" value="${escapeHtml(cov.title)}" placeholder="e.g. BBC article on inflation">
+      <label>Text</label><textarea${dir} data-cov="text" style="min-height:170px;" placeholder="Paste the ${LANG_NAMES[lang]} text here…">${escapeHtml(cov.text)}</textarea>
+      ${lang === 'en' ? `<label style="display:flex;gap:8px;align-items:flex-start;"><input type="checkbox" data-cov="lenient" ${cov.lenient ? 'checked' : ''} style="width:auto;margin-top:3px;"><span>Count regular English endings (-s, -es, -ed, -ing, -ly) as known when the base word is in my bank <span class="gap-mini">(your bank counts each form separately, so the strict figure reads lower than your real coverage)</span></span></label>` : ''}
+      <div class="card-actions"><button class="primary" type="button" data-covact="check">Check coverage</button><button class="ghost" type="button" data-covact="clear">Clear</button></div>
+      <div class="status-msg" id="covStatus"></div>
+    </div>
+    <div id="covResult">${cov.res ? covResultHtml(cov.res) : ''}</div>
+    ${log.length ? `<h3 style="margin:14px 0 4px;">Saved checks — ${LANG_NAMES[lang]} <span class="gap-mini">(this device only)</span></h3><div class="cov-wrap"><table class="cov-table"><tr><th>Date</th><th>Text</th><th>Words</th><th>Known</th><th>Zone</th></tr>${log.map(x => `<tr><td>${escapeHtml(x.date)}</td><td>${escapeHtml(x.title || '—')}</td><td>${x.total}</td><td><strong>${x.pct}%</strong></td><td>${escapeHtml(x.zone)}</td></tr>`).join('')}</table></div>` : ''}`;
+}
+(function(){
+  const root = document.getElementById('covRoot');
+  root.addEventListener('input', (e) => {
+    const k = e.target.dataset.cov;
+    if(k === 'text'){ cov.text = e.target.value; cov.saved = false; }
+    else if(k === 'title') cov.title = e.target.value;
+  });
+  root.addEventListener('change', (e) => { if(e.target.dataset.cov === 'lenient'){ cov.lenient = e.target.checked; if(cov.res){ covRun(); } } });
+  function covStatus(msg, err){ const s = document.getElementById('covStatus'); if(s){ s.textContent = msg || ''; s.className = 'status-msg' + (err ? ' err' : ''); } }
+  function covRun(){
+    const lang = uiLang(), text = cov.text.trim();
+    if(!text){ covStatus('Paste some text first.', true); return; }
+    const letters = (text.match(/\p{L}/gu) || []).length, ar = (text.match(/[\u0600-\u06FF]/g) || []).length;
+    if(letters && lang === 'en' && ar / letters > 0.3){ covStatus('This text looks Arabic — switch to Arabic above, then check again.', true); return; }
+    if(letters && lang === 'ar' && ar / letters < 0.3){ covStatus('This text does not look Arabic — switch to English above, then check again.', true); return; }
+    cov.res = covAnalyze(text, lang, { lenient: cov.lenient && lang === 'en', ignore: cov.ignore });
+    renderCoverage();
+  }
+  root.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-covact]'); if(!a) return;
+    e.preventDefault();
+    const act = a.dataset.covact, lang = uiLang();
+    if(act === 'check'){ cov.saved = false; covRun(); return; }
+    if(act === 'clear'){ cov = { text: '', title: '', lenient: cov.lenient, ignore: new Set(), res: null, showAll: false, saved: false }; renderCoverage(); return; }
+    if(act === 'toggleall'){ cov.showAll = !cov.showAll; document.getElementById('covResult').innerHTML = covResultHtml(cov.res); return; }
+    if(act === 'resetignore'){ cov.ignore = new Set(); covRun(); return; }
+    if(act === 'save'){
+      const r = cov.res; if(!r || !r.total) return;
+      const log = covLog(); log.push({ id: uid(), date: todayStr(), lang, title: cov.title.trim().slice(0, 60), total: r.total, pct: r.pct, zone: covZone(r.pct).label });
+      lsSet('coverageLog', log.slice(-COV_LOG_MAX)); cov.saved = true; renderCoverage(); return;
+    }
+    const g = cov.res && cov.res.groups[parseInt(a.dataset.i, 10)];
+    if(!g) return;
+    if(act === 'ignore'){ g.keys.forEach(k => cov.ignore.add(k)); covRun(); return; }
+    if(act === 'gap'){
+      if(covGapExists(lang, g.label)){ a.textContent = '✓ In Gaps'; a.disabled = true; gapToastMsg('That word is already in your Gaps.'); return; }
+      const ex = covExample(cov.res, g);
+      const r = captureGap({ lang, wanted: g.label, said: '', source: 'Coverage checker', exEn: lang === 'en' ? ex : '', exAr: lang === 'ar' ? ex : '' });
+      if(r){ a.textContent = '✓ In Gaps'; a.disabled = true; gapToastMsg('Added to Gaps: ' + g.label); if(typeof renderGaps === 'function') renderGaps(); }
+    }
+  });
+})();
+
 </script>
 </body>
 </html>
