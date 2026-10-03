@@ -1957,13 +1957,16 @@ function addDays(dateStr, n){
   // note in ensureSrs() above) so a stray un-normalized date can never
   // throw and take down whatever called this.
   const base = String(dateStr || '').slice(0, 10);
-  const d = new Date(base + 'T00:00:00');
+  // Work in UTC throughout: local-midnight maths plus toISOString() shifts the
+  // result by a day in any timezone ahead of UTC (e.g. Malaysia, UTC+8), which
+  // made addDays(d, 1) return d itself and froze the streak loop.
+  const d = new Date(base + 'T00:00:00Z');
   if(isNaN(d.getTime())) return todayStr();
-  d.setDate(d.getDate() + n);
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0,10);
 }
 function daysBetween(a, b){
-  return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+  return Math.round((new Date(b+'T00:00:00Z') - new Date(a+'T00:00:00Z')) / 86400000);
 }
 function ensureSrs(p){
   if(!p.srs){
@@ -10343,7 +10346,7 @@ function momStreakInfo(){
   if(!dates.length) return out;
   let d = dates[0] < addDays(today, -730) ? addDays(today, -730) : dates[0];
   let cur = 0, lastMiss = null;
-  while(d <= today){
+  for(let guard = 0; d <= today && guard < 800; guard++){
     const act = momDayMin(d) >= th;
     if(act){ cur++; if(cur > out.best) out.best = cur; }
     else if(d === today){ out.pending = cur > 0; }
