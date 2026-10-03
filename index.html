@@ -662,6 +662,9 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <button class="tab-btn" data-view="review">Review</button>
     <button class="tab-btn" data-view="gaps">Gaps</button>
     <button class="tab-btn" data-view="speaking">Speaking</button>
+    <button class="tab-btn" data-view="checkpoint">📏 Checkpoint</button>
+    <button class="tab-btn" data-view="msa">📜 MSA Track</button>
+    <button class="tab-btn" data-view="enw">✍️ English Writing</button>
     <button class="tab-btn" data-view="coverage">📖 Coverage</button>
     <button class="tab-btn" data-view="hours" id="hrsTabBtn">Hours</button>
     <button class="tab-btn" data-view="drills">Drills</button>
@@ -674,6 +677,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 
   <!-- PHRASE BANK -->
   <section class="view active" id="view-today">
+    <div class="panel" id="whyPanel"><div id="whyRoot"></div></div>
     <div class="panel"><div id="dashRoot"></div></div>
   </section>
 
@@ -1041,6 +1045,18 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel"><div id="spkRoot"></div></div>
     <div class="panel"><div id="fluRoot"></div></div>
     <div class="panel"><div id="spkSync"></div></div>
+  </section>
+
+  <section class="view" id="view-checkpoint">
+    <div class="panel"><div id="cpRoot"></div></div>
+  </section>
+
+  <section class="view" id="view-msa">
+    <div class="panel"><div id="msaRoot"></div></div>
+  </section>
+
+  <section class="view" id="view-enw">
+    <div class="panel"><div id="enwRoot"></div></div>
   </section>
 
   <section class="view" id="view-coverage">
@@ -1619,6 +1635,12 @@ async function loadState(){
   if(!Array.isArray(state.spk.cycles)) state.spk.cycles = [];
   if(!Array.isArray(state.spk.talks)) state.spk.talks = [];
   if(!Array.isArray(state.spk.deletedTalks)) state.spk.deletedTalks = [];
+  if(!Array.isArray(state.spk.checkpoints)) state.spk.checkpoints = [];
+  if(!Array.isArray(state.spk.deletedCheckpoints)) state.spk.deletedCheckpoints = [];
+  if(!Array.isArray(state.spk.msa)) state.spk.msa = [];
+  if(!Array.isArray(state.spk.deletedMsa)) state.spk.deletedMsa = [];
+  if(!Array.isArray(state.spk.enw)) state.spk.enw = [];
+  if(!Array.isArray(state.spk.deletedEnw)) state.spk.deletedEnw = [];
   state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
   if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -1844,6 +1866,9 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     }
     if(btn.dataset.view === 'speaking'){ renderSpeaking(); renderSpkSync(); }
     if(btn.dataset.view === 'coverage') renderCoverage();
+    if(btn.dataset.view === 'checkpoint') renderCheckpoint(true);
+    if(btn.dataset.view === 'msa') renderMsa();
+    if(btn.dataset.view === 'enw') renderEnw();
     if(btn.dataset.view === 'hours'){ renderHours(); renderHrsSync(); }
     if(btn.dataset.view === 'practice'){ renderTodayStrip(); renderSentenceBuild(); }
   });
@@ -5470,6 +5495,7 @@ document.getElementById('downloadBackupBtn').addEventListener('click', ()=>{
     gapTomb: state.gapTomb || [],
     gapMeta: state.gapMeta,
     speaking: state.spk,
+    why: lsGet('why', null),
     hours: Object.assign({}, state.hours, { deviceId: undefined })   // the device id stays with the device
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -5516,6 +5542,7 @@ document.getElementById('restoreFileInput').addEventListener('change', async (e)
       }
     }
     if(payload.speaking && Array.isArray(payload.speaking.cycles)) state.spk = mergeSpk(state.spk, payload.speaking); // merged, never replaced
+    if(payload.why && typeof payload.why.text === 'string'){ const cw = lsGet('why', null); if(!cw || (payload.why.updatedAt || '') > (cw.updatedAt || '')) lsSet('why', payload.why); }   // keeps whichever was edited last
     if(payload.hours && Array.isArray(payload.hours.sessions)){ mergeHours(state.hours, payload.hours); hrsSave(); }
     await saveBank(); await saveLog(); await saveGrammar(); await saveQuran(); await saveGaps(); await saveSpk();
     renderBank(); renderSession(); renderReview(); renderGrammarList(); renderQuran(); renderGaps(); renderSpeaking(); renderParallelTexts();
@@ -10020,6 +10047,7 @@ document.addEventListener('click', (e) => {
   spkOpenStep = null; spkLast = {};
   renderSpeaking();
   if(typeof renderCoverage === 'function') renderCoverage();
+  if(typeof renderCheckpoint === 'function') renderCheckpoint();
   if(typeof renderHours === 'function') renderHours();
   if(typeof renderDashboard === 'function') renderDashboard();
 });
@@ -10062,15 +10090,27 @@ function mergeSpk(local, incoming){
   const talks = mergeById(local && local.talks, incoming && incoming.talks).filter(t => !gone.has(t.id));
   talks.forEach(t => { if(!Array.isArray(t.rounds)) t.rounds = []; });
   talks.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
-  return { patterns, cycles, talks, deletedTalks: [...gone] };
+  const goneC = new Set((local && local.deletedCheckpoints || []).concat(incoming && incoming.deletedCheckpoints || []));
+  const checkpoints = mergeById(local && local.checkpoints, incoming && incoming.checkpoints).filter(t => !goneC.has(t.id));
+  checkpoints.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const goneM = new Set((local && local.deletedMsa || []).concat(incoming && incoming.deletedMsa || []));
+  const msaItemsMerged = mergeById(local && local.msa, incoming && incoming.msa).filter(t => !goneM.has(t.id));
+  msaItemsMerged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const goneE = new Set((local && local.deletedEnw || []).concat(incoming && incoming.deletedEnw || []));
+  const enwMerged = mergeById(local && local.enw, incoming && incoming.enw).filter(t => !goneE.has(t.id));
+  enwMerged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  return { patterns, cycles, talks, deletedTalks: [...gone], checkpoints, deletedCheckpoints: [...goneC], msa: msaItemsMerged, deletedMsa: [...goneM], enw: enwMerged, deletedEnw: [...goneE] };
 }
 function spkToRows(){
   return state.spk.patterns.map(p => ({ kind: 'pattern', id: p.id, key: p.name, data: JSON.stringify(p), updatedAt: p.updatedAt || '' }))
     .concat(state.spk.cycles.map(c => ({ kind: 'cycle', id: c.id, key: c.start, data: JSON.stringify(c), updatedAt: c.updatedAt || '' })))
-    .concat((state.spk.talks || []).map(t => ({ kind: 'talk', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
+    .concat((state.spk.talks || []).map(t => ({ kind: 'talk', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
+    .concat((state.spk.checkpoints || []).map(t => ({ kind: 'checkpoint', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
+    .concat((state.spk.msa || []).map(t => ({ kind: 'msa', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
+    .concat((state.spk.enw || []).map(t => ({ kind: 'enw', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
 }
 function spkFromRows(rows){
-  const out = { patterns: [], cycles: [], talks: [] };
+  const out = { patterns: [], cycles: [], talks: [], checkpoints: [], msa: [], enw: [] };
   (rows || []).forEach(r => {
     let d; try{ d = JSON.parse(r.data); }catch(e){ return; }
     if(!d || !d.id) return;
@@ -10078,6 +10118,9 @@ function spkFromRows(rows){
     if(r.kind === 'pattern' && d.name) out.patterns.push(d);
     else if(r.kind === 'cycle' && d.start) out.cycles.push(d);
     else if(r.kind === 'talk' && d.date) out.talks.push(d);
+    else if(r.kind === 'checkpoint' && d.date) out.checkpoints.push(d);
+    else if(r.kind === 'msa' && d.date) out.msa.push(d);
+    else if(r.kind === 'enw' && d.date) out.enw.push(d);
   });
   return out;
 }
@@ -10227,6 +10270,7 @@ function dashTile(title, valHtml, dir, sub, btn){
 function renderDashboard(){
   const root = document.getElementById('dashRoot');
   if(!root) return;
+  if(typeof renderWhy === 'function') renderWhy();
   const lang = uiLang(), other = lang === 'en' ? 'ar' : 'en', today = todayStr();
   const hist = dashRecordSnapshot();
   const items = dashOutstanding(lang);
@@ -10850,6 +10894,7 @@ function renderHours(){
   const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
   let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
     <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
+  html += hrsPlanHtml();
   // timer
   if(t){
     const act = hrsAct(t.activity);
@@ -12462,6 +12507,756 @@ function renderCoverage(){
     }
   });
 })();
+
+// =====================================================================
+// BATCH 3 — MONTHLY CHECKPOINT
+// A fixed protocol, once every ~30 days per language, so your level is
+// MEASURED instead of guessed:
+//   1. Vocabulary: distinct-word count in your bank + an active-recall
+//      sample (30 random bank words: say it BEFORE you reveal it).
+//   2. A 2-minute UNPREPARED talk on a topic you have not used before:
+//      words/min, errors per 100 words, pauses (same measuring code as the
+//      4/3/2 talks).
+// Records live in state.spk.checkpoints and ride the Speaking sync (kind
+// 'checkpoint' — the Apps Script needs no change). With 3+ checkpoints the
+// tab re-forecasts when each target is reached, from your own numbers.
+// =====================================================================
+const CP_TALK_SECS = 120, CP_PREP_SECS = 10, CP_SAMPLE_N = 30, CP_MIN_SAMPLE = 15, CP_DUE_DAYS = 30, CP_MAX_MS = 30000, CP_FAST_MS = 5000;
+const CP_TARGETS_DEFAULT = { words: 8000, active: 85, wpm: 110, err: 4, pauses: 6 };   // placeholders — edit them in the tab
+let cp = { cur: null, phase: 'idle', test: null, msg: '', msgErr: false };
+
+function cpTargets(lang){ const t = lsGet('cpTargets', {}); return Object.assign({}, CP_TARGETS_DEFAULT, (t && t[lang]) || {}); }
+function cpList(lang){
+  return (state.spk.checkpoints || []).filter(c => (c.lang === 'ar' ? 'ar' : 'en') === lang)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+}
+function cpMsg(msg, isErr){
+  cp.msg = msg || ''; cp.msgErr = !!isErr;
+  const el = document.getElementById('cpStatus'); if(el){ el.textContent = cp.msg; el.className = 'status-msg' + (isErr ? ' err' : ''); }
+}
+async function cpSave(){
+  const c = cp.cur; c.updatedAt = new Date().toISOString();
+  if(!state.spk.checkpoints.includes(c)) state.spk.checkpoints.push(c);
+  await saveSpk();
+}
+function cpWilson(k, n){   // 95% range for a proportion, in whole percent
+  if(!n) return [0, 100];
+  const z = 1.96, p = k / n, d = 1 + z * z / n, c = p + z * z / (2 * n), m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+  return [Math.max(0, Math.round((c - m) / d * 100)), Math.min(100, Math.round((c + m) / d * 100))];
+}
+function cpMedian(a){ if(!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+function cpPickTopic(lang){
+  const used = spkUsedTopics(lang).concat(fluTalks(lang).map(t => t.topic), cpList(lang).map(c => c.topic));
+  return spkPickTopics(1, used, lang)[0] || '';
+}
+// Single-word bank entries that have BOTH languages filled in (so there is something to prompt with).
+function cpPool(lang){
+  const other = lang === 'ar' ? 'en' : 'ar', seen = new Set(), out = [];
+  state.bank.forEach(p => {
+    const a = stripBold(p[lang] || ''), q = stripBold(p[other] || '');
+    if(!a.trim() || !q.trim()) return;
+    const ks = wordKeysOf(a, lang); if(ks.length !== 1 || seen.has(ks[0])) return;
+    seen.add(ks[0]); out.push({ ask: q, answer: a });
+  });
+  return out;
+}
+function cpValid(c){ return c.talk && c.talk.words >= spkMin(c.lang); }
+
+// ---- part 1: vocabulary ----
+function cpStartTest(){
+  const lang = cp.cur.lang, pool = cpPool(lang);
+  if(pool.length < CP_MIN_SAMPLE){ cpMsg(`Only ${pool.length} single-word ${LANG_NAMES[lang]} bank entries have both languages filled in — you need ${CP_MIN_SAMPLE}+ for a usable sample. Add the missing translations in the Phrase Bank, or do the talk first.`, true); renderCheckpoint(true); return; }
+  const items = [], src = pool.slice();
+  while(items.length < CP_SAMPLE_N && src.length) items.push(src.splice(Math.floor(Math.random() * src.length), 1)[0]);
+  cp.test = { items, i: 0, shown: false, t0: Date.now(), ms: 0, res: [] }; cp.phase = 'vocab'; cpMsg('');
+  renderCheckpoint(true);
+}
+async function cpFinishTest(){
+  const t = cp.test, lang = cp.cur.lang, n = t.res.length, ok = t.res.filter(r => r.ok).length;
+  const okMs = t.res.filter(r => r.ok && r.ms > 0 && r.ms <= CP_MAX_MS).map(r => r.ms);
+  const bankWords = bankWordSet(lang, true).size, pct = Math.round(ok / n * 100), r = cpWilson(ok, n);
+  cp.cur.vocab = { bankWords, entries: state.bank.length, n, ok, fast: t.res.filter(x => x.ok && x.ms <= CP_FAST_MS).length,
+    medianMs: okMs.length ? Math.round(cpMedian(okMs)) : null, pct, lo: r[0], hi: r[1],
+    estActive: Math.round(bankWords * pct / 100), estLo: Math.round(bankWords * r[0] / 100), estHi: Math.round(bankWords * r[1] / 100) };
+  cp.test = null; cp.phase = 'idle'; await cpSave(); renderCheckpoint(true);
+}
+function cpTestHtml(){
+  const t = cp.test, it = t.items[t.i], lang = cp.cur.lang;
+  const askDir = lang === 'ar' ? 'ltr' : 'rtl', ansDir = lang === 'ar' ? 'rtl' : 'ltr';
+  return `<div class="spk-form"><div class="gap-mini">Word ${t.i + 1} of ${t.items.length} — say the ${LANG_NAMES[lang]} word out loud <em>first</em>, then reveal.</div>
+    <div style="font-size:22px;margin:10px 0;" dir="${askDir}">${escapeHtml(it.ask)}</div>
+    ${t.shown ? `<div style="font-size:22px;margin:6px 0;" dir="${ansDir}"><strong>${escapeHtml(it.answer)}</strong></div>
+      <p class="gap-mini">You took ${(t.ms / 1000).toFixed(1)} s. Did you say it correctly before revealing?</p>
+      <div class="card-actions"><button class="primary" type="button" data-cpact="ok">✓ Said it</button><button class="ghost" type="button" data-cpact="no">✗ Couldn’t</button></div>`
+      : `<div class="card-actions"><button class="primary" type="button" data-cpact="reveal">Show answer</button></div>`}</div>`;
+}
+function cpVocabResultHtml(v, lang){
+  return `<div class="spk-metrics"><div><span class="cov-big">${v.bankWords.toLocaleString()}</span> distinct ${LANG_NAMES[lang]} words in your bank <span class="gap-mini">(${v.entries.toLocaleString()} entries, all languages)</span></div>
+    <div style="margin-top:6px;">Active recall: <strong>${v.ok} of ${v.n}</strong> said before reveal = <strong>${v.pct}%</strong> <span class="gap-mini">(95% range ${v.lo}–${v.hi}%)</span>${v.medianMs ? ` · median ${(v.medianMs / 1000).toFixed(1)} s · ${v.fast} within ${CP_FAST_MS / 1000} s` : ''}</div>
+    <div style="margin-top:6px;">Estimated words you can <em>produce</em>: <strong>~${v.estActive.toLocaleString()}</strong> <span class="gap-mini">(range ${v.estLo.toLocaleString()}–${v.estHi.toLocaleString()})</span></div></div>
+    <div class="gap-mini">The bank count is words you <em>saved</em>, not your whole vocabulary — words you know but never added are not counted. The estimate assumes your single-word entries represent the whole bank. With ${v.n} words the range is wide (about ±15 points); it narrows as you repeat the test monthly.</div>`;
+}
+
+// ---- part 2: the 2-minute unprepared talk ----
+async function cpBeginTalk(){
+  const c = cp.cur; if(!c || cp.phase !== 'idle') return;
+  if(!navigator.mediaDevices || !window.MediaRecorder){ cpMsg('This browser does not support audio recording.', true); renderCheckpoint(true); return; }
+  if(!state.settings.webAppUrl){ cpMsg('Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.', true); renderCheckpoint(true); return; }
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(err){ cpMsg('Could not access the microphone: ' + (err.message || 'permission denied.'), true); renderCheckpoint(true); return; }
+  c.topic = cpPickTopic(c.lang); cp.phase = 'prep'; cpMsg('');
+  renderCheckpoint(true);
+  let left = CP_PREP_SECS; const lab = document.getElementById('cpTimer');
+  cp.prep = setInterval(() => { left--; if(lab) lab.textContent = 'Starts in ' + left + ' s'; if(left <= 0) cpRecordTalk(stream); }, 1000);
+  cp.stream = stream;
+}
+function cpRecordTalk(stream){
+  stream = stream || cp.stream; if(cp.phase !== 'prep' || !stream) return;
+  clearInterval(cp.prep); const c = cp.cur, lang = c.lang, limit = CP_TALK_SECS;
+  cp.phase = 'recording';
+  const chunks = [], frames = [], recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = ev => { if(ev.data.size > 0) chunks.push(ev.data); };
+  let ctx = null, tick = null;
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext; ctx = new AC(); if(ctx.state === 'suspended') ctx.resume();
+    const an = ctx.createAnalyser(); an.fftSize = 2048; ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    tick = setInterval(() => { an.getFloatTimeDomainData(buf); let s = 0; for(let i = 0; i < buf.length; i++) s += buf[i] * buf[i]; frames.push({ t: performance.now(), rms: Math.sqrt(s / buf.length) }); }, 50);
+  }catch(e){ ctx = null; }
+  const t0 = Date.now(), lab = document.getElementById('cpTimer'), stopBtn = document.getElementById('cpStartNow');
+  if(stopBtn){ stopBtn.textContent = '■ Stop'; stopBtn.dataset.cpact = 'stop'; }
+  const timerInt = setInterval(() => {
+    const s = (Date.now() - t0) / 1000;
+    if(lab){ lab.textContent = '● ' + fluClock(s) + ' / ' + fluClock(limit); lab.className = s >= limit - 15 ? 'badge unverified' : 'badge pending'; }
+    if(s >= limit) recorder.state !== 'inactive' && recorder.stop();
+  }, 250);
+  cp.recorder = recorder;
+  recorder.onstop = async () => {
+    clearInterval(tick); clearInterval(timerInt); stream.getTracks().forEach(t => t.stop()); cp.stream = null;
+    if(ctx){ try{ ctx.close(); }catch(e){} }
+    const recSecs = (Date.now() - t0) / 1000; cp.phase = 'transcribing'; cpMsg('Transcribing… this can take up to a minute.');
+    try{
+      if(recSecs < 20) throw new Error('That recording was under 20 seconds — too short to measure. Start again (you will get a new topic).');
+      const text = await fluTranscribe(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }), lang);
+      if(!text) throw new Error('Nothing was heard — start again, closer to the mic.');
+      const an = fluAnalyzeFrames(frames);
+      c.talk = { limit, recSecs: Math.round(recSecs), secs: Math.max(5, Math.round(an ? an.spanSecs : recSecs)), words: spkWords(text), errors: null,
+        pauses: an ? an.pauses : null, pauseSecs: an ? an.pauseSecs : null, longest: an ? an.longest : null, transcript: text.slice(0, FLU_KEEP_TEXT) };
+      await cpSave(); cp.phase = 'idle'; cpMsg('');
+    }catch(err){ c.topic = ''; cp.phase = 'idle'; cpMsg(err.message || 'Transcription failed — start again.', true); }
+    renderCheckpoint(true);
+  };
+  recorder.start(); cpMsg('Recording — it stops by itself at ' + fluClock(limit) + '. Tap Stop if you finish earlier.');
+}
+
+// ---- trend + forecast (from your own checkpoints) ----
+function cpMetrics(lang){
+  const T = cpTargets(lang);
+  return [
+    { label: 'Bank words', goal: T.words, up: true, get: c => c.vocab ? c.vocab.bankWords : null, fmt: v => Math.round(v).toLocaleString() },
+    { label: 'Active recall %', goal: T.active, up: true, get: c => c.vocab ? c.vocab.pct : null, fmt: v => Math.round(v) + '%' },
+    { label: 'Words/min', goal: T.wpm, up: true, get: c => cpValid(c) ? fluWpm(c.talk) : null, fmt: v => Math.round(v) },
+    { label: 'Errors/100 words', goal: T.err, up: false, get: c => cpValid(c) ? fluErrRate(c.talk) : null, fmt: v => (Math.round(v * 10) / 10) },
+    { label: 'Pauses/min', goal: T.pauses, up: false, get: c => cpValid(c) ? fluPausePm(c.talk) : null, fmt: v => (Math.round(v * 10) / 10) }
+  ];
+}
+function cpForecastHtml(lang){
+  const L = cpList(lang), first = L.length ? L[0].date : todayStr();
+  const rows = cpMetrics(lang).map(m => {
+    const pts = L.map(c => ({ x: daysBetween(first, c.date), y: m.get(c) })).filter(p => p.y !== null && p.y !== undefined);
+    if(!pts.length) return `<tr><td>${m.label}</td><td>—</td><td>${m.fmt(m.goal)}</td><td class="gap-mini">no data yet</td></tr>`;
+    const cur = pts[pts.length - 1].y, done = m.up ? cur >= m.goal : cur <= m.goal;
+    let txt;
+    if(done) txt = '✓ target reached';
+    else if(pts.length < 3) txt = `needs ${3 - pts.length} more checkpoint${3 - pts.length === 1 ? '' : 's'} to forecast`;
+    else {
+      const n = pts.length, mx = pts.reduce((s, p) => s + p.x, 0) / n, my = pts.reduce((s, p) => s + p.y, 0) / n;
+      const den = pts.reduce((s, p) => s + (p.x - mx) * (p.x - mx), 0), slope = den ? pts.reduce((s, p) => s + (p.x - mx) * (p.y - my), 0) / den : 0;
+      const days = slope ? (m.goal - cur) / slope : Infinity;
+      if(!(days > 0) || !isFinite(days)) txt = 'not moving toward the target yet';
+      else if(days > 1825) txt = 'more than 5 years at this pace';
+      else txt = `~${Math.max(1, Math.round(days / 30))} month${Math.round(days / 30) > 1 ? 's' : ''} at this pace (≈ ${addDays(todayStr(), Math.round(days))})`;
+    }
+    return `<tr><td>${m.label}</td><td><strong>${m.fmt(cur)}</strong></td><td>${m.fmt(m.goal)}</td><td>${txt}</td></tr>`;
+  }).join('');
+  const T = cpTargets(lang);
+  return `<h3 style="margin:14px 0 4px;">Forecast from your data — ${LANG_NAMES[lang]}</h3>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Measure</th><th>Latest</th><th>Target</th><th>Straight-line forecast</th></tr>${rows}</table></div>
+    <div class="gap-mini">A straight line through your own checkpoints. Real learning curves flatten, so read each date as the <em>earliest</em> likely, not a promise; three points are noisy, six are useful. The talk measures only count when the talk reached ${spkMin(lang)}+ words.</div>
+    <details><summary class="gap-mini">Targets (my placeholders — set your own)</summary>
+      <div class="row2 spk-form" style="margin-top:6px;">${[['words', 'Bank words'], ['active', 'Active recall %'], ['wpm', 'Words/min'], ['err', 'Errors/100'], ['pauses', 'Pauses/min']].map(([k, l]) => `<div><label>${l}</label><input type="number" min="0" data-cptarget="${k}" value="${T[k]}"></div>`).join('')}</div></details>`;
+}
+function cpTableHtml(lang){
+  const L = cpList(lang); if(!L.length) return '';
+  const f = (v, fn) => v === null || v === undefined ? '—' : fn(v);
+  const rows = L.slice().reverse().map(c => {
+    const v = c.vocab, t = c.talk, ok = cpValid(c);
+    return `<tr><td>${escapeHtml(c.date)}</td><td>${v ? v.bankWords.toLocaleString() : '—'}</td><td>${v ? v.pct + '% <span class="gap-mini">(' + v.lo + '–' + v.hi + ')</span>' : '—'}</td>
+      <td>${t ? (ok ? fluWpm(t.talk || t) : '<span class="spk-warn">short</span>') : '—'}</td><td>${t && ok ? f(fluErrRate(t), x => x) : '—'}</td><td>${t && ok ? f(fluPausePm(t), x => x) : '—'}</td>
+      <td><button class="ghost" type="button" data-cpact="del" data-id="${c.id}">Delete</button></td></tr>`;
+  }).join('');
+  return `<h3 style="margin:14px 0 4px;">Checkpoints so far</h3><div class="cov-wrap"><table class="flu-table"><tr><th>Date</th><th>Bank words</th><th>Active recall</th><th>Words/min</th><th>Err/100</th><th>Pauses/min</th><th></th></tr>${rows}</table></div>`;
+}
+
+function renderCheckpoint(force){
+  const root = document.getElementById('cpRoot'); if(!root) return;
+  if(!force && (cp.phase === 'recording' || cp.phase === 'transcribing' || cp.phase === 'prep')) return;   // never wipe a live recording
+  if(!cp.cur){
+    const inc = cpList(uiLang()).find(c => c.date === todayStr() && !(c.talk && c.vocab)); if(inc) cp.cur = inc;   // resume today's unfinished one
+  }
+  const c = cp.cur, lang = c ? c.lang : uiLang(), L = cpList(lang), last = L.length ? L[L.length - 1] : null;
+  const since = last ? daysBetween(last.date, todayStr()) : null;
+  let html = `<h2>Monthly checkpoint</h2>${c ? '' : langToggleHtml()}
+    <details ${L.length || c ? '' : 'open'}><summary><strong>How this works</strong> (read once)</summary>
+      <p class="gap-mini">Once a month, same protocol every time, so the numbers can be compared: <strong>(1) vocabulary</strong> — how many words are in your bank, and how many of a random 30 you can actually <em>say</em> before revealing them; <strong>(2) a 2-minute talk</strong> on a topic you have never used here, with ${CP_PREP_SECS} seconds to think and no notes. It is recorded, transcribed and measured for <strong>words per minute</strong>, <strong>errors per 100 words</strong> and <strong>pauses</strong>. After 3+ checkpoints the forecast below uses your real numbers.</p>
+      <p class="gap-mini">Honest limits: one talk is noisy (topic difficulty alone moves it), so judge the trend over several months, not one result. Transcripts tidy up fillers, so words/min reads a little high — compare only with your own checkpoints. Error counts are yours or an AI estimate (rougher for Arabic); count the same way every time.</p>
+    </details>
+    <div class="spk-caution">${last ? (since >= CP_DUE_DAYS ? `<strong>Due now</strong> — last ${LANG_NAMES[lang]} checkpoint was ${since} days ago.` : `Last ${LANG_NAMES[lang]} checkpoint ${since} day${since === 1 ? '' : 's'} ago — next due around <strong>${addDays(last.date, CP_DUE_DAYS)}</strong>. You can run one early, but monthly keeps the comparison fair.`) : `<strong>No ${LANG_NAMES[lang]} checkpoint yet</strong> — your first one is the baseline everything else is compared with.`}</div>`;
+  if(!c){
+    html += `<div class="card-actions"><button class="primary" type="button" data-cpact="new">Start a ${LANG_NAMES[lang]} checkpoint</button></div>`;
+  } else {
+    const rtl = lang === 'ar' ? ' dir="rtl"' : '';
+    html += `<div class="spk-form"><h3 style="margin:0 0 6px;">${LANG_NAMES[lang]} checkpoint — ${escapeHtml(c.date)}</h3>
+      <div class="gap-mini"><strong>Step 1 — Vocabulary</strong></div>
+      ${cp.phase === 'vocab' && cp.test ? cpTestHtml() : c.vocab ? cpVocabResultHtml(c.vocab, lang) + `<div class="card-actions"><button class="ghost" type="button" data-cpact="retest"${cp.phase !== 'idle' ? ' disabled' : ''}>Redo the vocabulary sample</button></div>`
+        : `<div class="card-actions"><button class="primary" type="button" data-cpact="vocab"${cp.phase !== 'idle' ? ' disabled' : ''}>Start the vocabulary sample (${CP_SAMPLE_N} words, ~5 min)</button></div>`}
+      <div class="gap-mini" style="margin-top:14px;"><strong>Step 2 — 2-minute unprepared talk</strong></div>`;
+    if(cp.phase === 'prep' || cp.phase === 'recording' || cp.phase === 'transcribing'){
+      html += `<div style="font-size:20px;margin:10px 0;"${rtl}><strong>${escapeHtml(c.topic)}</strong></div>
+        <div class="card-actions"><span class="badge pending" id="cpTimer">${cp.phase === 'prep' ? 'Starts in ' + CP_PREP_SECS + ' s' : cp.phase === 'recording' ? 'Recording…' : 'Transcribing…'}</span>
+        ${cp.phase === 'prep' ? '<button class="primary" type="button" id="cpStartNow" data-cpact="startnow">Start now</button>' : cp.phase === 'recording' ? '<button class="primary" type="button" id="cpStartNow" data-cpact="stop">■ Stop</button>' : ''}</div>`;
+    } else if(c.talk){
+      const t = c.talk, ok = cpValid(c), pe = fluErrRate(t), pp = fluPausePm(t);
+      html += `<div${rtl} class="gap-mini">Topic: ${escapeHtml(c.topic)}</div>
+        <div class="cov-wrap"><table class="flu-table"><tr><th>Spoke</th><th>Words</th><th>Words/min</th><th>Pauses</th><th>Longest</th><th>Errors</th><th>Err/100</th></tr>
+        <tr><td>${fluClock(t.secs)}</td><td>${t.words}${ok ? '' : ' <span class="spk-warn">short</span>'}</td><td><strong>${fluWpm(t) === null ? '—' : fluWpm(t)}</strong></td>
+        <td>${typeof t.pauses === 'number' ? t.pauses + (pp !== null ? ' <span class="gap-mini">(' + pp + '/min)</span>' : '') : '—'}</td><td>${typeof t.longest === 'number' ? t.longest + ' s' : '—'}</td>
+        <td><input type="number" min="0" data-cperr="1" value="${typeof t.errors === 'number' ? t.errors : ''}" placeholder="count"></td><td>${pe === null ? '—' : pe}</td></tr></table></div>
+        ${ok ? '' : `<div class="spk-caution">Under ${spkMin(lang)} words — too short to count in the trend. Redo the talk.</div>`}
+        <div class="card-actions">${getGeminiKeys().length && typeof t.errors !== 'number' ? '<button class="ghost" type="button" data-cpact="ai">✨ Count errors with AI</button>' : ''}<button class="ghost" type="button" data-cpact="retalk">Redo the talk (new topic)</button></div>`;
+    } else {
+      html += `<div class="card-actions"><button class="primary" type="button" data-cpact="talk"${cp.phase !== 'idle' ? ' disabled' : ''}>Reveal a topic and start (${CP_PREP_SECS} s to think)</button></div>
+        <div class="gap-mini">The microphone is requested first; then the topic appears and recording starts by itself after ${CP_PREP_SECS} seconds. No notes, no restarts — that is what makes it comparable month to month.</div>`;
+    }
+    html += `<div class="status-msg${cp.msgErr ? ' err' : ''}" id="cpStatus">${escapeHtml(cp.msg || '')}</div>
+      ${c.vocab && c.talk && cp.phase === 'idle' ? '<div class="card-actions"><button class="primary" type="button" data-cpact="close">✓ Checkpoint complete — close</button></div>' : (cp.phase === 'idle' ? '<div class="card-actions"><button class="ghost" type="button" data-cpact="close">Leave for later</button></div>' : '')}</div>`;
+  }
+  if(!c) html += `<div class="status-msg${cp.msgErr ? ' err' : ''}" id="cpStatus">${escapeHtml(cp.msg || '')}</div>`;
+  root.innerHTML = html + cpTableHtml(lang) + cpForecastHtml(lang);
+}
+(function(){
+  const root = document.getElementById('cpRoot'); if(!root) return;
+  root.addEventListener('change', async (e) => {
+    if(e.target.dataset.cperr !== undefined && cp.cur && cp.cur.talk){
+      const n = parseInt(e.target.value, 10); cp.cur.talk.errors = isNaN(n) || n < 0 ? null : n; await cpSave(); renderCheckpoint(true); return;
+    }
+    const k = e.target.dataset.cptarget; if(!k) return;
+    const lang = cp.cur ? cp.cur.lang : uiLang(), all = lsGet('cpTargets', {}) || {}, v = parseFloat(e.target.value);
+    all[lang] = Object.assign({}, all[lang] || {}, { [k]: isNaN(v) || v < 0 ? CP_TARGETS_DEFAULT[k] : v }); lsSet('cpTargets', all); renderCheckpoint(true);
+  });
+  root.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-cpact]'); if(!a) return;
+    e.preventDefault(); const act = a.dataset.cpact;
+    if(act === 'new'){ const lang = uiLang(); cp.cur = { id: uid(), lang, date: todayStr(), createdAt: new Date().toISOString(), topic: '', talk: null, vocab: null, updatedAt: new Date().toISOString() }; cpMsg(''); renderCheckpoint(true); return; }
+    if(act === 'close'){ if(cp.phase === 'idle'){ cp.cur = null; cpMsg(''); renderCheckpoint(true); } return; }
+    if(act === 'vocab' || act === 'retest'){ cpStartTest(); return; }
+    if(act === 'reveal' && cp.test){ cp.test.ms = Date.now() - cp.test.t0; cp.test.shown = true; renderCheckpoint(true); return; }
+    if((act === 'ok' || act === 'no') && cp.test){
+      const t = cp.test; t.res.push({ ok: act === 'ok', ms: t.ms }); t.i++; t.shown = false; t.t0 = Date.now();
+      if(t.i >= t.items.length) await cpFinishTest(); else renderCheckpoint(true); return;
+    }
+    if(act === 'talk'){ cpBeginTalk(); return; }
+    if(act === 'retalk'){ if(!confirm('Redo the talk? You will get a new topic, and this recording is replaced.')) return; cp.cur.talk = null; cp.cur.topic = ''; await cpSave(); renderCheckpoint(true); return; }
+    if(act === 'startnow'){ cpRecordTalk(); return; }
+    if(act === 'stop'){ if(cp.recorder && cp.recorder.state !== 'inactive') cp.recorder.stop(); return; }
+    if(act === 'del'){
+      if(!confirm('Delete this checkpoint from your history?')) return;
+      state.spk.checkpoints = state.spk.checkpoints.filter(x => x.id !== a.dataset.id);
+      state.spk.deletedCheckpoints = (state.spk.deletedCheckpoints || []).concat([a.dataset.id]);
+      if(cp.cur && cp.cur.id === a.dataset.id) cp.cur = null;
+      await saveSpk(); renderCheckpoint(true); return;
+    }
+    if(act === 'ai' && cp.cur && cp.cur.talk){
+      a.disabled = true; cpMsg('Checking the talk…');
+      try{ cp.cur.talk.errors = (await spkAnalyze(cp.cur.talk.transcript, cp.cur.lang)).length; await cpSave(); renderCheckpoint(true); cpMsg('AI estimate filled in — check it, it can miss errors.'); }
+      catch(err){ a.disabled = false; cpMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error') + '. You can type the count yourself.', true); }
+    }
+  });
+})();
+
+// =====================================================================
+// BATCH 4 — ARABIC SPECIALIST TRACK (MSA)
+// Written, formal Modern Standard Arabic only — kept apart from your spoken
+// Saudi practice (its own tab, its own data; nothing here touches the bank,
+// Gaps or the Today tracker unless you tick "Add to Gaps").
+//   1. Formal writing: a memo/letter/report prompt → your draft → AI editor
+//      feedback (nahw, sarf, spelling, register — dialect words are flagged
+//      as register errors) → revise and check again. Errors per 100 words.
+//   2. Nahw & sarf from texts YOU read: paste a text → the AI picks parsing
+//      and morphology points from it → you answer, reveal, self-grade.
+//      Accuracy is tallied per category so the weak ones show up.
+// Items live in state.spk.msa (kind 'msa' in the Speaking sync; no Apps
+// Script change). The AI is an ESTIMATE and is less reliable for Arabic —
+// have a teacher check a sample now and then.
+// =====================================================================
+const MSA_PROMPTS = [
+  ['memo', 'اكتب مذكرة رسمية إلى مديرك تقترح فيها تغيير موعد الاجتماع الأسبوعي مع ذكر الأسباب.'],
+  ['letter', 'اكتب خطابًا رسميًا إلى جهة حكومية تطلب فيه معلومات عن إجراءات ترخيص مشروع صغير.'],
+  ['report', 'اكتب تقريرًا موجزًا عن ارتفاع أسعار السلع الأساسية وأثره في الأسر.'],
+  ['essay', 'اكتب مقالًا قصيرًا عن أهمية التعليم المستمر للعاملين.'],
+  ['memo', 'اكتب مذكرة إلى فريق العمل تلخّص فيها نتائج اجتماع أمس والمهام المطلوبة.'],
+  ['letter', 'اكتب رسالة رسمية تعتذر فيها عن تأخر في تسليم مشروع وتقترح موعدًا جديدًا.'],
+  ['report', 'لخّص في فقرتين أبرز مخاطر الاستثمار في الأسواق المالية للمبتدئين.'],
+  ['essay', 'اكتب فقرة تعرض فيها رأيك في العمل عن بُعد مع حجة وحجة مضادة.'],
+  ['letter', 'اكتب خطاب توصية رسميًا لزميل يتقدم إلى منحة دراسية.'],
+  ['report', 'اكتب ملخصًا تنفيذيًا لمشروع يهدف إلى تحسين دخل صغار المزارعين.']
+];
+const MSA_TYPES = { nahw: 'Nahw', sarf: 'Sarf', spelling: 'Spelling', register: 'Register', style: 'Style' };
+let msa = { tab: 'write', cur: null, draft: '', fb: null, busy: false, msg: '', msgErr: false, drill: null, readTitle: '', readText: '' };
+
+function msaItems(type){ return (state.spk.msa || []).filter(x => x.type === type).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')); }
+function msaMsg(m, err){ msa.msg = m || ''; msa.msgErr = !!err; const el = document.getElementById('msaStatus'); if(el){ el.textContent = msa.msg; el.className = 'status-msg' + (err ? ' err' : ''); } }
+async function msaSave(it){ it.updatedAt = new Date().toISOString(); if(!state.spk.msa.includes(it)) state.spk.msa.push(it); await saveSpk(); }
+function msaJson(out){
+  const a = out.indexOf('{'), b = out.lastIndexOf('}');
+  if(a < 0 || b < a) throw new Error('The AI reply wasn\u2019t in the expected format — try again.');
+  return JSON.parse(out.slice(a, b + 1));
+}
+async function msaCritique(text, prompt){
+  const system = 'You are a senior editor of formal Modern Standard Arabic (MSA) for official and professional writing. Reply with ONLY one JSON object, no markdown fences: {"errors":[{"wrong":"","right":"","type":"","why":""}],"corrected":"","comment":""}.';
+  const ask = 'Below is a piece of WRITTEN formal MSA by a learner' + (prompt ? ' answering this task: ' + prompt : '') + '. List every clear error. "type" must be one of: nahw (syntax/grammar: agreement, case, idafa, particles and what they govern, word order), sarf (morphology: wrong verb form, plural, derived form, pattern), spelling (hamza, ta marbuta/ha, alif maqsura, joined/separate words), register (colloquial or dialect words or phrasing, including Gulf/Saudi, and informal wording that does not belong in formal writing), style (clumsy or literal-translation phrasing that is still grammatical). '
+    + 'Do NOT list missing diacritics. "wrong" = the short wrong phrase (2-5 words, Arabic), "right" = corrected phrase (Arabic), "why" = a reason in English, 20 words max. Count each mistake once. "corrected" = the whole text corrected, Arabic. "comment" = one English sentence on the biggest weakness.\n\nTEXT:\n' + text;
+  const { text: out } = await callGemini(ask, { system, useSearch: false });
+  const j = msaJson(out);
+  return { errors: (Array.isArray(j.errors) ? j.errors : []).filter(e => e && e.right).slice(0, 40).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), type: MSA_TYPES[String(e.type || '').toLowerCase()] ? String(e.type).toLowerCase() : 'style', why: String(e.why || '').slice(0, 160) })),
+    corrected: String(j.corrected || '').slice(0, 3000), comment: String(j.comment || '').slice(0, 300) };
+}
+async function msaPoints(text){
+  const system = 'You are a teacher of Arabic grammar (nahw) and morphology (sarf). Reply with ONLY one JSON object, no markdown fences: {"points":[{"phrase":"","kind":"","cat":"","q":"","a":"","why":""}]}.';
+  const ask = 'From the Arabic text below choose 6 teachable points that actually occur in it: about 3 nahw and 3 sarf. "kind" = nahw or sarf. "cat" = a short English category (e.g. "kana and sisters", "inna and sisters", "idafa", "mansub after an", "majrur after preposition", "dual and plural agreement", "verb form X (istaf\u02bfala)", "broken plural", "active participle", "masdar", "weak verb"). "phrase" = the exact short phrase or word from the text (Arabic). "q" = a question in English asking the learner to parse it (nahw: case and reason; sarf: root and pattern/form). "a" = the full answer, concise (Arabic terms allowed). "why" = one English sentence on the rule. Choose points of varied categories and moderate difficulty.\n\nTEXT:\n' + text;
+  const { text: out } = await callGemini(ask, { system, useSearch: false });
+  const j = msaJson(out);
+  return (Array.isArray(j.points) ? j.points : []).filter(p => p && p.phrase && p.q && p.a).slice(0, 8)
+    .map(p => ({ id: uid(), phrase: String(p.phrase).slice(0, 80), kind: String(p.kind).toLowerCase() === 'sarf' ? 'sarf' : 'nahw', cat: String(p.cat || 'other').toLowerCase().slice(0, 40), q: String(p.q).slice(0, 220), a: String(p.a).slice(0, 300), why: String(p.why || '').slice(0, 220), tries: [] }));
+}
+function msaErrRate(r){ return r && r.words > 0 ? Math.round(r.errors.length / r.words * 1000) / 10 : null; }
+function msaTally(){   // nahw/sarf accuracy per category, last 6 tries per point
+  const m = {};
+  msaItems('read').forEach(n => (n.points || []).forEach(p => { const t = (p.tries || []).slice(-6); if(!t.length) return; const c = m[p.cat] = m[p.cat] || { cat: p.cat, kind: p.kind, ok: 0, n: 0 }; t.forEach(x => { c.n++; if(x.ok) c.ok++; }); }));
+  return Object.values(m).sort((a, b) => a.ok / a.n - b.ok / b.n || b.n - a.n);
+}
+
+function msaWriteHtml(){
+  const c = msa.cur, last = c && c.rounds.length ? c.rounds[c.rounds.length - 1] : null;
+  let h = '';
+  if(!c){
+    h += `<p class="gap-mini">Formal written MSA: memos, letters, reports, short essays. Write without help, get an editor’s feedback, then revise.</p>
+      <div class="card-actions"><button class="primary" type="button" data-msaact="newwrite">Get a writing task</button></div>`;
+  } else {
+    h += `<div class="spk-form"><div dir="rtl" style="font-size:18px;margin-bottom:6px;"><strong>${escapeHtml(c.prompt)}</strong></div>
+      <label>${c.rounds.length ? 'Revise your text using the feedback, then check again' : 'Your draft (aim for 120–200 words, no dictionary on the first draft)'}</label>
+      <textarea dir="rtl" data-msa="draft" style="min-height:170px;">${escapeHtml(msa.draft)}</textarea>
+      <div class="gap-mini">${spkWords(msa.draft)} words</div>
+      <div class="card-actions"><button class="primary" type="button" data-msaact="check"${msa.busy ? ' disabled' : ''}>${msa.busy ? 'Checking…' : (c.rounds.length ? '✨ Check this revision' : '✨ Get feedback')}</button>
+        <button class="ghost" type="button" data-msaact="closewrite">${last ? 'Done' : 'Cancel'}</button></div></div>`;
+    if(last) h += msaFeedbackHtml(c, last);
+  }
+  const past = msaItems('write').filter(x => x !== c).slice(-6).reverse();
+  if(past.length) h += `<h3 style="margin:14px 0 4px;">Past pieces</h3><div class="cov-wrap"><table class="flu-table"><tr><th>Date</th><th>Type</th><th>Words</th><th>Err/100: first → last</th><th></th></tr>${past.map(x => {
+    const a = x.rounds[0], b = x.rounds[x.rounds.length - 1];
+    return `<tr><td>${escapeHtml(x.date)}</td><td>${escapeHtml(x.kind)}</td><td>${a.words}</td><td>${msaErrRate(a)}${x.rounds.length > 1 ? ' → <strong>' + msaErrRate(b) + '</strong>' : ''}</td><td><button class="ghost" type="button" data-msaact="del" data-id="${x.id}">Delete</button></td></tr>`;
+  }).join('')}</table></div>`;
+  return h;
+}
+function msaFeedbackHtml(c, r){
+  const rate = msaErrRate(r), tally = {};
+  r.errors.forEach(e => tally[e.type] = (tally[e.type] || 0) + 1);
+  const prev = c.rounds.length > 1 ? c.rounds[c.rounds.length - 2] : null;
+  return `<div class="spk-caution"><strong>AI editor — an estimate, check it.</strong> Round ${c.rounds.length}: <strong>${r.errors.length}</strong> errors in ${r.words} words = <strong>${rate}</strong> per 100${prev ? ` (round ${c.rounds.length - 1}: ${msaErrRate(prev)})` : ''}. ${Object.keys(tally).map(k => MSA_TYPES[k] + ' ×' + tally[k]).join(' · ')}. It is less reliable for Arabic and can miss or invent errors.${r.comment ? '<br>' + escapeHtml(r.comment) : ''}</div>
+    ${r.errors.map((e, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px;"><input type="checkbox" data-msaerr="${i}" style="width:auto;margin-top:3px;"><span><span dir="rtl">“${escapeHtml(e.wrong)}” → <strong>${escapeHtml(e.right)}</strong></span> <span class="gap-mini">(${MSA_TYPES[e.type]}) ${escapeHtml(e.why)}</span></span></label>`).join('')}
+    ${r.errors.length ? '<div class="card-actions"><button class="ghost" type="button" data-msaact="togaps">Add ticked corrections to Gaps</button></div>' : ''}
+    ${r.corrected ? `<details><summary class="gap-mini">Fully corrected version</summary><div dir="rtl" style="margin-top:6px;">${escapeHtml(r.corrected)}</div></details>` : ''}`;
+}
+function msaReadHtml(){
+  const notes = msaItems('read'), d = msa.drill;
+  if(d){
+    const n = notes.find(x => x.id === d.noteId), p = n && n.points[d.i];
+    if(!p){ msa.drill = null; return msaReadHtml(); }
+    return `<div class="spk-form"><div class="gap-mini">${escapeHtml(n.title || 'Text')} — point ${d.i + 1} of ${n.points.length} · ${p.kind === 'sarf' ? 'Sarf' : 'Nahw'} · ${escapeHtml(p.cat)}</div>
+      <div dir="rtl" style="font-size:22px;margin:10px 0;"><strong>${escapeHtml(p.phrase)}</strong></div><div>${escapeHtml(p.q)}</div>
+      ${d.shown ? `<div class="spk-metrics" style="margin-top:8px;">${escapeHtml(p.a)}<br><span class="gap-mini">${escapeHtml(p.why)}</span></div><p class="gap-mini">Did you have it right <em>before</em> revealing?</p>
+        <div class="card-actions"><button class="primary" type="button" data-msaact="ok">✓ Right</button><button class="ghost" type="button" data-msaact="no">✗ Wrong</button></div>`
+        : '<div class="card-actions"><button class="primary" type="button" data-msaact="reveal">Show answer</button></div>'}
+      <div class="card-actions"><button class="ghost" type="button" data-msaact="enddrill">Stop</button></div></div>`;
+  }
+  let h = `<p class="gap-mini">Paste an Arabic text you actually read (an article, a report, a passage). The AI picks nahw and sarf points <em>from that text</em>; you parse them, then check yourself.</p>
+    <div class="spk-form"><label>Title (optional)</label><input type="text" data-msa="readTitle" value="${escapeHtml(msa.readTitle)}" placeholder="e.g. editorial on inflation">
+      <label>Arabic text (about 80–300 words)</label><textarea dir="rtl" data-msa="readText" style="min-height:140px;">${escapeHtml(msa.readText)}</textarea>
+      <div class="card-actions"><button class="primary" type="button" data-msaact="analyse"${msa.busy ? ' disabled' : ''}>${msa.busy ? 'Analysing…' : '✨ Pick grammar points from this text'}</button></div></div>`;
+  if(notes.length) h += `<h3 style="margin:14px 0 4px;">Your texts</h3>` + notes.slice().reverse().slice(0, 10).map(n => {
+    const t = n.points.reduce((a, p) => a.concat((p.tries || []).slice(-1)), []), ok = t.filter(x => x.ok).length;
+    return `<div class="dash-row" style="cursor:default;"><span>${escapeHtml(n.date)} · ${escapeHtml(n.title || 'Untitled')} <span class="gap-mini">(${n.points.length} points${t.length ? ', last try ' + ok + '/' + t.length : ''})</span></span><span><button class="primary" type="button" data-msaact="drill" data-id="${n.id}">Practise</button> <button class="ghost" type="button" data-msaact="del" data-id="${n.id}">Delete</button></span></div>`;
+  }).join('');
+  return h;
+}
+function msaProgressHtml(){
+  const w = msaItems('write').filter(x => x.rounds.length && x.rounds[0].words >= 60), tl = msaTally();
+  let h = '<h3 style="margin:4px 0;">Writing</h3>';
+  if(w.length < 4) h += `<div class="spk-caution"><strong>${w.length} of 4 pieces</strong> (60+ words) needed before a trend means anything.</div>`;
+  else {
+    const avg = a => a.reduce((x, y) => x + y, 0) / a.length, f = w.slice(0, 3).map(x => msaErrRate(x.rounds[0])), l = w.slice(-3).map(x => msaErrRate(x.rounds[0]));
+    h += `<div class="spk-caution">First-draft errors per 100 words: first 3 pieces ${Math.round(avg(f) * 10) / 10}, latest 3 ${Math.round(avg(l) * 10) / 10}. First drafts are the honest measure — revisions improve by design.</div>`;
+  }
+  const all = {}; w.forEach(x => x.rounds[0].errors.forEach(e => all[e.type] = (all[e.type] || 0) + 1));
+  const ks = Object.keys(all).sort((a, b) => all[b] - all[a]);
+  if(ks.length) h += `<div class="gap-mini">What your first drafts get wrong most: ${ks.map(k => MSA_TYPES[k] + ' ×' + all[k]).join(' · ')}</div>`;
+  h += '<h3 style="margin:14px 0 4px;">Nahw &amp; sarf from your reading</h3>';
+  if(!tl.length) h += '<div class="gap-mini">No practice yet. Analyse a text and practise its points.</div>';
+  else h += `<div class="cov-wrap"><table class="flu-table"><tr><th>Category</th><th>Kind</th><th>Right (recent)</th></tr>${tl.map(c => `<tr><td>${escapeHtml(c.cat)}</td><td>${c.kind === 'sarf' ? 'Sarf' : 'Nahw'}</td><td><strong>${Math.round(c.ok / c.n * 100)}%</strong> <span class="gap-mini">(${c.ok}/${c.n})</span></td></tr>`).join('')}</table></div><div class="gap-mini">Weakest first. Small counts are noisy — a category needs about 8 tries before its percentage means much.</div>`;
+  return h;
+}
+function renderMsa(){
+  const root = document.getElementById('msaRoot'); if(!root) return;
+  if(msa.busy) return;
+  const tabs = [['write', 'Formal writing'], ['read', 'Nahw & sarf from texts'], ['progress', 'Progress']];
+  root.innerHTML = `<h2>MSA specialist track</h2><div class="gap-mini">Written, formal Arabic only — separate from your spoken Saudi practice.</div>
+    <div class="gap-lang-toggle" style="margin:8px 0;">${tabs.map(t => `<button type="button" class="ghost${msa.tab === t[0] ? ' active' : ''}" data-msatab="${t[0]}">${t[1]}</button>`).join('')}</div>
+    ${msa.tab === 'write' ? msaWriteHtml() : msa.tab === 'read' ? msaReadHtml() : msaProgressHtml()}
+    <div class="status-msg${msa.msgErr ? ' err' : ''}" id="msaStatus">${escapeHtml(msa.msg || '')}</div>`;
+}
+(function(){
+  const root = document.getElementById('msaRoot'); if(!root) return;
+  root.addEventListener('input', e => { const k = e.target.dataset.msa; if(k) msa[k] = e.target.value; });
+  root.addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-msatab]'); if(t){ msa.tab = t.dataset.msatab; msaMsg(''); renderMsa(); return; }
+    const a = e.target.closest('[data-msaact]'); if(!a) return;
+    e.preventDefault(); const act = a.dataset.msaact;
+    if(act === 'newwrite'){
+      const used = msaItems('write').map(x => x.prompt), pool = MSA_PROMPTS.filter(p => !used.includes(p[1])), p = (pool.length ? pool : MSA_PROMPTS)[Math.floor(Math.random() * (pool.length || MSA_PROMPTS.length))];
+      msa.cur = { id: uid(), type: 'write', date: todayStr(), createdAt: new Date().toISOString(), kind: p[0], prompt: p[1], rounds: [] }; msa.draft = ''; msaMsg(''); renderMsa(); return;
+    }
+    if(act === 'closewrite'){ msa.cur = null; msa.draft = ''; msaMsg(''); renderMsa(); return; }
+    if(act === 'check' && msa.cur){
+      const text = msa.draft.trim(), words = spkWords(text);
+      if(!getGeminiKeys().length){ msaMsg('Add a Gemini key in Sheet & AI settings first.', true); return; }
+      if(!/[\u0600-\u06FF]/.test(text) || words < 30){ msaMsg('Write at least 30 words of Arabic first.', true); return; }
+      msa.busy = true; renderMsa(); msaMsg('Checking…');
+      try{
+        const r = await msaCritique(text, msa.cur.prompt);
+        msa.cur.rounds.push({ text: text.slice(0, 3000), words, errors: r.errors, corrected: r.corrected, comment: r.comment });
+        await msaSave(msa.cur); msaMsg('');
+      }catch(err){ msaMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
+      msa.busy = false; renderMsa(); return;
+    }
+    if(act === 'togaps' && msa.cur){
+      const r = msa.cur.rounds[msa.cur.rounds.length - 1], boxes = [...root.querySelectorAll('[data-msaerr]:checked')];
+      let n = 0; boxes.forEach(b => { const er = r.errors[parseInt(b.dataset.msaerr, 10)]; if(er && captureGap({ lang: 'ar', wanted: er.right, said: er.wrong, source: 'MSA writing', exEn: '', exAr: '' })) n++; });
+      msaMsg(n ? n + ' added to Gaps.' : 'Tick the corrections you want first.', !n); return;
+    }
+    if(act === 'analyse'){
+      const text = msa.readText.trim(), letters = (text.match(/\p{L}/gu) || []).length, ar = (text.match(/[\u0600-\u06FF]/g) || []).length;
+      if(!getGeminiKeys().length){ msaMsg('Add a Gemini key in Sheet & AI settings first.', true); return; }
+      if(spkWords(text) < 30 || !letters || ar / letters < 0.6){ msaMsg('Paste at least 30 words of Arabic text.', true); return; }
+      msa.busy = true; renderMsa(); msaMsg('Analysing…');
+      try{
+        const pts = await msaPoints(text.slice(0, 3000));
+        if(!pts.length) throw new Error('no usable points came back — try a longer or clearer text');
+        const n = { id: uid(), type: 'read', date: todayStr(), createdAt: new Date().toISOString(), title: msa.readTitle.trim().slice(0, 60), text: text.slice(0, 3000), points: pts };
+        await msaSave(n); msa.readText = ''; msa.readTitle = ''; msa.drill = { noteId: n.id, i: 0, shown: false }; msaMsg('');
+      }catch(err){ msaMsg('Analysis failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
+      msa.busy = false; renderMsa(); return;
+    }
+    if(act === 'drill'){ msa.drill = { noteId: a.dataset.id, i: 0, shown: false }; renderMsa(); return; }
+    if(act === 'enddrill'){ msa.drill = null; renderMsa(); return; }
+    if(act === 'reveal' && msa.drill){ msa.drill.shown = true; renderMsa(); return; }
+    if((act === 'ok' || act === 'no') && msa.drill){
+      const d = msa.drill, n = msaItems('read').find(x => x.id === d.noteId), p = n && n.points[d.i]; if(!p) return;
+      p.tries = (p.tries || []).concat([{ d: todayStr(), ok: act === 'ok' }]).slice(-12); await msaSave(n);
+      d.i++; d.shown = false; if(d.i >= n.points.length){ msa.drill = null; msaMsg('Round finished.'); } renderMsa(); return;
+    }
+    if(act === 'del'){
+      if(!confirm('Delete this from your history?')) return;
+      state.spk.msa = state.spk.msa.filter(x => x.id !== a.dataset.id); state.spk.deletedMsa = (state.spk.deletedMsa || []).concat([a.dataset.id]);
+      await saveSpk(); renderMsa();
+    }
+  });
+})();
+
+// =====================================================================
+// BATCH 5 — ENGLISH ACADEMIC & PROFESSIONAL WRITING
+//   1. Short pieces (memo, email, essay paragraph, executive summary):
+//      task → your draft → AI editor feedback (grammar, word choice,
+//      collocation, punctuation, register, cohesion) → revise and check
+//      again. Errors per 100 words; first drafts are the honest measure.
+//   2. Register switching: rewrite a text from one register to another
+//      (casual ↔ professional ↔ academic); the AI judges whether the
+//      register really changed and shows a model version.
+// Items live in state.spk.enw (kind 'enw' in the Speaking sync; no Apps
+// Script change). The AI is an ESTIMATE — it can miss or invent errors.
+// =====================================================================
+const ENW_TASKS = [
+  ['memo', 'Write a memo to your team announcing that a weekly report will now be due on Thursday instead of Friday, and explain why.'],
+  ['email', 'Write a formal email to a client apologising for a delayed delivery and proposing a revised date.'],
+  ['essay', 'Write one academic paragraph arguing for or against remote work. Include a claim, evidence and a counter-argument.'],
+  ['summary', 'Write an executive summary (about 120 words) of a proposal to cut operating costs by renegotiating supplier contracts.'],
+  ['email', 'Write an email asking a senior colleague for a 20-minute meeting to get feedback on your project plan.'],
+  ['essay', 'Write one academic paragraph explaining why inflation reduces the purchasing power of savings.'],
+  ['memo', 'Write a memo recommending one of two software tools. State the criteria, the choice and the risk.'],
+  ['summary', 'Summarise, in about 120 words, the main risks a new investor faces in volatile markets.'],
+  ['email', 'Write an email declining a job offer politely while keeping the relationship open.'],
+  ['essay', 'Write one academic paragraph evaluating whether higher education should be free.']
+];
+const ENW_REG = [
+  ['casual', 'professional', 'Hey, just checking if you got my last email? We really need the numbers by tomorrow or the whole thing is gonna get messy.'],
+  ['casual', 'academic', 'Loads of people think social media makes teens feel worse, but honestly the studies are all over the place.'],
+  ['professional', 'casual', 'I would be grateful if you could confirm your availability for a brief call at your earliest convenience.'],
+  ['academic', 'plain spoken', 'The data suggest a statistically significant correlation between sleep duration and academic performance, although causality cannot be inferred.'],
+  ['casual', 'professional', 'Sorry, can\u2019t make the meeting. Something came up. Can we do next week instead?'],
+  ['professional', 'academic', 'We looked at the sales numbers and it seems like the new pricing hurt us more than we thought.'],
+  ['casual', 'professional', 'The supplier messed up again and the shipment is late. We need a fix ASAP.'],
+  ['academic', 'professional', 'It is posited that diversification mitigates unsystematic risk, albeit at the expense of potential outsized returns.']
+];
+const ENW_TYPES = { grammar: 'Grammar', word: 'Word choice', collocation: 'Collocation', punctuation: 'Punctuation', register: 'Register', cohesion: 'Cohesion' };
+let enw = { tab: 'write', cur: null, draft: '', reg: null, regDraft: '', busy: false, msg: '', msgErr: false };
+
+function enwItems(type){ return (state.spk.enw || []).filter(x => x.type === type).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')); }
+function enwMsg(m, err){ enw.msg = m || ''; enw.msgErr = !!err; const el = document.getElementById('enwStatus'); if(el){ el.textContent = enw.msg; el.className = 'status-msg' + (err ? ' err' : ''); } }
+async function enwSave(it){ it.updatedAt = new Date().toISOString(); if(!state.spk.enw.includes(it)) state.spk.enw.push(it); await saveSpk(); }
+function enwErrRate(r){ return r && r.words > 0 ? Math.round(r.errors.length / r.words * 1000) / 10 : null; }
+async function enwCritique(text, task, kind){
+  const system = 'You are a senior editor of professional and academic English. Reply with ONLY one JSON object, no markdown fences: {"errors":[{"wrong":"","right":"","type":"","why":""}],"corrected":"","comment":""}.';
+  const ask = 'Below is a ' + kind + ' written by a non-native learner answering this task: ' + task + '\nList every clear error. "type" must be one of: grammar (tense, agreement, articles, prepositions, plurals, word order, missing or extra words), word (wrong or imprecise word), collocation (unnatural word pairing), punctuation, register (too casual, too stiff, or inconsistent for a ' + kind + '), cohesion (weak linking, unclear reference, paragraph flow). '
+    + '"wrong" = the short wrong phrase (2-6 words), "right" = corrected phrase, "why" = reason, 20 words max. Count each mistake once; do not list pure style preferences. "corrected" = the whole text corrected with minimal changes. "comment" = one sentence on the biggest weakness.\n\nTEXT:\n' + text;
+  const { text: out } = await callGemini(ask, { system, useSearch: false });
+  const j = msaJson(out);
+  return { errors: (Array.isArray(j.errors) ? j.errors : []).filter(e => e && e.right).slice(0, 40).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right || ''), type: ENW_TYPES[String(e.type || '').toLowerCase()] ? String(e.type).toLowerCase() : 'word', why: String(e.why || '').slice(0, 160) })),
+    corrected: String(j.corrected || '').slice(0, 3000), comment: String(j.comment || '').slice(0, 300) };
+}
+async function enwRegisterJudge(src, from, to, text){
+  const system = 'You are an expert in English register and style. Reply with ONLY one JSON object, no markdown fences: {"pass":true,"issues":[{"phrase":"","problem":"","better":""}],"model":"","comment":""}.';
+  const ask = 'A learner was asked to rewrite a ' + from + ' text in a ' + to + ' register, keeping the meaning.\nORIGINAL: ' + src + '\nLEARNER REWRITE: ' + text + '\n"pass" = true only if the rewrite keeps the meaning AND is consistently in the ' + to + ' register (word choice, sentence structure, tone). "issues" = up to 5 phrases in the rewrite that are wrong for that register or change the meaning ("problem" = short English reason, "better" = a fix). "model" = your own good ' + to + ' version. "comment" = one sentence.';
+  const { text: out } = await callGemini(ask, { system, useSearch: false });
+  const j = msaJson(out);
+  return { pass: !!j.pass, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(i => ({ phrase: String(i.phrase || ''), problem: String(i.problem || '').slice(0, 160), better: String(i.better || '').slice(0, 160) })), model: String(j.model || '').slice(0, 800), comment: String(j.comment || '').slice(0, 300) };
+}
+
+function enwFeedbackHtml(c, r){
+  const tally = {}; r.errors.forEach(e => tally[e.type] = (tally[e.type] || 0) + 1);
+  const prev = c.rounds.length > 1 ? c.rounds[c.rounds.length - 2] : null;
+  return `<div class="spk-caution"><strong>AI editor — an estimate, check it.</strong> Round ${c.rounds.length}: <strong>${r.errors.length}</strong> errors in ${r.words} words = <strong>${enwErrRate(r)}</strong> per 100${prev ? ` (round ${c.rounds.length - 1}: ${enwErrRate(prev)})` : ''}. ${Object.keys(tally).map(k => ENW_TYPES[k] + ' ×' + tally[k]).join(' · ')}.${r.comment ? '<br>' + escapeHtml(r.comment) : ''}</div>
+    ${r.errors.map((e, i) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px;"><input type="checkbox" data-enwerr="${i}" style="width:auto;margin-top:3px;"><span>“${escapeHtml(e.wrong)}” → <strong>${escapeHtml(e.right)}</strong> <span class="gap-mini">(${ENW_TYPES[e.type]}) ${escapeHtml(e.why)}</span></span></label>`).join('')}
+    ${r.errors.length ? '<div class="card-actions"><button class="ghost" type="button" data-enwact="togaps">Add ticked corrections to Gaps</button></div>' : ''}
+    ${r.corrected ? `<details><summary class="gap-mini">Fully corrected version</summary><div style="margin-top:6px;">${escapeHtml(r.corrected)}</div></details>` : ''}`;
+}
+function enwWriteHtml(){
+  const c = enw.cur, last = c && c.rounds.length ? c.rounds[c.rounds.length - 1] : null;
+  let h = '';
+  if(!c) h += `<p class="gap-mini">Short professional and academic pieces. Write the first draft without help, get an editor’s feedback, then revise.</p><div class="card-actions"><button class="primary" type="button" data-enwact="newwrite">Get a writing task</button></div>`;
+  else {
+    h += `<div class="spk-form"><div style="font-size:16px;margin-bottom:6px;"><strong>${escapeHtml(c.kind)}:</strong> ${escapeHtml(c.prompt)}</div>
+      <label>${c.rounds.length ? 'Revise using the feedback, then check again' : 'Your draft (120–200 words)'}</label>
+      <textarea data-enw="draft" style="min-height:170px;">${escapeHtml(enw.draft)}</textarea><div class="gap-mini">${spkWords(enw.draft)} words</div>
+      <div class="card-actions"><button class="primary" type="button" data-enwact="check"${enw.busy ? ' disabled' : ''}>${enw.busy ? 'Checking…' : (c.rounds.length ? '✨ Check this revision' : '✨ Get feedback')}</button>
+      <button class="ghost" type="button" data-enwact="closewrite">${last ? 'Done' : 'Cancel'}</button></div></div>`;
+    if(last) h += enwFeedbackHtml(c, last);
+  }
+  const past = enwItems('write').filter(x => x !== c).slice(-6).reverse();
+  if(past.length) h += `<h3 style="margin:14px 0 4px;">Past pieces</h3><div class="cov-wrap"><table class="flu-table"><tr><th>Date</th><th>Type</th><th>Words</th><th>Err/100: first → last</th><th></th></tr>${past.map(x => {
+    const a = x.rounds[0], b = x.rounds[x.rounds.length - 1];
+    return `<tr><td>${escapeHtml(x.date)}</td><td>${escapeHtml(x.kind)}</td><td>${a.words}</td><td>${enwErrRate(a)}${x.rounds.length > 1 ? ' → <strong>' + enwErrRate(b) + '</strong>' : ''}</td><td><button class="ghost" type="button" data-enwact="del" data-id="${x.id}">Delete</button></td></tr>`;
+  }).join('')}</table></div>`;
+  return h;
+}
+function enwRegHtml(){
+  const r = enw.reg;
+  let h = '';
+  if(!r) return `<p class="gap-mini">Take a text in one register and rewrite it in another, keeping the meaning. Moving between casual, professional and academic English is the skill that separates a good speaker from a professional writer.</p><div class="card-actions"><button class="primary" type="button" data-enwact="newreg">Get a rewrite task</button></div>` + enwRegLog();
+  h += `<div class="spk-form"><div class="gap-mini">Rewrite from <strong>${r.from}</strong> to <strong>${r.to}</strong>:</div><div style="font-size:16px;margin:6px 0;padding:8px;background:var(--panel-soft,#f4f1ea);border-radius:6px;">${escapeHtml(r.src)}</div>
+    <textarea data-enw="regDraft" style="min-height:90px;">${escapeHtml(enw.regDraft)}</textarea>
+    <div class="card-actions"><button class="primary" type="button" data-enwact="regcheck"${enw.busy ? ' disabled' : ''}>${enw.busy ? 'Checking…' : '✨ Judge my rewrite'}</button><button class="ghost" type="button" data-enwact="closereg">Skip</button></div></div>`;
+  if(r.res) h += `<div class="spk-caution"><strong>${r.res.pass ? '✓ Register achieved' : '✗ Not yet in the ' + r.to + ' register'}</strong> — an AI judgement, check it.${r.res.comment ? '<br>' + escapeHtml(r.res.comment) : ''}</div>
+    ${r.res.issues.map(i => `<div style="font-size:13px;margin:4px 0;">“${escapeHtml(i.phrase)}” — ${escapeHtml(i.problem)}${i.better ? ' → <strong>' + escapeHtml(i.better) + '</strong>' : ''}</div>`).join('')}
+    ${r.res.model ? `<details><summary class="gap-mini">A model version</summary><div style="margin-top:6px;">${escapeHtml(r.res.model)}</div></details>` : ''}
+    <div class="card-actions"><button class="ghost" type="button" data-enwact="newreg">Next task</button></div>`;
+  return h + enwRegLog();
+}
+function enwRegLog(){
+  const l = enwItems('reg'); if(!l.length) return '';
+  const p = l.filter(x => x.pass).length;
+  return `<div class="gap-mini" style="margin-top:12px;">Register rewrites so far: <strong>${p} of ${l.length}</strong> judged successful on the first try.</div>`;
+}
+function enwProgressHtml(){
+  const w = enwItems('write').filter(x => x.rounds.length && x.rounds[0].words >= 60), reg = enwItems('reg');
+  let h = '<h3 style="margin:4px 0;">Writing</h3>';
+  if(w.length < 4) h += `<div class="spk-caution"><strong>${w.length} of 4 pieces</strong> (60+ words) needed before a trend means anything.</div>`;
+  else {
+    const avg = a => a.reduce((x, y) => x + y, 0) / a.length, f = w.slice(0, 3).map(x => enwErrRate(x.rounds[0])), l = w.slice(-3).map(x => enwErrRate(x.rounds[0]));
+    h += `<div class="spk-caution">First-draft errors per 100 words: first 3 pieces ${Math.round(avg(f) * 10) / 10}, latest 3 ${Math.round(avg(l) * 10) / 10}. Task difficulty varies, so read this over months.</div>`;
+  }
+  const all = {}; w.forEach(x => x.rounds[0].errors.forEach(e => all[e.type] = (all[e.type] || 0) + 1));
+  const ks = Object.keys(all).sort((a, b) => all[b] - all[a]);
+  if(ks.length) h += `<div class="gap-mini">Most common first-draft problems: ${ks.map(k => ENW_TYPES[k] + ' ×' + all[k]).join(' · ')}</div>`;
+  h += '<h3 style="margin:14px 0 4px;">Register switching</h3>';
+  if(!reg.length) h += '<div class="gap-mini">No rewrites yet.</div>';
+  else {
+    const by = {}; reg.forEach(x => { const k = x.from + ' → ' + x.to; (by[k] = by[k] || { n: 0, ok: 0 }).n++; if(x.pass) by[k].ok++; });
+    h += `<div class="cov-wrap"><table class="flu-table"><tr><th>Direction</th><th>Passed</th></tr>${Object.keys(by).map(k => `<tr><td>${escapeHtml(k)}</td><td>${by[k].ok}/${by[k].n}</td></tr>`).join('')}</table></div><div class="gap-mini">Small counts are noisy; look for a direction that keeps failing.</div>`;
+  }
+  return h;
+}
+function renderEnw(){
+  const root = document.getElementById('enwRoot'); if(!root || enw.busy) return;
+  const tabs = [['write', 'Professional writing'], ['reg', 'Register switching'], ['progress', 'Progress']];
+  root.innerHTML = `<h2>English writing — academic &amp; professional</h2>
+    <div class="gap-lang-toggle" style="margin:8px 0;">${tabs.map(t => `<button type="button" class="ghost${enw.tab === t[0] ? ' active' : ''}" data-enwtab="${t[0]}">${t[1]}</button>`).join('')}</div>
+    ${enw.tab === 'write' ? enwWriteHtml() : enw.tab === 'reg' ? enwRegHtml() : enwProgressHtml()}
+    <div class="status-msg${enw.msgErr ? ' err' : ''}" id="enwStatus">${escapeHtml(enw.msg || '')}</div>`;
+}
+(function(){
+  const root = document.getElementById('enwRoot'); if(!root) return;
+  root.addEventListener('input', e => { const k = e.target.dataset.enw; if(k) enw[k] = e.target.value; });
+  root.addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-enwtab]'); if(t){ enw.tab = t.dataset.enwtab; enwMsg(''); renderEnw(); return; }
+    const a = e.target.closest('[data-enwact]'); if(!a) return;
+    e.preventDefault(); const act = a.dataset.enwact;
+    const needKey = () => { if(getGeminiKeys().length) return false; enwMsg('Add a Gemini key in Sheet & AI settings first.', true); return true; };
+    if(act === 'newwrite'){
+      const used = enwItems('write').map(x => x.prompt), pool = ENW_TASKS.filter(p => !used.includes(p[1])), src = pool.length ? pool : ENW_TASKS, p = src[Math.floor(Math.random() * src.length)];
+      enw.cur = { id: uid(), type: 'write', date: todayStr(), createdAt: new Date().toISOString(), kind: p[0], prompt: p[1], rounds: [] }; enw.draft = ''; enwMsg(''); renderEnw(); return;
+    }
+    if(act === 'closewrite'){ enw.cur = null; enw.draft = ''; enwMsg(''); renderEnw(); return; }
+    if(act === 'check' && enw.cur){
+      const text = enw.draft.trim(), words = spkWords(text);
+      if(needKey()) return;
+      if(words < 30){ enwMsg('Write at least 30 words first.', true); return; }
+      enw.busy = true; renderEnw(); enwMsg('Checking…');
+      try{
+        const r = await enwCritique(text, enw.cur.prompt, enw.cur.kind);
+        enw.cur.rounds.push({ text: text.slice(0, 3000), words, errors: r.errors, corrected: r.corrected, comment: r.comment });
+        await enwSave(enw.cur); enwMsg('');
+      }catch(err){ enwMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
+      enw.busy = false; renderEnw(); return;
+    }
+    if(act === 'togaps' && enw.cur){
+      const r = enw.cur.rounds[enw.cur.rounds.length - 1]; let n = 0;
+      [...root.querySelectorAll('[data-enwerr]:checked')].forEach(b => { const er = r.errors[parseInt(b.dataset.enwerr, 10)]; if(er && captureGap({ lang: 'en', wanted: er.right, said: er.wrong, source: 'English writing', exEn: '', exAr: '' })) n++; });
+      enwMsg(n ? n + ' added to Gaps.' : 'Tick the corrections you want first.', !n); return;
+    }
+    if(act === 'newreg'){
+      const done = enwItems('reg').map(x => x.src), pool = ENW_REG.filter(p => !done.includes(p[2])), src = pool.length ? pool : ENW_REG, p = src[Math.floor(Math.random() * src.length)];
+      enw.reg = { from: p[0], to: p[1], src: p[2], res: null }; enw.regDraft = ''; enwMsg(''); renderEnw(); return;
+    }
+    if(act === 'closereg'){ enw.reg = null; enw.regDraft = ''; renderEnw(); return; }
+    if(act === 'regcheck' && enw.reg){
+      const text = enw.regDraft.trim(); if(needKey()) return;
+      if(spkWords(text) < 5){ enwMsg('Write your rewrite first.', true); return; }
+      enw.busy = true; renderEnw(); enwMsg('Judging…');
+      try{
+        const r = enw.reg, res = await enwRegisterJudge(r.src, r.from, r.to, text); r.res = res;
+        await enwSave({ id: uid(), type: 'reg', date: todayStr(), createdAt: new Date().toISOString(), from: r.from, to: r.to, src: r.src, text: text.slice(0, 800), pass: res.pass }); enwMsg('');
+      }catch(err){ enwMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
+      enw.busy = false; renderEnw(); return;
+    }
+    if(act === 'del'){
+      if(!confirm('Delete this from your history?')) return;
+      state.spk.enw = state.spk.enw.filter(x => x.id !== a.dataset.id); state.spk.deletedEnw = (state.spk.deletedEnw || []).concat([a.dataset.id]);
+      await saveSpk(); renderEnw();
+    }
+  });
+})();
+
+// =====================================================================
+// "MY REASON" CARD — top of the Today tab
+// Your own words about why you are doing this (editable any time), with a
+// live evidence strip built from what the app already records: streak,
+// hours this week, latest checkpoint, writing pieces. Nothing here changes
+// the daily tracker. Stored locally ('why') and included in the backup file.
+// =====================================================================
+let why = { editing: false };
+function whyData(){ const w = lsGet('why', null); return w && typeof w === 'object' ? w : { text: '', target: 14, since: '', updatedAt: '' }; }
+function whyEvidenceHtml(){
+  const rows = [];
+  try{
+    const st = getStreakInfo(getAllPracticedDateObjs());
+    rows.push(`<strong>${st.current}</strong>-day practice streak <span class="gap-mini">(longest ${st.longest})</span>${st.practicedToday ? ' · ✓ practised today' : ''}`);
+  }catch(e){}
+  try{
+    const today = todayStr(), from = addDays(today, -6), d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
+    const mins = hrsRange('en', from, today).total + hrsRange('ar', from, today).total, h = Math.round(mins / 6) / 10;
+    rows.push(`Last 7 days: <strong>${h} h</strong> logged of a ${tgt} h weekly target (${Math.min(100, Math.round(h / tgt * 100))}%)`);
+  }catch(e){}
+  ['en', 'ar'].forEach(l => {
+    try{
+      const L = cpList(l), c = L[L.length - 1];
+      if(!c){ rows.push(`${LANG_NAMES[l]} checkpoint: none yet — the first one is your baseline`); return; }
+      const bits = [];
+      if(c.vocab) bits.push(`${c.vocab.bankWords.toLocaleString()} bank words`, `${c.vocab.pct}% active recall`);
+      if(cpValid(c)){ bits.push(`${fluWpm(c.talk)} words/min`); const e = fluErrRate(c.talk); if(e !== null) bits.push(`${e} errors/100`); }
+      rows.push(`${LANG_NAMES[l]} checkpoint ${escapeHtml(c.date)} (${L.length} so far): ${bits.join(' · ') || 'incomplete'}`);
+    }catch(e){}
+  });
+  try{
+    const m = msaItems('write'), e = enwItems('write'), r = a => a.length ? ' — latest first draft ' + (a === m ? msaErrRate(m[m.length - 1].rounds[0]) : enwErrRate(e[e.length - 1].rounds[0])) + ' err/100' : '';
+    rows.push(`Writing pieces: Arabic <strong>${m.length}</strong>${m.length ? r(m) : ''} · English <strong>${e.length}</strong>${e.length ? r(e) : ''}`);
+  }catch(e){}
+  return rows.map(x => `<div style="margin:3px 0;">• ${x}</div>`).join('');
+}
+function renderWhy(){
+  const root = document.getElementById('whyRoot'); if(!root) return;
+  try{
+    const d = whyData(), editing = why.editing;
+    root.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><h3 style="margin:0;">My reason</h3>
+        ${editing ? '' : '<button class="ghost" type="button" data-whyact="edit">✎ Edit</button>'}</div>
+      ${editing ? `<textarea id="whyText" style="width:100%;box-sizing:border-box;min-height:90px;margin-top:8px;" placeholder="Write your reason in your own words — what you are building, and why it matters to you.">${escapeHtml(d.text)}</textarea>
+        <div class="row2" style="display:flex;gap:10px;margin-top:6px;align-items:center;"><label class="gap-mini" for="whyTarget">Weekly hours target</label><input type="number" id="whyTarget" min="1" max="60" step="0.5" value="${Number(d.target) > 0 ? d.target : 14}" style="width:80px;"></div>
+        <div class="card-actions"><button class="primary" type="button" data-whyact="save">Save</button><button class="ghost" type="button" data-whyact="cancel">Cancel</button></div>`
+      : (d.text ? `<div style="font-size:16px;line-height:1.5;margin:8px 0;white-space:pre-wrap;">${escapeHtml(d.text)}</div><div class="gap-mini">${d.since ? 'Committed since ' + escapeHtml(d.since) + ' · ' : ''}last edited ${escapeHtml((d.updatedAt || '').slice(0, 10))}</div>`
+        : '<div class="gap-mini" style="margin:8px 0;">Nothing written yet. Tap Edit and put your reason in your own words — you will see it here every day.</div>')}
+      <div class="gap-mini" style="margin:10px 0 2px;"><strong>Evidence so far</strong></div><div style="font-size:13px;">${whyEvidenceHtml()}</div>`;
+  }catch(err){ root.innerHTML = ''; }
+}
+(function(){
+  const root = document.getElementById('whyRoot'); if(!root) return;
+  root.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-whyact]'); if(!a) return;
+    const act = a.dataset.whyact;
+    if(act === 'edit'){ why.editing = true; renderWhy(); const t = document.getElementById('whyText'); if(t) t.focus(); return; }
+    if(act === 'cancel'){ why.editing = false; renderWhy(); return; }
+    if(act === 'save'){
+      const d = whyData(), text = (document.getElementById('whyText').value || '').trim().slice(0, 1500), tg = parseFloat(document.getElementById('whyTarget').value);
+      lsSet('why', { text, target: isNaN(tg) || tg <= 0 ? 14 : tg, since: d.since || (text ? todayStr() : ''), updatedAt: new Date().toISOString() });
+      why.editing = false; renderWhy();
+    }
+  });
+})();
+
+// ---------- Hours tab: target + recommended time plan (a card inside the existing Hours tab) ----------
+function hrsPlanHtml(){
+  let wk = '';
+  try{
+    const today = todayStr(), from = addDays(today, -6), mins = hrsRange('en', from, today).total + hrsRange('ar', from, today).total, d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
+    wk = `<div class="spk-metrics">Last 7 days (both languages): <strong>${Math.round(mins / 6) / 10} h</strong> logged · your weekly target <strong>${tgt} h</strong> (change it in “My reason” on Today) · part-time PhD benchmark <strong>15–20 h</strong></div>`;
+  }catch(e){}
+  const row = l => { const T = cpTargets(l); return `<tr><td>${LANG_NAMES[l]}</td><td>${Number(T.words).toLocaleString()}</td><td>${T.active}%</td><td>${T.wpm}</td><td>≤ ${T.err}</td><td>≤ ${T.pauses}</td></tr>`; };
+  return `<details class="hrs-card" open><summary><strong>🎯 Target &amp; recommended time (PhD-level benchmark)</strong></summary>
+    <p style="margin:8px 0 4px;"><strong>The target.</strong> Professional-level Arabic (MSA) <em>and</em> English, roughly CEFR C1: write memos, reports and essays with few errors in a formal register, and speak for two minutes on an unprepared topic without long pauses. Measured at the monthly Checkpoint against these numbers (placeholders I chose — edit them in the Checkpoint tab):</p>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Language</th><th>Bank words</th><th>Active recall</th><th>Words/min</th><th>Errors/100</th><th>Pauses/min</th></tr>${row('ar')}${row('en')}</table></div>
+    <p style="margin:8px 0 4px;"><strong>Benchmark: a part-time PhD.</strong> Universities expect about 15–20 hours a week (full-time is about 35–40): Birmingham City 15–18, Huddersfield 17.5, Open University at least 18.5, Oxford at least 20.</p>
+    <p style="margin:8px 0 4px;"><strong>Recommended time.</strong></p>
+    <ul style="margin:0 0 6px 18px;padding:0;">
+      <li><strong>Start (about 14 h/week):</strong> 2 h a day at the desk — 75 min Arabic, 45 min English, tilted toward writing and speaking with feedback — plus about 50 min a day of Arabic reading or listening outside the desk hours.</li>
+      <li><strong>Step up to PhD level (about 21 h/week):</strong> add 15 min per language, then another 15, but only after two straight weeks on target. Add it only if adherence stays at 80%+ and English is still behind its targets.</li>
+      <li><strong>Once a month:</strong> run the Checkpoint, and get one human review of your Arabic writing.</li>
+      <li><strong>After your third checkpoint:</strong> re-split the time between languages using your own numbers.</li>
+    </ul>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Over 24 months (80% of days)</th><th>Start plan</th><th>+30 min each</th></tr>
+      <tr><td>Arabic / English hours</td><td>~1,200 / ~435</td><td>~1,500 / ~725</td></tr>
+      <tr><td>Chance of reaching the target</td><td>Both 40–50%</td><td>Both 50–60%</td></tr></table></div>
+    <div class="gap-mini">These odds are my judgement, not a calculation. They fall if you stay on plan less than 80% of days, and a plan you keep for 24 months beats a bigger one you drop. The Checkpoint forecast replaces them with your own data once you have three.</div>
+    ${wk}</details>`;
+}
 
 </script>
 </body>
