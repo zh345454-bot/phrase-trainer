@@ -413,6 +413,9 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
 .chat-sources a{ color:var(--brass-deep); }
 .chat-input-row{ display:flex; gap:8px; }
 .chat-input-row input{ flex:1; }
+.chat-thread, .chat-thread .chat-bubble{ -webkit-user-select:text; user-select:text; }
+.chat-actions{ display:flex; gap:6px; margin-top:8px; -webkit-user-select:none; user-select:none; }
+.chat-actions button{ font-size:12px; padding:4px 10px; }
 
 /* Flashcards */
 .flash-card{ background:#fff; border:1px solid var(--line); padding:12px; margin-bottom:12px; }
@@ -1488,12 +1491,17 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <div class="modal">
     <h2 id="aiModalTitle">Ask AI</h2>
     <p id="aiModalSub">Powered by Gemini with Google Search grounding — answers include sources where relevant.</p>
-    <div class="chat-thread" id="chatThread"></div>
+    <div class="chat-thread" id="chatThread" tabindex="0"></div>
     <div class="chat-input-row">
-      <input type="text" id="chatInput" placeholder="Ask about a rule, usage, or MSA vs. dialect...">
+      <input type="text" id="chatInput" placeholder="Ask a question — or add “translate” for paste-ready phrases">
+      <button class="ghost" id="chatMicBtn" type="button" title="Dictate">🎤</button>
+      <select id="chatMicLang" style="width:auto;" title="Language you will speak"><option value="en">EN</option><option value="ar">AR</option></select>
       <button class="primary" id="chatSendBtn">Send</button>
     </div>
+    <div class="status-msg" id="chatNote"></div>
+    <p class="count-note" style="margin:6px 0 0;">Include the word <strong>translate</strong> to get your phrase corrected and translated as lines you can add to the bank in one click (English | Arabic | Category). Without it, Arabic comes with full tashkil, and each verb with الماضي · المضارع · المصدر.</p>
     <div class="modal-actions">
+      <button class="ghost" id="chatCopyAll" type="button">Copy conversation</button>
       <button class="ghost" id="closeAi">Close</button>
     </div>
   </div>
@@ -8339,7 +8347,8 @@ function openAiModal(entry){
 document.getElementById('aiBtn').addEventListener('click', ()=> openAiModal(null));
 document.getElementById('closeAi').addEventListener('click', ()=> document.getElementById('aiModal').classList.remove('open'));
 
-function appendChatBubble(role, text, sources){
+function appendChatBubble(role, text, sources, opts){
+  opts = opts || {};
   const thread = document.getElementById('chatThread');
   const bubble = document.createElement('div');
   bubble.className = 'chat-bubble ' + role;
@@ -8347,6 +8356,10 @@ function appendChatBubble(role, text, sources){
   if(sources && sources.length){
     html += '<div class="chat-sources">Sources: ' + sources.map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>`).join(' · ') + '</div>';
   }
+  if(role === 'assistant' && opts.raw !== undefined){
+    bubble.dataset.raw = opts.raw;
+    html += '<div class="chat-actions"><button class="ghost" type="button" data-chatcopy="1">📋 Copy</button>' + (opts.bulk ? '<button class="primary" type="button" data-chatbank="1">➕ Add to bank</button>' : '') + '</div><div class="status-msg" data-chatstatus="1"></div>';
+  } else if(role === 'user'){ bubble.dataset.raw = text; }
   bubble.innerHTML = html;
   thread.appendChild(bubble);
   thread.scrollTop = thread.scrollHeight;
@@ -8368,11 +8381,15 @@ async function sendChat(){
     ? `Context — grammar entry "${currentAiEntry.title}" (${currentAiEntry.language}, ${currentAiEntry.category || 'uncategorized'}): ${currentAiEntry.rule_summary || ''}\n\nUser question: `
     : '';
   try{
-    const { text: reply, sources, fallback, ungrounded, model } = await callGemini(contextPrefix + text, { history: chatHistory.slice(0,-1), useSearch: true });
+    const bulkMode = /translat|ترجم/i.test(text);   // "translate" → paste-ready bulk-add lines
+    if(bulkMode) loadingBubble.textContent = 'Correcting and translating…';
+    const { text: reply, sources, fallback, ungrounded, model } = await callGemini(contextPrefix + text, { history: chatHistory.slice(0,-1), useSearch: !bulkMode, system: chatSystemFor(bulkMode) });
     loadingBubble.remove();
     const aiNote = fallback ? '\n\n(Answered by the fallback AI ' + model + ' — no live web search, and weaker on Arabic. Double-check it.)'
       : ungrounded ? '\n\n(Answered without live web search.)' : '';
-    appendChatBubble('assistant', reply + aiNote, sources);
+    let shown = reply, raw = reply, bulk = false;
+    if(bulkMode){ const ls = chatCleanBulk(reply); if(ls.length){ shown = raw = ls.join('\n'); bulk = true; } }
+    appendChatBubble('assistant', shown + aiNote + (bulkMode && !bulk ? '\n\n(I could not read this as phrase lines — check it before copying.)' : ''), bulk ? null : sources, { raw, bulk });
     chatHistory.push({ role: 'assistant', content: reply });
   }catch(err){
     console.error('Gemini chat error:', err);
@@ -13609,6 +13626,112 @@ function rsOfferLog(){
     if(!e.target.matches('[data-rplang]')) return;
     const it = rsCurItem(); if(it){ it.lang = e.target.value === 'ar' ? 'ar' : 'en'; it.updatedAt = new Date().toISOString(); saveSpk(); }
   });
+})();
+
+// =====================================================================
+// ASK AI upgrades
+//  1. Copy: a 📋 Copy button on every answer + "Copy conversation", and Ctrl/Cmd+A while Ask AI is open
+//     selects ONLY the conversation (not the whole page behind it).
+//  2. 🎤 Dictate: same record → Apps Script transcription as the Dictate button in Practice & log.
+//  3. Two automatic answer formats:
+//     • message contains "translate" (or ترجم): the AI corrects your English phrase(s), translates to MSA and
+//       answers ONLY in the "Add several at once" format  English | Arabic | Category  — with a one-click
+//       ➕ Add to bank button that feeds the existing bulk-add (same duplicate / known-word checks).
+//     • otherwise: Arabic is written with full tashkil, and every Arabic verb (or verb-derived noun) comes with
+//       الماضي · المضارع · المصدر.
+// =====================================================================
+function chatSystemFor(bulk){
+  const plain = ' Write plain text only: no markdown, no asterisks, no # headings, no tables, no code fences.';
+  if(bulk){
+    const cats = [...new Set((state.bank || []).map(p => String(p.category || '').trim()).filter(Boolean))].slice(0, 40);
+    return 'The user is learning Modern Standard Arabic and will give one or more English phrases, possibly with mistakes, and ask for a translation. For EACH phrase: first correct the English (grammar, spelling, natural wording, same meaning), then translate the corrected phrase into natural Modern Standard Arabic. '
+      + 'Output ONLY lines in exactly this format, one phrase per line, nothing before or after:\nEnglish | Arabic | Category\n'
+      + '"English" = the corrected English phrase. "Arabic" = the MSA translation (no tashkil unless needed to avoid ambiguity). "Category" = a short category of 1-3 words' + (cats.length ? '; reuse one of these existing categories when it fits: ' + cats.join(', ') : '') + '. '
+      + 'Use the vertical bar | only as the separator. No headings, numbering, bullets, explanations or notes. If a phrase is already correct, keep it unchanged. Ignore any part of the message that is not a phrase to translate.' + plain;
+  }
+  return 'Whenever your answer contains Arabic, write it with full tashkil (all short vowels, shadda, sukun, tanwin). '
+    + 'Whenever your answer contains an Arabic verb, or a noun derived from a verb, give for it these three forms, each fully vowelled, on separate lines in this order:\nالماضي (past): …\nالمضارع (present): …\nالمصدر (verbal noun): …\n'
+    + 'If a verb has more than one common masdar, list the common ones. Give these forms once per verb, not repeatedly. Do not add them to answers that contain no Arabic verb.' + plain;
+}
+function chatCleanBulk(reply){
+  const out = [];
+  String(reply || '').replace(/```[a-z]*/gi, '').split('\n').forEach(l => {
+    l = l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/\*\*/g, '').trim();
+    if(!l.includes('|')) return;
+    const p = l.split('|').map(s => s.trim());
+    if(p.length < 2 || !p[0] || !p[1]) return;
+    if(/^english$/i.test(p[0]) && /^arabic$/i.test(p[1])) return;       // header line some models add anyway
+    out.push([p[0], p[1], p[2] || ''].join(' | ').replace(/ \| $/, ''));
+  });
+  return out;
+}
+async function chatCopy(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    try{ const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); const ok = document.execCommand('copy'); t.remove(); return ok; }
+    catch(e2){ return false; }
+  }
+}
+(function(){
+  const aiModal = document.getElementById('aiModal'), thread = document.getElementById('chatThread');
+  if(!aiModal || !thread) return;
+  // --- copy buttons / add to bank ---
+  thread.addEventListener('click', async e => {
+    const b = e.target.closest('[data-chatcopy],[data-chatbank]'); if(!b) return;
+    const bubble = b.closest('.chat-bubble'), raw = bubble.dataset.raw || '', st = bubble.querySelector('[data-chatstatus]');
+    const say = (m, err) => { st.textContent = m; st.className = 'status-msg' + (err ? ' err' : ''); };
+    if(b.dataset.chatcopy){ say((await chatCopy(raw)) ? 'Copied.' : 'Could not copy — press and hold the text to select it.', false); return; }
+    const area = document.getElementById('quickAddArea'), multi = document.getElementById('quickAddAllowMultiWord'), status = document.getElementById('quickAddStatus');
+    area.value = (area.value.trim() ? area.value.trim() + '\n' : '') + raw; multi.checked = true; status.textContent = '';
+    b.disabled = true; say('Adding…', false);
+    document.getElementById('quickAddBankBtn').click();                  // the existing bulk-add: same duplicate and known-word checks
+    for(let i = 0; i < 30 && !status.textContent; i++) await new Promise(r => setTimeout(r, 150));
+    say(status.textContent || 'Sent to the bank — check the Bank tab.', false);
+  });
+  // --- Ctrl/Cmd+A while Ask AI is open: select only the conversation ---
+  document.addEventListener('keydown', e => {
+    if(!(e.ctrlKey || e.metaKey) || String(e.key).toLowerCase() !== 'a' || !aiModal.classList.contains('open')) return;
+    const t = e.target; if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;   // in the box: normal select-all of that box
+    e.preventDefault();
+    const r = document.createRange(); r.selectNodeContents(thread); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  });
+  // --- copy the whole conversation ---
+  document.getElementById('chatCopyAll').addEventListener('click', async () => {
+    const note = document.getElementById('chatNote');
+    const txt = [...thread.querySelectorAll('.chat-bubble')].map(b => (b.classList.contains('user') ? 'Me: ' : 'AI: ') + (b.dataset.raw !== undefined ? b.dataset.raw : (b.firstChild ? b.textContent : ''))).join('\n\n');
+    if(!txt.trim()){ note.textContent = 'Nothing to copy yet.'; note.className = 'status-msg err'; return; }
+    note.textContent = (await chatCopy(txt)) ? 'Conversation copied.' : 'Could not copy — press and hold the text to select it.'; note.className = 'status-msg';
+  });
+  // --- 🎤 dictate (same transcription path as Practice & log → Dictate) ---
+  let rec = null, chunks = [], discard = false;
+  const btn = document.getElementById('chatMicBtn'), note = document.getElementById('chatNote');
+  const reset = () => { btn.textContent = '🎤'; btn.disabled = false; btn.classList.remove('quick-dictate', 'listening'); };
+  const say = (m, err) => { note.textContent = m; note.className = 'status-msg' + (err ? ' err' : ''); };
+  btn.addEventListener('click', async () => {
+    if(rec && rec.state === 'recording'){ rec.stop(); return; }
+    if(!navigator.mediaDevices || !window.MediaRecorder){ say('This browser does not support audio recording.', true); return; }
+    if(!state.settings.webAppUrl){ say('Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.', true); return; }
+    if(window.speechSynthesis) window.speechSynthesis.cancel();
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = []; discard = false; rec = new MediaRecorder(stream);
+      rec.ondataavailable = ev => { if(ev.data.size > 0) chunks.push(ev.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); chunks = [];
+        if(discard){ reset(); say(''); return; }
+        btn.textContent = '…'; btn.disabled = true; btn.classList.remove('listening'); say('Transcribing…');
+        try{
+          const text = await fluTranscribe(blob, document.getElementById('chatMicLang').value);
+          if(!text) say('Nothing was heard in that recording — try again, closer to the mic.', true);
+          else { const inp = document.getElementById('chatInput'); inp.value = (inp.value.trim() ? inp.value.trim() + ' ' : '') + text; inp.focus(); say(''); }
+        }catch(err){ say(err.message || 'Transcription failed.', true); }
+        reset();
+      };
+      rec.start(); btn.textContent = '⏺ Stop'; btn.classList.add('quick-dictate', 'listening'); say('Recording — speak now, then tap Stop.');
+    }catch(err){ say('Could not access the microphone.', true); reset(); }
+  });
+  document.getElementById('closeAi').addEventListener('click', () => { if(rec && rec.state === 'recording'){ discard = true; rec.stop(); } });
 })();
 
 </script>
