@@ -1064,6 +1064,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   </section>
 
   <section class="view" id="view-hours">
+    <div class="panel" id="rsHostPanel" style="display:none;"><div id="rsHost"></div></div>
     <div class="panel"><div id="hrsRoot"></div></div>
     <div class="panel"><div id="hrsSync"></div></div>
   </section>
@@ -1641,6 +1642,8 @@ async function loadState(){
   if(!Array.isArray(state.spk.deletedMsa)) state.spk.deletedMsa = [];
   if(!Array.isArray(state.spk.enw)) state.spk.enw = [];
   if(!Array.isArray(state.spk.deletedEnw)) state.spk.deletedEnw = [];
+  if(!Array.isArray(state.spk.resume)) state.spk.resume = [];
+  if(!Array.isArray(state.spk.deletedResume)) state.spk.deletedResume = [];
   state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
   if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -10099,7 +10102,9 @@ function mergeSpk(local, incoming){
   const goneE = new Set((local && local.deletedEnw || []).concat(incoming && incoming.deletedEnw || []));
   const enwMerged = mergeById(local && local.enw, incoming && incoming.enw).filter(t => !goneE.has(t.id));
   enwMerged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-  return { patterns, cycles, talks, deletedTalks: [...gone], checkpoints, deletedCheckpoints: [...goneC], msa: msaItemsMerged, deletedMsa: [...goneM], enw: enwMerged, deletedEnw: [...goneE] };
+  const goneR = new Set((local && local.deletedResume || []).concat(incoming && incoming.deletedResume || []));
+  const resumeMerged = mergeById(local && local.resume, incoming && incoming.resume).filter(t => !goneR.has(t.id));
+  return { patterns, cycles, talks, deletedTalks: [...gone], checkpoints, deletedCheckpoints: [...goneC], msa: msaItemsMerged, deletedMsa: [...goneM], enw: enwMerged, deletedEnw: [...goneE], resume: resumeMerged, deletedResume: [...goneR] };
 }
 function spkToRows(){
   return state.spk.patterns.map(p => ({ kind: 'pattern', id: p.id, key: p.name, data: JSON.stringify(p), updatedAt: p.updatedAt || '' }))
@@ -10107,10 +10112,11 @@ function spkToRows(){
     .concat((state.spk.talks || []).map(t => ({ kind: 'talk', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
     .concat((state.spk.checkpoints || []).map(t => ({ kind: 'checkpoint', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
     .concat((state.spk.msa || []).map(t => ({ kind: 'msa', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
-    .concat((state.spk.enw || []).map(t => ({ kind: 'enw', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
+    .concat((state.spk.enw || []).map(t => ({ kind: 'enw', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
+    .concat((state.spk.resume || []).map(t => ({ kind: 'resume', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
 }
 function spkFromRows(rows){
-  const out = { patterns: [], cycles: [], talks: [], checkpoints: [], msa: [], enw: [] };
+  const out = { patterns: [], cycles: [], talks: [], checkpoints: [], msa: [], enw: [], resume: [] };
   (rows || []).forEach(r => {
     let d; try{ d = JSON.parse(r.data); }catch(e){ return; }
     if(!d || !d.id) return;
@@ -10121,6 +10127,7 @@ function spkFromRows(rows){
     else if(r.kind === 'checkpoint' && d.date) out.checkpoints.push(d);
     else if(r.kind === 'msa' && d.date) out.msa.push(d);
     else if(r.kind === 'enw' && d.date) out.enw.push(d);
+    else if(r.kind === 'resume' && d.date) out.resume.push(d);
   });
   return out;
 }
@@ -10894,6 +10901,7 @@ function renderHours(){
   const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
   let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
     <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
+  html += hrsResumeHtml();
   html += hrsPlanHtml();
   // timer
   if(t){
@@ -11710,6 +11718,7 @@ document.addEventListener('keydown', (e) => {
   renderDashboard();
   renderHours(); hrsBadge();
   renderSentenceBuild();
+  rsImportHash();   // a save sent by the YouTube bookmarklet (#rs=…)
 
   // Silently catch up today's drill progress from another device, if any —
   // best-effort and non-blocking, so a slow/offline sheet never delays the
@@ -13257,6 +13266,326 @@ function hrsPlanHtml(){
     <div class="gap-mini">These odds are my judgement, not a calculation. They fall if you stay on plan less than 80% of days, and a plan you keep for 24 months beats a bigger one you drop. The Checkpoint forecast replaces them with your own data once you have three.</div>
     ${wk}</details>`;
 }
+
+// =====================================================================
+// CONTINUE WHERE I STOPPED — Hours tab, Batch A (manual, with smart parsing)
+// A browser page cannot see what you are watching in another tab or the
+// YouTube app, so this list is filled by pasting a link (YouTube's "Copy
+// video URL at current time" / "Share → Start at" links carry the time
+// themselves) or typing the time. Continue reopens the video at that time.
+// Items live in state.spk.resume (kind 'resume' in the Speaking sync, so
+// they follow you between phone and laptop; backups include them).
+// =====================================================================
+let rs = { url: '', pos: '', title: '', editing: '', msg: '', msgErr: false, busy: false };
+function rsItems(){ return (state.spk.resume || []).filter(x => !x.done).sort((a, b) => (b.touchedAt || '').localeCompare(a.touchedAt || '')); }
+function rsMsg(m, err){ rs.msg = m || ''; rs.msgErr = !!err; }
+function rsFmt(sec){ sec = Math.max(0, Math.floor(sec || 0)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); }
+function rsParseTime(s){
+  s = String(s || '').trim().toLowerCase(); if(!s) return null;
+  let m = s.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
+  if(m) return m[3] !== undefined ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : (+m[1]) * 60 + (+m[2]);
+  m = s.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
+  if(m && (m[1] || m[2] || m[3])) return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+  return null;
+}
+function rsParseUrl(raw){
+  raw = String(raw || '').trim(); if(!raw) return null;
+  let u; try{ u = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw); }catch(e){ return null; }
+  if(!u.hostname.includes('.')) return null;
+  const host = u.hostname.replace(/^(www|m)\./, ''); let id = '', pos = null, platform = 'web';
+  if(host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+  else if(host.endsWith('youtube.com')){ if(u.pathname === '/watch') id = u.searchParams.get('v') || ''; else { const m = u.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})/); if(m) id = m[1]; } }
+  if(/^[\w-]{11}$/.test(id)){ platform = 'youtube'; const t = u.searchParams.get('t') || u.searchParams.get('start'); if(t) pos = rsParseTime(t); }
+  else { id = ''; if(host.endsWith('vimeo.com')) platform = 'vimeo'; }
+  return { url: u.href, host, platform, id, pos };
+}
+function rsLink(it){
+  const p = Math.floor(it.pos || 0);
+  if(it.platform === 'youtube' && it.vid) return 'https://www.youtube.com/watch?v=' + it.vid + (p > 0 ? '&t=' + p + 's' : '');
+  if(it.platform === 'vimeo') return it.url.split('#')[0] + (p > 0 ? '#t=' + p + 's' : '');
+  return it.url;
+}
+function rsAgo(iso){ const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)); return m < 2 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago'; }
+async function rsTitle(url){
+  try{ const c = new AbortController(), t = setTimeout(() => c.abort(), 4000);
+    const r = await fetch('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url), { signal: c.signal }); clearTimeout(t);
+    if(!r.ok) return ''; const j = await r.json(); return String(j.title || '').slice(0, 120);
+  }catch(e){ return ''; }
+}
+async function rsAdd(){
+  const p = rsParseUrl(rs.url); if(!p){ rsMsg('Paste a full link first (https://…).', true); return; }
+  let pos = rsParseTime(rs.pos); if(rs.pos.trim() && pos === null){ rsMsg('Time not understood — use 12:34, 1:02:03 or 5m30s.', true); return; }
+  if(pos === null) pos = p.pos;
+  const list = state.spk.resume, now = new Date().toISOString();
+  let it = list.find(x => p.id ? x.vid === p.id : x.url === p.url), isNew = !it;
+  if(isNew){ it = { id: uid(), type: 'resume', date: todayStr(), createdAt: now, platform: p.platform, vid: p.id, url: p.url, host: p.host, title: '', pos: 0, lang: uiLang(), done: false }; }
+  if(pos !== null) it.pos = pos;
+  if(rs.title.trim()) it.title = rs.title.trim().slice(0, 120);
+  if(!it.title && p.platform === 'youtube'){ rs.busy = true; renderHours(); it.title = await rsTitle(p.url); rs.busy = false; }
+  if(!it.title) it.title = p.platform === 'youtube' ? 'YouTube video ' + p.id : p.host;
+  it.done = false; it.touchedAt = now; it.updatedAt = now;
+  if(isNew) list.push(it);
+  await saveSpk();
+  rs.url = ''; rs.pos = ''; rs.title = ''; rsMsg((isNew ? 'Saved' : 'Updated') + ' — ' + (pos !== null ? 'stopped at ' + rsFmt(pos) : 'no time yet (add one with ✎ Update position)') + '.');
+  renderHours();
+  return it;
+}
+function rsItemHtml(it, big){
+  const edit = rs.editing === it.id, plat = it.platform === 'youtube' ? 'YouTube' : it.platform === 'vimeo' ? 'Vimeo' : escapeHtml(it.host || 'web');
+  return `<div class="${big ? 'spk-metrics' : ''}" style="${big ? '' : 'padding:8px 0;border-top:1px solid var(--line);'}">
+    <div style="${big ? 'font-size:16px;' : 'font-size:14px;'}"><strong>${escapeHtml(it.title)}</strong></div>
+    <div class="gap-mini">${plat} · ${it.pos ? 'stopped at <strong>' + rsFmt(it.pos) + '</strong>' : 'no time saved'} · ${rsAgo(it.touchedAt)}</div>
+    ${edit ? `<div class="card-actions"><input type="text" id="rsNewPos" value="${it.pos ? rsFmt(it.pos) : ''}" placeholder="12:34 — or paste a link at the current time" style="min-width:200px;"><button class="primary" type="button" data-rsact="saveupd" data-id="${it.id}">Save</button><button class="ghost" type="button" data-rsact="cancelupd">Cancel</button></div>`
+      : `<div class="card-actions">${it.platform === 'youtube' ? `<button class="primary" type="button" data-rsact="play" data-id="${it.id}">▶ Play here${it.pos ? ' from ' + rsFmt(it.pos) : ''}</button>` : ''}<a class="${it.platform === 'youtube' ? 'ghost' : 'primary'}" style="text-decoration:none;display:inline-block;padding:8px 14px;" href="${escapeHtml(rsLink(it))}" target="_blank" rel="noopener" data-rsact="go" data-id="${it.id}">${it.platform === 'youtube' ? '↗ Open on YouTube' : '▶ Continue'}${it.pos ? ' from ' + rsFmt(it.pos) : ''}</a><button class="ghost" type="button" data-rsact="upd" data-id="${it.id}">✎ Update position</button><button class="ghost" type="button" data-rsact="done" data-id="${it.id}">Finished</button><button class="ghost" type="button" data-rsact="del" data-id="${it.id}">Delete</button></div>`}</div>`;
+}
+function hrsResumeHtml(){
+  const list = rsItems(), top = list[0];
+  return `<details class="hrs-card" open><summary><strong>▶ Continue where I stopped</strong></summary>
+    ${top ? '<div class="gap-mini" style="margin:8px 0 4px;">Last one you were on</div>' + rsItemHtml(top, true) : '<p class="gap-mini" style="margin:8px 0;">Nothing saved yet. Paste a link below.</p>'}
+    <div class="spk-form" style="margin-top:10px;"><label class="gap-mini">Link (YouTube, a site, an article…)</label>
+      <div style="display:flex;gap:6px;"><input type="text" data-rsf="url" value="${escapeHtml(rs.url)}" placeholder="https://youtu.be/…?t=754" style="flex:1;min-width:0;"><button class="ghost" type="button" data-rsact="paste">Paste</button></div>
+      <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;"><div style="flex:1;min-width:120px;"><label class="gap-mini">Stopped at (optional)</label><input type="text" data-rsf="pos" value="${escapeHtml(rs.pos)}" placeholder="12:34"></div>
+        <div style="flex:2;min-width:160px;"><label class="gap-mini">Title (optional)</label><input type="text" data-rsf="title" value="${escapeHtml(rs.title)}" placeholder="filled in for YouTube if left empty"></div></div>
+      <div class="card-actions"><button class="primary" type="button" data-rsact="add"${rs.busy ? ' disabled' : ''}>${rs.busy ? 'Saving…' : 'Save / update'}</button><button class="ghost" type="button" data-rsact="addplay"${rs.busy ? ' disabled' : ''}>Save &amp; play here</button></div>
+      <div class="status-msg${rs.msgErr ? ' err' : ''}">${escapeHtml(rs.msg || '')}</div></div>
+    <div class="gap-mini"><strong>Quickest way to save your exact spot:</strong> on YouTube, pause, then use <em>Share → tick “Start at”</em> (phone) or <em>right-click the video → Copy video URL at current time</em> (desktop), and paste that link here. If you paste the same video again, it updates the time instead of adding a duplicate. The app can’t see a YouTube tab or the YouTube app, so those need this tap. <strong>▶ Play here</strong> plays a YouTube video inside the app instead, and then your spot is saved automatically.</div>
+    ${rsBmHtml()}
+    ${list.length > 1 ? '<div class="gap-mini" style="margin:10px 0 2px;">Earlier</div>' + list.slice(1, 9).map(x => rsItemHtml(x, false)).join('') : ''}</details>`;
+}
+(function(){
+  const root = document.getElementById('hrsRoot'); if(!root) return;
+  root.addEventListener('input', e => { const k = e.target.dataset && e.target.dataset.rsf; if(k) rs[k] = e.target.value; });
+  root.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-rsact]'); if(!a) return;
+    const act = a.dataset.rsact, it = a.dataset.id ? (state.spk.resume || []).find(x => x.id === a.dataset.id) : null;
+    if(act === 'go'){ if(it){ it.touchedAt = new Date().toISOString(); it.updatedAt = it.touchedAt; saveSpk(); } return; }   // let the link open
+    e.preventDefault();
+    if(act === 'add'){ await rsAdd(); return; }
+    if(act === 'paste'){
+      try{ const t = await navigator.clipboard.readText(); if(t){ rs.url = t.trim(); const p = rsParseUrl(rs.url); if(p && p.pos !== null && !rs.pos) rs.pos = rsFmt(p.pos); rsMsg(''); } }
+      catch(err){ rsMsg('Your browser blocked clipboard access — long-press the box and paste instead.', true); }
+      renderHours(); return;
+    }
+    if(act === 'upd'){ rs.editing = a.dataset.id; renderHours(); const i = document.getElementById('rsNewPos'); if(i) i.select(); return; }
+    if(act === 'cancelupd'){ rs.editing = ''; renderHours(); return; }
+    if(act === 'saveupd' && it){
+      const v = (document.getElementById('rsNewPos').value || '').trim(); let pos = rsParseTime(v);
+      if(pos === null && v){ const p = rsParseUrl(v); if(p && p.pos !== null && (!it.vid || p.id === it.vid)) pos = p.pos; }
+      if(pos === null){ rsMsg('Enter a time like 12:34, or paste a link taken at the current time.', true); renderHours(); return; }
+      it.pos = pos; it.touchedAt = new Date().toISOString(); it.updatedAt = it.touchedAt; await saveSpk(); rs.editing = ''; rsMsg('Position updated to ' + rsFmt(pos) + '.'); renderHours(); return;
+    }
+    if(act === 'done' && it){ it.done = true; it.updatedAt = new Date().toISOString(); await saveSpk(); renderHours(); return; }
+    if(act === 'del' && it){
+      if(!confirm('Delete this saved item?')) return;
+      state.spk.resume = state.spk.resume.filter(x => x.id !== it.id); state.spk.deletedResume = (state.spk.deletedResume || []).concat([it.id]); await saveSpk(); renderHours();
+    }
+  });
+})();
+
+// =====================================================================
+// CONTINUE WHERE I STOPPED — Batch B: in-app YouTube player
+// Videos played HERE can be tracked automatically (the YouTube IFrame
+// Player API reports the current time to the page that embeds it — it cannot
+// do that for a YouTube tab or the YouTube app). The player lives in its own
+// panel (#rsHost), outside the Hours panel that re-renders, so playback is
+// never interrupted. The spot is saved every 5 s while playing, on pause,
+// when the tab is hidden and when the page closes (local save only).
+// Some videos forbid embedding; those show a link to open them on YouTube.
+// =====================================================================
+let rsp = { player: null, itemId: '', tick: null, api: null, msg: '', watchMs: 0, playAt: 0 };
+function rsLoadApi(){
+  if(window.YT && window.YT.Player) return Promise.resolve();
+  if(rsp.api) return rsp.api;
+  rsp.api = new Promise((res, rej) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { try{ if(prev) prev(); }catch(e){} res(); };
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { rsp.api = null; rej(new Error('Could not load the YouTube player (offline, or blocked by the network).')); };
+    document.head.appendChild(s);
+  });
+  return rsp.api;
+}
+function rsCurItem(){ return (state.spk.resume || []).find(x => x.id === rsp.itemId); }
+function rsPosLabel(){ const el = document.getElementById('rsPosLabel'), it = rsCurItem(); if(el && it) el.textContent = it.pos ? 'Spot saved: ' + rsFmt(it.pos) : 'No spot saved yet'; rsWatchLabel(); }
+function rsSavePos(){
+  const it = rsCurItem(); if(!rsp.player || !it || typeof rsp.player.getCurrentTime !== 'function') return;
+  let st; try{ st = rsp.player.getPlayerState(); }catch(e){ return; }
+  if(st === -1 || st === 5) return;                       // not started / just cued: never overwrite with 0
+  let t; try{ t = rsp.player.getCurrentTime(); }catch(e){ return; }
+  if(typeof t !== 'number' || !isFinite(t) || t < 0) return;
+  it.pos = st === 0 ? 0 : Math.floor(t); it.touchedAt = it.updatedAt = new Date().toISOString(); saveSpk(); rsPosLabel();
+}
+function rsHostMsg(m, linkIt){
+  const el = document.getElementById('rsHostMsg'); if(!el) return;
+  el.innerHTML = escapeHtml(m || '') + (linkIt ? ` <a href="${escapeHtml(rsLink(linkIt))}" target="_blank" rel="noopener">Open on YouTube${linkIt.pos ? ' from ' + rsFmt(linkIt.pos) : ''}</a>` : '');
+}
+function rsRenderHost(){
+  const host = document.getElementById('rsHost'), panel = document.getElementById('rsHostPanel'), it = rsCurItem();
+  if(!host || !panel) return;
+  if(!it){ panel.style.display = 'none'; host.innerHTML = ''; return; }
+  panel.style.display = '';
+  host.innerHTML = `<style>#rsFrameWrap{position:relative;padding-top:56.25%;background:#000;} #rsFrameWrap iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0;}</style>
+    <h3 style="margin:0 0 4px;">▶ Playing in the app</h3><div class="gap-mini" style="margin-bottom:6px;">${escapeHtml(it.title)} · <span id="rsPosLabel"></span></div>
+    <div class="gap-mini" style="margin-bottom:6px;">Watched this session: <strong id="rsWatchLabel">0 min</strong> (time actually playing) · Language <select data-rplang style="width:auto;display:inline-block;"><option value="en"${it.lang !== 'ar' ? ' selected' : ''}>English</option><option value="ar"${it.lang === 'ar' ? ' selected' : ''}>Arabic</option></select></div>
+    <div id="rsFrameWrap"><div id="rsFrame"></div></div>
+    <div class="card-actions"><button class="ghost" type="button" data-rpact="back">⟲ 10 s</button><button class="ghost" type="button" data-rpact="fwd">10 s ⟳</button><button class="ghost" type="button" data-rpact="save">Save spot now</button><button class="ghost" type="button" data-rpact="log">⏱ Log watch time</button><button class="primary" type="button" data-rpact="close">Close</button></div>
+    <div class="gap-mini" id="rsHostMsg">Your spot is saved automatically every 5 seconds while it plays, when you pause, and when you leave the page.</div>`;
+  rsPosLabel();
+}
+async function rsPlay(id){
+  const it = (state.spk.resume || []).find(x => x.id === id);
+  if(!it || it.platform !== 'youtube' || !it.vid){ rsMsg('Only YouTube links can play inside the app.', true); renderHours(); return; }
+  if(rsp.player && rsp.itemId !== id) rsClosePlayer(true);
+  if(rsp.player && rsp.itemId === id){ document.getElementById('rsHostPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  rsp.itemId = id; rsRenderHost();
+  const frame = document.getElementById('rsFrame');
+  if(location.protocol === 'file:'){ rsHostMsg('YouTube refuses to play inside a page opened as a local file. Open the hosted (https) version of the app, or use the link:', it); return; }
+  rsHostMsg('Loading the player…');
+  try{ await rsLoadApi(); }catch(err){ rsHostMsg(err.message + ' You can still use:', it); return; }
+  if(rsp.itemId !== id || !document.getElementById('rsFrame')) return;
+  const vars = { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(it.pos || 0) };
+  if(/^https?:$/.test(location.protocol)) vars.origin = location.origin;
+  rsp.player = new YT.Player('rsFrame', { width: '100%', height: '100%', videoId: it.vid, playerVars: vars, events: {
+    onReady: () => { rsHostMsg('Ready — press play. Starting from ' + rsFmt(it.pos || 0) + '.'); document.getElementById('rsHostPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+    onStateChange: ev => {
+      clearInterval(rsp.tick);
+      if(ev.data === 1){ if(!rsp.playAt) rsp.playAt = Date.now(); } else rsWatchFlush();
+      if(ev.data === 1){ rsp.tick = setInterval(rsSavePos, 5000); rsHostMsg('Playing — spot saved every 5 seconds.'); }
+      else if(ev.data === 2){ rsSavePos(); rsHostMsg('Paused — spot saved.'); renderHours(); }
+      else if(ev.data === 0){ rsSavePos(); rsHostMsg('Reached the end. Tap Finished in the list if you are done with it.'); renderHours(); }
+    },
+    onError: ev => {
+      const c = ev.data, why = (c === 101 || c === 150) ? 'The owner does not allow this video to play outside YouTube.' : c === 153 ? 'YouTube would not accept this page as the player’s host.' : (c === 100) ? 'The video was removed or is private.' : 'The player reported an error (' + c + ').';
+      rsHostMsg(why, it);
+    } } });
+}
+function rsClosePlayer(keepPanel){
+  rsSavePos(); rsOfferLog(); clearInterval(rsp.tick);
+  if(rsp.player){ try{ rsp.player.destroy(); }catch(e){} rsp.player = null; }
+  rsp.watchMs = 0; rsp.playAt = 0;
+  if(!keepPanel){ rsp.itemId = ''; rsRenderHost(); renderHours(); }
+}
+(function(){
+  document.addEventListener('visibilitychange', () => { if(document.hidden) rsSavePos(); });
+  window.addEventListener('pagehide', rsSavePos);
+  window.addEventListener('beforeunload', rsSavePos);
+  const host = document.getElementById('rsHost');
+  if(host) host.addEventListener('click', e => {
+    const a = e.target.closest('[data-rpact]'); if(!a || !rsp.player) return;
+    const act = a.dataset.rpact;
+    if(act === 'close'){ rsClosePlayer(false); return; }
+    if(act === 'save'){ rsSavePos(); rsHostMsg('Spot saved.'); return; }
+    if(act === 'log'){ rsHandOff(); return; }
+    if(act === 'back' || act === 'fwd'){ try{ const t = rsp.player.getCurrentTime(); rsp.player.seekTo(Math.max(0, t + (act === 'back' ? -10 : 10)), true); }catch(err){} }
+  });
+  const root = document.getElementById('hrsRoot');
+  if(root) root.addEventListener('click', async e => {
+    const a = e.target.closest('[data-rsact]'); if(!a) return;
+    if(a.dataset.rsact === 'play'){ e.preventDefault(); rsPlay(a.dataset.id); }
+    else if(a.dataset.rsact === 'addplay'){
+      e.preventDefault(); const it = await rsAdd();
+      if(it && it.platform === 'youtube') rsPlay(it.id); else if(it) { rsMsg('Saved. Only YouTube links can play inside the app.', false); renderHours(); }
+    }
+  });
+})();
+
+// =====================================================================
+// CONTINUE WHERE I STOPPED — Batch C: desktop bookmarklet
+// A bookmark (made from the link in the Hours tab) that runs ON a YouTube
+// page: it reads the video's current time and opens this app with the
+// video id, time and title in the URL hash (#rs=…). The app imports it
+// once, clears the hash, and shows it at the top of the Continue card.
+// Desktop browsers only — phones generally will not run bookmarklets.
+// It cannot read a video it is not run on, and it refuses to read while
+// an ad is playing (the page's video element then belongs to the ad).
+// =====================================================================
+function rsAppUrl(){ return location.origin + location.pathname; }
+function rsBookmarklet(){
+  const app = JSON.stringify(rsAppUrl());
+  return "javascript:(function(){try{var p=document.querySelector('.html5-video-player');if(p&&p.classList.contains('ad-showing')){alert('An ad is playing - wait until the video itself is on screen, then try again.');return}"
+    + "var v=document.querySelector('video'),u=new URL(location.href),id=u.searchParams.get('v')||((u.pathname.match(/\\/(?:shorts|live|embed)\\/([\\w-]{11})/)||[])[1])||(u.hostname==='youtu.be'?u.pathname.slice(1):'');"
+    + "if(!v||!/^[\\w-]{11}$/.test(id)){alert('Open a YouTube video page first.');return}"
+    + "var d={v:id,t:Math.floor(v.currentTime),n:document.title.replace(/^\\(\\d+\\)\\s*/,'').replace(/\\s*-\\s*YouTube$/,'').slice(0,120)};"
+    + "var l=" + app + "+'#rs='+encodeURIComponent(JSON.stringify(d));"
+    + "try{navigator.clipboard.writeText('https://youtu.be/'+id+'?t='+d.t)}catch(e){}"
+    + "var w=window.open(l,'_blank');if(!w){prompt('Your browser blocked the pop-up. Copy this link and open it:',l)}}catch(e){alert('Could not read the video: '+e)}})();";
+}
+function rsBmHtml(){
+  const code = rsBookmarklet(), local = location.protocol === 'file:';
+  return `<details style="margin-top:10px;"><summary class="gap-mini"><strong>💻 One-click saver for any YouTube tab (desktop)</strong></summary>
+    ${local ? '<div class="spk-caution">You opened the app as a local file, so a bookmark on YouTube cannot open it. Use the hosted (https) version first.</div>' : ''}
+    <ol class="gap-mini" style="margin:6px 0 6px 18px;padding:0;"><li>Show your bookmarks bar (Ctrl/Cmd + Shift + B in Chrome and Edge).</li>
+      <li>Drag this button onto it: <a href="${escapeHtml(code)}" draggable="true" onclick="return false;" class="ghost" style="text-decoration:none;display:inline-block;padding:6px 12px;border:1px solid var(--line);cursor:grab;" title="Drag me to your bookmarks bar — clicking here does nothing">📌 Save YouTube spot</a></li>
+      <li>On YouTube, pause the video itself (not an ad) and click that bookmark. The app opens with your spot already saved, and the link at that time is also copied to your clipboard.</li></ol>
+    <div class="card-actions"><button class="ghost" type="button" data-rsact="bmcopy">Copy the bookmarklet instead</button></div>
+    <div class="gap-mini">Can’t drag? Make a new bookmark by hand, name it “Save YouTube spot”, paste the copied text as its address. It only reads the video’s time and sends it to this app’s address (${escapeHtml(rsAppUrl())}) — nothing else leaves YouTube. Phones: use Share → “Start at” (above) or ▶ Play here.</div></details>`;
+}
+function rsImportHash(){
+  const m = location.hash.match(/^#rs=(.+)$/); if(!m) return;
+  try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){}   // clear first so a refresh never re-imports
+  let d; try{ d = JSON.parse(decodeURIComponent(m[1])); }catch(e){ return; }
+  if(!d || typeof d.v !== 'string' || !/^[\w-]{11}$/.test(d.v) || typeof d.t !== 'number' || !(d.t >= 0) || d.t > 172800) return;
+  const now = new Date().toISOString(), list = state.spk.resume; let it = list.find(x => x.vid === d.v), isNew = !it;
+  if(isNew) it = { id: uid(), type: 'resume', date: todayStr(), createdAt: now, platform: 'youtube', vid: d.v, url: 'https://www.youtube.com/watch?v=' + d.v, host: 'youtube.com', title: '', pos: 0, lang: uiLang(), done: false };
+  it.pos = Math.floor(d.t); it.done = false; it.touchedAt = it.updatedAt = now;
+  const t = typeof d.n === 'string' ? d.n.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120) : '';
+  if(t && (isNew || !it.title || /^YouTube video /.test(it.title))) it.title = t;
+  if(!it.title) it.title = 'YouTube video ' + d.v;
+  if(isNew) list.push(it);
+  saveSpk();
+  rsMsg('Saved from YouTube: “' + it.title + '” — stopped at ' + rsFmt(it.pos) + '.');
+  const tab = document.getElementById('hrsTabBtn'); if(tab) tab.click();
+  renderHours();
+}
+(function(){
+  // Another tab (e.g. the one the bookmarklet just opened) saved Speaking data: take it into this tab's memory
+  // (memory only — writing back would make two tabs ping-pong), so this tab can never overwrite it with a stale copy.
+  window.addEventListener('storage', e => {
+    if(e.key !== LS_PREFIX + 'speaking' || !e.newValue) return;
+    try{ state.spk = mergeSpk(state.spk, JSON.parse(e.newValue)); renderHours(); }catch(err){}
+  });
+  const root = document.getElementById('hrsRoot');
+  if(root) root.addEventListener('click', async e => {
+    const a = e.target.closest('[data-rsact="bmcopy"]'); if(!a) return; e.preventDefault();
+    try{ await navigator.clipboard.writeText(rsBookmarklet()); rsMsg('Bookmarklet copied — paste it as the address of a new bookmark.'); }
+    catch(err){ rsMsg('Your browser blocked clipboard access. Drag the 📌 button to the bookmarks bar instead.', true); }
+    renderHours();
+  });
+})();
+
+// ---------- Player → Hours: log the time you actually watched ----------
+// Counts real (wall-clock) time the video was PLAYING — not video length, so 1.5x speed or pauses do not inflate it.
+// Hands the minutes to the Hours tab's own "check and save" form (same as a stopped timer), so rating,
+// new words → Gaps and the progress maths work exactly as for a timed session.
+function rsWatchMs(){ return rsp.watchMs + (rsp.playAt ? Date.now() - rsp.playAt : 0); }
+function rsWatchFlush(){ if(rsp.playAt){ rsp.watchMs += Date.now() - rsp.playAt; rsp.playAt = 0; } }
+function rsWatchLabel(){ const el = document.getElementById('rsWatchLabel'); if(el) el.textContent = Math.round(rsWatchMs() / 60000) + ' min'; }
+function rsHandOff(){
+  const it = rsCurItem(); rsWatchFlush();
+  const mins = Math.round(rsp.watchMs / 60000);
+  if(!it || mins < 1){ rsHostMsg('Under a minute watched so far — nothing to log yet.'); return false; }
+  if(hrsPending){ rsHostMsg('There is an unsaved result in the log form below — save or discard it first.'); return false; }
+  if(hrsTimer() && !confirm('Your Hours timer is also running, so logging this too would count the same time twice. Log it anyway?')) return false;
+  hrsPending = { lang: it.lang === 'ar' ? 'ar' : 'en', activity: 'listening', title: it.title, minutes: mins, startedAt: new Date(Date.now() - rsp.watchMs).toISOString() };
+  rsp.watchMs = 0;
+  try{ if(rsp.player && rsp.player.getPlayerState() === 1) rsp.playAt = Date.now(); }catch(e){}
+  renderHours(); rsWatchLabel();
+  rsHostMsg('The log form below has ' + mins + ' min — check it and press Save.');
+  setTimeout(() => { const f = document.querySelector('[data-hform]'); if(f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
+  return true;
+}
+function rsOfferLog(){
+  rsWatchFlush(); const mins = Math.round(rsp.watchMs / 60000);
+  if(!rsp.player || mins < 2) return;
+  if(confirm('You watched about ' + mins + ' min here that is not logged yet.\n\nOK = open the log form with those minutes.\nCancel = close without logging.')) rsHandOff();
+}
+(function(){
+  const host = document.getElementById('rsHost');
+  if(host) host.addEventListener('change', e => {
+    if(!e.target.matches('[data-rplang]')) return;
+    const it = rsCurItem(); if(it){ it.lang = e.target.value === 'ar' ? 'ar' : 'en'; it.updatedAt = new Date().toISOString(); saveSpk(); }
+  });
+})();
 
 </script>
 </body>
