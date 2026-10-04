@@ -10918,6 +10918,7 @@ function renderHours(){
   const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
   let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
     <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
+  html += hrsByLangHtml();
   html += hrsResumeHtml();
   html += hrsPlanHtml();
   // timer
@@ -13209,9 +13210,10 @@ function whyEvidenceHtml(){
     rows.push(`<strong>${st.current}</strong>-day practice streak <span class="gap-mini">(longest ${st.longest})</span>${st.practicedToday ? ' · ✓ practised today' : ''}`);
   }catch(e){}
   try{
+    rows.push(hrsTodayLine());
     const today = todayStr(), from = addDays(today, -6), d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
-    const mins = hrsRange('en', from, today).total + hrsRange('ar', from, today).total, h = Math.round(mins / 6) / 10;
-    rows.push(`Last 7 days: <strong>${h} h</strong> logged of a ${tgt} h weekly target (${Math.min(100, Math.round(h / tgt * 100))}%)`);
+    const mA = hrsRange('ar', from, today).total, mE = hrsRange('en', from, today).total, h = Math.round((mA + mE) / 6) / 10;
+    rows.push(`Last 7 days: <strong>${h} h</strong> logged of a ${tgt} h weekly target (${Math.min(100, Math.round(h / tgt * 100))}%) — Arabic ${Math.round(mA / 6) / 10} h · English ${Math.round(mE / 6) / 10} h`);
   }catch(e){}
   ['en', 'ar'].forEach(l => {
     try{
@@ -13262,8 +13264,8 @@ function renderWhy(){
 function hrsPlanHtml(){
   let wk = '';
   try{
-    const today = todayStr(), from = addDays(today, -6), mins = hrsRange('en', from, today).total + hrsRange('ar', from, today).total, d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
-    wk = `<div class="spk-metrics">Last 7 days (both languages): <strong>${Math.round(mins / 6) / 10} h</strong> logged · your weekly target <strong>${tgt} h</strong> (change it in “My reason” on Today) · part-time PhD benchmark <strong>15–20 h</strong></div>`;
+    const today = todayStr(), from = addDays(today, -6), mA = hrsRange('ar', from, today).total, mE = hrsRange('en', from, today).total, mins = mA + mE, d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
+    wk = `<div class="spk-metrics">Last 7 days: <strong>${Math.round(mins / 6) / 10} h</strong> (Arabic ${Math.round(mA / 6) / 10} h · English ${Math.round(mE / 6) / 10} h) logged · your weekly target <strong>${tgt} h</strong> (change it in “My reason” on Today) · part-time PhD benchmark <strong>15–20 h</strong></div>`;
   }catch(e){}
   const row = l => { const T = cpTargets(l); return `<tr><td>${LANG_NAMES[l]}</td><td>${Number(T.words).toLocaleString()}</td><td>${T.active}%</td><td>${T.wpm}</td><td>≤ ${T.err}</td><td>≤ ${T.pauses}</td></tr>`; };
   return `<details class="hrs-card" open><summary><strong>🎯 Target &amp; recommended time (PhD-level benchmark)</strong></summary>
@@ -13732,6 +13734,67 @@ async function chatCopy(text){
     }catch(err){ say('Could not access the microphone.', true); reset(); }
   });
   document.getElementById('closeAi').addEventListener('click', () => { if(rec && rec.state === 'recording'){ discard = true; rec.stop(); } });
+})();
+
+// =====================================================================
+// TIME BY LANGUAGE — Hours tab (top card) + Today "My reason" card
+// Both languages side by side, today and the last 7 days, against a daily target per language
+// (default 75 min Arabic / 45 min English; presets include 50-50). Same numbers as the rest of the Hours tab:
+// only minutes you TIMED or ENTERED count (estimates from other activity are not included).
+// When both targets are reached it says so — a clear point to stop and rest.
+// =====================================================================
+function bylFmt(m){ m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + String(m % 60).padStart(2, '0') + ' min' : ''); }
+function hrsDailyTargets(){ const t = lsGet('hrsDaily', null), ok = v => typeof v === 'number' && isFinite(v) && v >= 0; return { ar: t && ok(+t.ar) ? +t.ar : 75, en: t && ok(+t.en) ? +t.en : 45 }; }
+function hrsLangMin(lang, date){ try{ return Math.round(hrsDayTotals(lang, date).total); }catch(e){ return 0; } }
+function hrsTodayLine(){
+  const T = hrsDailyTargets(), t = todayStr(), a = hrsLangMin('ar', t), e = hrsLangMin('en', t);
+  return `Today: Arabic <strong>${bylFmt(a)}</strong> of ${bylFmt(T.ar)}${a >= T.ar && T.ar > 0 ? ' ✓' : ''} · English <strong>${bylFmt(e)}</strong> of ${bylFmt(T.en)}${e >= T.en && T.en > 0 ? ' ✓' : ''}`;
+}
+function hrsByLangHtml(){
+  const T = hrsDailyTargets(), today = todayStr();
+  const bar = (done, tg) => { const p = tg > 0 ? Math.min(100, Math.round(done / tg * 100)) : 100; return `<div style="height:8px;background:var(--line);margin-top:4px;"><div style="height:8px;width:${p}%;background:${p >= 100 ? 'var(--teal)' : 'var(--brass)'};"></div></div>`; };
+  const row = (l, nm) => { const done = hrsLangMin(l, today), tg = T[l], left = Math.max(0, tg - done);
+    return `<div style="margin:8px 0;"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><strong>${nm}</strong><span>${bylFmt(done)} of ${bylFmt(tg)} · ${left > 0 ? bylFmt(left) + ' left' : '<strong>✓ done</strong>'}</span></div>${bar(done, tg)}</div>`; };
+  const aT = hrsLangMin('ar', today), eT = hrsLangMin('en', today), leftA = Math.max(0, T.ar - aT), leftE = Math.max(0, T.en - eT);
+  const status = leftA === 0 && leftE === 0 ? '<strong>✓ Both languages have reached today’s target — you can rest.</strong>'
+    : 'Still to go today: ' + [leftA ? 'Arabic ' + bylFmt(leftA) : '', leftE ? 'English ' + bylFmt(leftE) : ''].filter(Boolean).join(' · ') + ' (' + bylFmt(leftA + leftE) + ' in total).';
+  let sumA = 0, sumE = 0;
+  const days = [0, 1, 2, 3, 4, 5, 6].map(i => {
+    const d = addDays(today, -i), a = hrsLangMin('ar', d), e = hrsLangMin('en', d); sumA += a; sumE += e;
+    const nm = i === 0 ? 'Today' : new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + d.slice(5);
+    return `<tr><td>${nm}</td><td>${a ? bylFmt(a) : '—'}${a >= T.ar && T.ar > 0 ? ' ✓' : ''}</td><td>${e ? bylFmt(e) : '—'}${e >= T.en && T.en > 0 ? ' ✓' : ''}</td><td>${a + e ? bylFmt(a + e) : '—'}</td></tr>`;
+  }).join('');
+  const tot = sumA + sumE, tTot = T.ar + T.en, aShare = tot ? Math.round(sumA / tot * 100) : 0, tShare = tTot ? Math.round(T.ar / tTot * 100) : 50;
+  let bal = '';
+  if(tot >= 60){
+    const gap = aShare - tShare;
+    bal = `Last 7 days: Arabic <strong>${aShare}%</strong> · English <strong>${100 - aShare}%</strong> (your target split ${tShare}% / ${100 - tShare}%)` + (Math.abs(gap) >= 10 ? ` — <strong>${gap < 0 ? 'Arabic' : 'English'} is behind its share</strong>.` : ' — on balance.');
+  }
+  return `<details class="hrs-card" open><summary><strong>⏱ Time by language</strong></summary>
+    ${row('ar', 'Arabic')}${row('en', 'English')}
+    <div style="margin:6px 0;">${status}</div>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Last 7 days</th><th>Arabic</th><th>English</th><th>Total</th></tr>${days}
+      <tr><td><strong>Week</strong></td><td><strong>${bylFmt(sumA)}</strong></td><td><strong>${bylFmt(sumE)}</strong></td><td><strong>${bylFmt(tot)}</strong></td></tr></table></div>
+    <div class="gap-mini" style="margin-top:4px;">${bal || 'The balance line appears once you have logged an hour this week.'} ✓ = that day’s target reached.</div>
+    <div class="gap-mini" style="margin:10px 0 4px;"><strong>Daily target</strong> (minutes per day)</div>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
+      <div><label class="gap-mini">Arabic</label><input type="number" min="0" max="600" step="5" data-byl="ar" value="${T.ar}" style="width:90px;"></div>
+      <div><label class="gap-mini">English</label><input type="number" min="0" max="600" step="5" data-byl="en" value="${T.en}" style="width:90px;"></div>
+      <button class="ghost" type="button" data-bylpreset="75,45">Arabic-weighted 75 / 45</button><button class="ghost" type="button" data-bylpreset="60,60">50-50 · 60 / 60</button></div>
+    <div class="gap-mini" style="margin-top:6px;">Counts only minutes you timed or entered (the in-app player’s watch time counts once you save it). Time logged under the other language in the Hours tab’s toggle shows here under that language.</div></details>`;
+}
+(function(){
+  const root = document.getElementById('hrsRoot'); if(!root) return;
+  const save = (ar, en) => { lsSet('hrsDaily', { ar, en }); renderHours(); if(typeof renderWhy === 'function') renderWhy(); };
+  root.addEventListener('change', e => {
+    const k = e.target.dataset && e.target.dataset.byl; if(!k) return;
+    const T = hrsDailyTargets(), v = parseInt(e.target.value, 10);
+    T[k] = isNaN(v) || v < 0 ? T[k] : Math.min(600, v); save(T.ar, T.en);
+  });
+  root.addEventListener('click', e => {
+    const b = e.target.closest('[data-bylpreset]'); if(!b) return;
+    const p = b.dataset.bylpreset.split(',').map(Number); save(p[0], p[1]);
+  });
 })();
 
 </script>
