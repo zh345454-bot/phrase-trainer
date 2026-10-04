@@ -13392,7 +13392,7 @@ function hrsResumeHtml(){
 // when the tab is hidden and when the page closes (local save only).
 // Some videos forbid embedding; those show a link to open them on YouTube.
 // =====================================================================
-let rsp = { player: null, itemId: '', tick: null, api: null, msg: '', watchMs: 0, playAt: 0 };
+let rsp = { player: null, itemId: '', tick: null, api: null, msg: '', watchMs: 0, playAt: 0, loggedMs: 0, live: null };
 function rsLoadApi(){
   if(window.YT && window.YT.Player) return Promise.resolve();
   if(rsp.api) return rsp.api;
@@ -13451,8 +13451,8 @@ async function rsPlay(id){
       clearInterval(rsp.tick);
       if(ev.data === 1){ if(!rsp.playAt) rsp.playAt = Date.now(); } else rsWatchFlush();
       if(ev.data === 1){ rsp.tick = setInterval(rsSavePos, 5000); rsHostMsg('Playing — spot saved every 5 seconds.'); }
-      else if(ev.data === 2){ rsSavePos(); rsHostMsg('Paused — spot saved.'); renderHours(); }
-      else if(ev.data === 0){ rsSavePos(); rsHostMsg('Reached the end. Tap Finished in the list if you are done with it.'); renderHours(); }
+      else if(ev.data === 2){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Paused — spot saved.'); renderHours(); }
+      else if(ev.data === 0){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Reached the end. Tap Finished in the list if you are done with it.'); renderHours(); }
     },
     onError: ev => {
       const c = ev.data, why = (c === 101 || c === 150) ? 'The owner does not allow this video to play outside YouTube.' : c === 153 ? 'YouTube would not accept this page as the player’s host.' : (c === 100) ? 'The video was removed or is private.' : 'The player reported an error (' + c + ').';
@@ -13462,7 +13462,7 @@ async function rsPlay(id){
 function rsClosePlayer(keepPanel){
   rsSavePos(); rsOfferLog(); clearInterval(rsp.tick);
   if(rsp.player){ try{ rsp.player.destroy(); }catch(e){} rsp.player = null; }
-  rsp.watchMs = 0; rsp.playAt = 0;
+  rsp.watchMs = 0; rsp.playAt = 0; rsp.loggedMs = 0; rsp.live = null;
   if(!keepPanel){ rsp.itemId = ''; rsRenderHost(); renderHours(); }
 }
 (function(){
@@ -13557,26 +13557,50 @@ function rsImportHash(){
 // Counts real (wall-clock) time the video was PLAYING — not video length, so 1.5x speed or pauses do not inflate it.
 // Hands the minutes to the Hours tab's own "check and save" form (same as a stopped timer), so rating,
 // new words → Gaps and the progress maths work exactly as for a timed session.
+// The open form FOLLOWS the live count: press Log at 4:00, keep watching to 12:00, and the form shows the full
+// time (unless you typed your own number into it, which is then left alone). After you save, only NEW watching counts.
 function rsWatchMs(){ return rsp.watchMs + (rsp.playAt ? Date.now() - rsp.playAt : 0); }
 function rsWatchFlush(){ if(rsp.playAt){ rsp.watchMs += Date.now() - rsp.playAt; rsp.playAt = 0; } }
-function rsWatchLabel(){ const el = document.getElementById('rsWatchLabel'); if(el) el.textContent = Math.round(rsWatchMs() / 60000) + ' min'; }
+function rsLiveUpdate(){
+  const L = rsp.live; if(!L) return;
+  if(hrsPending !== L.ref){ rsp.loggedMs = L.upToMs; rsp.live = null; return; }   // the form was saved (or discarded): what it covered is done
+  const ms = rsWatchMs(), mins = Math.max(1, Math.round((ms - rsp.loggedMs) / 60000));
+  const inp = document.querySelector('[data-hform] [data-hf="minutes"]');
+  L.upToMs = ms;
+  if(inp && L.auto !== undefined && inp.value !== String(L.auto)) L.edited = true;   // you typed your own number — leave it alone
+  if(L.edited) return;
+  L.ref.minutes = mins; L.auto = mins; if(inp) inp.value = String(mins);
+}
+function rsWatchLabel(){
+  rsLiveUpdate();
+  const el = document.getElementById('rsWatchLabel'); if(!el) return;
+  el.textContent = Math.round(rsWatchMs() / 60000) + ' min' + (rsp.loggedMs >= 30000 ? ' (' + Math.round(rsp.loggedMs / 60000) + ' already logged)' : '');
+}
 function rsHandOff(){
   const it = rsCurItem(); rsWatchFlush();
-  const mins = Math.round(rsp.watchMs / 60000);
-  if(!it || mins < 1){ rsHostMsg('Under a minute watched so far — nothing to log yet.'); return false; }
-  if(hrsPending){ rsHostMsg('There is an unsaved result in the log form below — save or discard it first.'); return false; }
-  if(hrsTimer() && !confirm('Your Hours timer is also running, so logging this too would count the same time twice. Log it anyway?')) return false;
-  hrsPending = { lang: it.lang === 'ar' ? 'ar' : 'en', activity: 'listening', title: it.title, minutes: mins, startedAt: new Date(Date.now() - rsp.watchMs).toISOString() };
-  rsp.watchMs = 0;
-  try{ if(rsp.player && rsp.player.getPlayerState() === 1) rsp.playAt = Date.now(); }catch(e){}
-  renderHours(); rsWatchLabel();
-  rsHostMsg('The log form below has ' + mins + ' min — check it and press Save.');
-  setTimeout(() => { const f = document.querySelector('[data-hform]'); if(f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
+  const restart = () => { try{ if(rsp.player && rsp.player.getPlayerState() === 1 && !rsp.playAt) rsp.playAt = Date.now(); }catch(e){} };
+  const scroll = () => setTimeout(() => { const f = document.querySelector('[data-hform]'); if(f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
+  if(rsp.live && hrsPending === rsp.live.ref){            // the form from an earlier press is still open: bring it up to date
+    rsLiveUpdate(); restart(); rsWatchLabel(); scroll();
+    rsHostMsg(rsp.live.edited ? 'The log form is open with the number you typed — it is not changed.' : 'The log form below now shows ' + hrsPending.minutes + ' min, everything watched so far. Check it and press Save.');
+    return true;
+  }
+  const mins = Math.round((rsp.watchMs - rsp.loggedMs) / 60000);
+  if(!it || mins < 1){ restart(); rsHostMsg('Under a minute of new watching since the last log — nothing to log yet.'); return false; }
+  if(hrsPending){ restart(); rsHostMsg('There is an unsaved result in the log form below — save or discard it first.'); return false; }
+  if(hrsTimer() && !confirm('Your Hours timer is also running, so logging this too would count the same time twice. Log it anyway?')){ restart(); return false; }
+  hrsPending = { lang: it.lang === 'ar' ? 'ar' : 'en', activity: 'listening', title: it.title, minutes: mins, startedAt: new Date(Date.now() - (rsp.watchMs - rsp.loggedMs)).toISOString() };
+  rsp.live = { ref: hrsPending, auto: mins, upToMs: rsp.watchMs, edited: false };
+  restart(); renderHours(); rsWatchLabel(); scroll();
+  rsHostMsg('The log form below has ' + mins + ' min and keeps following the video while it plays — check it and press Save.');
   return true;
 }
 function rsOfferLog(){
-  rsWatchFlush(); const mins = Math.round(rsp.watchMs / 60000);
-  if(!rsp.player || mins < 2) return;
+  rsWatchFlush();
+  if(!rsp.player) return;
+  if(rsp.live){ rsLiveUpdate(); return; }               // an open form already follows the live count
+  const mins = Math.round((rsp.watchMs - rsp.loggedMs) / 60000);
+  if(mins < 2) return;
   if(confirm('You watched about ' + mins + ' min here that is not logged yet.\n\nOK = open the log form with those minutes.\nCancel = close without logging.')) rsHandOff();
 }
 (function(){
