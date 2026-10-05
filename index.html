@@ -13411,7 +13411,7 @@ function hrsResumeHtml(){
 // when the tab is hidden and when the page closes (local save only).
 // Some videos forbid embedding; those show a link to open them on YouTube.
 // =====================================================================
-let rsp = { player: null, itemId: '', tick: null, api: null, msg: '', watchMs: 0, playAt: 0, loggedMs: 0, live: null };
+let rsp = { float: null, player: null, itemId: '', tick: null, api: null, msg: '', watchMs: 0, playAt: 0, loggedMs: 0, live: null };
 function rsLoadApi(){
   if(window.YT && window.YT.Player) return Promise.resolve();
   if(rsp.api) return rsp.api;
@@ -13447,9 +13447,28 @@ function rsRenderHost(){
     <h3 style="margin:0 0 4px;">▶ Playing in the app</h3><div class="gap-mini" style="margin-bottom:6px;">${escapeHtml(it.title)} · <span id="rsPosLabel"></span></div>
     <div class="gap-mini" style="margin-bottom:6px;">Watched this session: <strong id="rsWatchLabel">0 min</strong> (time actually playing) · Language <select data-rplang style="width:auto;display:inline-block;"><option value="en"${it.lang !== 'ar' ? ' selected' : ''}>English</option><option value="ar"${it.lang === 'ar' ? ' selected' : ''}>Arabic</option></select></div>
     <div id="rsFrameWrap"><div id="rsFrame"></div></div>
-    <div class="card-actions"><button class="ghost" type="button" data-rpact="back">⟲ 10 s</button><button class="ghost" type="button" data-rpact="fwd">10 s ⟳</button><button class="ghost" type="button" data-rpact="save">Save spot now</button><button class="ghost" type="button" data-rpact="log">⏱ Log watch time</button><button class="primary" type="button" data-rpact="close">Close</button></div>
+    <div class="card-actions"><button class="ghost" type="button" data-rpact="back">⟲ 10 s</button><button class="ghost" type="button" data-rpact="fwd">10 s ⟳</button><button class="ghost" type="button" data-rpact="save">Save spot now</button><button class="ghost" type="button" data-rpact="log">⏱ Log watch time</button><button class="ghost" type="button" data-rpact="float" title="Always-on-top window (desktop Chrome / Edge)">⧉ Float over other apps</button><button class="primary" type="button" data-rpact="close">Close</button></div>
     <div class="gap-mini" id="rsHostMsg">Your spot is saved automatically every 5 seconds while it plays, when you pause, and when you leave the page.</div>`;
   rsPosLabel();
+}
+function rsEvents(it){ return {
+    onReady: () => { rsHostMsg('Ready — press play. Starting from ' + rsFmt(it.pos || 0) + '.'); if(!rsp.float) document.getElementById('rsHostPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+    onStateChange: ev => {
+      clearInterval(rsp.tick);
+      if(ev.data === 1){ if(!rsp.playAt) rsp.playAt = Date.now(); } else rsWatchFlush();
+      if(ev.data === 1){ rsp.tick = setInterval(rsSavePos, 5000); rsHostMsg('Playing — spot saved every 5 seconds.'); }
+      else if(ev.data === 2){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Paused — spot saved.'); renderHours(); }
+      else if(ev.data === 0){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Reached the end. Tap Finished in the list if you are done with it.'); renderHours(); }
+    },
+    onError: ev => {
+      const c = ev.data, why = (c === 101 || c === 150) ? 'The owner does not allow this video to play outside YouTube.' : c === 153 ? 'YouTube would not accept this page as the player’s host.' : (c === 100) ? 'The video was removed or is private.' : 'The player reported an error (' + c + ').';
+      rsHostMsg(why, it);
+    } }; }
+function rsCreate(win, elId, it, autoplay){
+  const vars = { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(it.pos || 0) };
+  if(autoplay) vars.autoplay = 1;
+  if(/^https?:$/.test(location.protocol)) vars.origin = location.origin;
+  return new win.YT.Player(elId, { width: '100%', height: '100%', videoId: it.vid, playerVars: vars, events: rsEvents(it) });
 }
 async function rsPlay(id){
   const it = (state.spk.resume || []).find(x => x.id === id);
@@ -13462,24 +13481,11 @@ async function rsPlay(id){
   rsHostMsg('Loading the player…');
   try{ await rsLoadApi(); }catch(err){ rsHostMsg(err.message + ' You can still use:', it); return; }
   if(rsp.itemId !== id || !document.getElementById('rsFrame')) return;
-  const vars = { playsinline: 1, rel: 0, modestbranding: 1, start: Math.floor(it.pos || 0) };
-  if(/^https?:$/.test(location.protocol)) vars.origin = location.origin;
-  rsp.player = new YT.Player('rsFrame', { width: '100%', height: '100%', videoId: it.vid, playerVars: vars, events: {
-    onReady: () => { rsHostMsg('Ready — press play. Starting from ' + rsFmt(it.pos || 0) + '.'); document.getElementById('rsHostPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); },
-    onStateChange: ev => {
-      clearInterval(rsp.tick);
-      if(ev.data === 1){ if(!rsp.playAt) rsp.playAt = Date.now(); } else rsWatchFlush();
-      if(ev.data === 1){ rsp.tick = setInterval(rsSavePos, 5000); rsHostMsg('Playing — spot saved every 5 seconds.'); }
-      else if(ev.data === 2){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Paused — spot saved.'); renderHours(); }
-      else if(ev.data === 0){ rsSavePos(); rsLiveUpdate(); rsHostMsg('Reached the end. Tap Finished in the list if you are done with it.'); renderHours(); }
-    },
-    onError: ev => {
-      const c = ev.data, why = (c === 101 || c === 150) ? 'The owner does not allow this video to play outside YouTube.' : c === 153 ? 'YouTube would not accept this page as the player’s host.' : (c === 100) ? 'The video was removed or is private.' : 'The player reported an error (' + c + ').';
-      rsHostMsg(why, it);
-    } } });
+  rsp.player = rsCreate(window, 'rsFrame', it, false);
 }
 function rsClosePlayer(keepPanel){
   rsSavePos(); rsOfferLog(); clearInterval(rsp.tick);
+  if(rsp.float){ const w = rsp.float; rsp.float = null; try{ w.close(); }catch(e){} }   // cleared first so its pagehide does not rebuild the panel player
   if(rsp.player){ try{ rsp.player.destroy(); }catch(e){} rsp.player = null; }
   rsp.watchMs = 0; rsp.playAt = 0; rsp.loggedMs = 0; rsp.live = null;
   if(!keepPanel){ rsp.itemId = ''; rsRenderHost(); renderHours(); }
@@ -13490,11 +13496,13 @@ function rsClosePlayer(keepPanel){
   window.addEventListener('beforeunload', rsSavePos);
   const host = document.getElementById('rsHost');
   if(host) host.addEventListener('click', e => {
-    const a = e.target.closest('[data-rpact]'); if(!a || !rsp.player) return;
+    const a = e.target.closest('[data-rpact]'); if(!a || (!rsp.player && a.dataset.rpact !== 'unfloat')) return;
     const act = a.dataset.rpact;
     if(act === 'close'){ rsClosePlayer(false); return; }
     if(act === 'save'){ rsSavePos(); rsHostMsg('Spot saved.'); return; }
     if(act === 'log'){ rsHandOff(); return; }
+    if(act === 'float'){ rsFloat(); return; }
+    if(act === 'unfloat'){ if(rsp.float) rsp.float.close(); return; }
     if(act === 'back' || act === 'fwd'){ try{ const t = rsp.player.getCurrentTime(); rsp.player.seekTo(Math.max(0, t + (act === 'back' ? -10 : 10)), true); }catch(err){} }
   });
   const root = document.getElementById('hrsRoot');
@@ -13796,6 +13804,54 @@ function hrsByLangHtml(){
     const p = b.dataset.bylpreset.split(',').map(Number); save(p[0], p[1]);
   });
 })();
+
+// ---------- Floating player (desktop Chrome / Edge 116+: Document Picture-in-Picture) ----------
+// A web page cannot draw over other apps by itself. This browser feature opens a small always-on-top window
+// that can hold a whole page element — here, the YouTube player — so you can keep watching while you work in
+// other windows. The saving of your spot and the watch-time counting keep working exactly as in the panel.
+// Not available on phones or in Firefox/Safari: there, use the phone's split-screen (see the reply).
+function rsFloatSupported(){ return !!(window.documentPictureInPicture && typeof window.documentPictureInPicture.requestWindow === 'function'); }
+function rsLoadApiIn(win){
+  return new Promise((res, rej) => {
+    if(win.YT && win.YT.Player) return res();
+    win.onYouTubeIframeAPIReady = () => res();
+    const sc = win.document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api';
+    sc.onerror = () => rej(new Error('Could not load the YouTube player in the floating window.'));
+    win.document.head.appendChild(sc);
+    setTimeout(() => rej(new Error('The floating player took too long to load.')), 10000);
+  });
+}
+function rsSeek(d){ try{ const t = rsp.player.getCurrentTime(); rsp.player.seekTo(Math.max(0, t + d), true); }catch(e){} }
+async function rsFloat(){
+  const it = rsCurItem(); if(!it || !rsp.player) return;
+  if(rsp.float){ try{ rsp.float.focus(); }catch(e){} return; }
+  if(!rsFloatSupported()){ rsHostMsg('This browser cannot float the player over other apps. It works in desktop Chrome or Edge (version 116 or newer). On a phone, use split-screen instead.'); return; }
+  let pw;
+  try{ pw = await window.documentPictureInPicture.requestWindow({ width: 480, height: 320 }); }     // must be the first await after the click
+  catch(err){ rsHostMsg('The floating window could not open: ' + (err && err.message ? err.message : 'blocked') + '.'); return; }
+  rsSavePos(); let wasPlaying = false; try{ wasPlaying = rsp.player.getPlayerState() === 1; }catch(e){}
+  rsWatchFlush(); clearInterval(rsp.tick); try{ rsp.player.destroy(); }catch(e){} rsp.player = null;
+  rsp.float = pw;
+  pw.document.body.style.cssText = 'margin:0;background:#000;display:flex;flex-direction:column;height:100vh;font-family:system-ui,sans-serif;';
+  pw.document.body.innerHTML = '<div id="pipFrame" style="flex:1;min-height:0;"></div><div id="pipBar" style="display:flex;gap:6px;padding:6px;background:#111;"></div>';
+  const mk = (label, fn) => { const b = pw.document.createElement('button'); b.textContent = label; b.style.cssText = 'flex:1;padding:6px;font-size:13px;cursor:pointer;'; b.addEventListener('click', fn); pw.document.getElementById('pipBar').appendChild(b); };
+  mk('⟲ 10 s', () => rsSeek(-10)); mk('10 s ⟳', () => rsSeek(10)); mk('⏱ Log', () => rsHandOff()); mk('⤢ Back to app', () => pw.close());
+  pw.addEventListener('pagehide', () => rsFloatBack());
+  const wrap = document.getElementById('rsFrameWrap');
+  if(wrap){ wrap.style.paddingTop = '0'; wrap.innerHTML = '<div style="padding:22px;text-align:center;background:#222;color:#fff;font-size:14px;">Playing in the floating window.<br><button class="primary" type="button" data-rpact="unfloat" style="margin-top:10px;">⤢ Bring back to the app</button></div>'; }
+  rsHostMsg('Floating — your spot is still saved every 5 seconds. If the video is paused there, press play.');
+  try{ await rsLoadApiIn(pw); if(rsp.float !== pw) return; rsp.player = rsCreate(pw, 'pipFrame', it, wasPlaying); }
+  catch(err){ rsHostMsg(err.message + ' Closing the floating window will bring the player back.', it); }
+}
+async function rsFloatBack(){
+  if(!rsp.float) return;                                  // closed on purpose by rsClosePlayer
+  try{ rsSavePos(); }catch(e){}
+  rsp.float = null; rsWatchFlush(); clearInterval(rsp.tick); try{ if(rsp.player) rsp.player.destroy(); }catch(e){} rsp.player = null;
+  const it = rsCurItem(), wrap = document.getElementById('rsFrameWrap'); if(!it || !wrap) return;
+  wrap.style.paddingTop = ''; wrap.innerHTML = '<div id="rsFrame"></div>';
+  try{ await rsLoadApi(); rsp.player = rsCreate(window, 'rsFrame', it, false); rsHostMsg('Back in the app at ' + rsFmt(it.pos || 0) + ' — press play.'); }
+  catch(err){ rsHostMsg(err.message, it); }
+}
 
 </script>
 </body>
