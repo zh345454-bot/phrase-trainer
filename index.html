@@ -10340,6 +10340,7 @@ function renderDashboard(){
     ${row('Gap reviews', remDue === 0, cs.n + '/' + cs.cap + ' · ' + remDue + ' due', 'gaps')}
     ${row('Listening + reading (' + LANG_NAMES[lang] + ')', inputMin >= state.hours.inputTarget, inputMin + '/' + state.hours.inputTarget + ' min', 'hours', lang)}
     ${row('Voice practice', tk('voicePractice')[0], tk('voicePractice')[1], 'practice')}
+    ${(function(){ const n = fluTalks(lang).filter(t => t.date === today).reduce((a, t) => a + t.rounds.length, 0); return `<div class="dash-row${n >= 3 ? ' done' : ''}" data-dashact="gotoflu" data-lang="${lang}" title="Each round counts toward Voice practice (1 turn per 2 minutes spoken)"><span>${n >= 3 ? '✓' : '○'} 4/3/2 talk (${LANG_NAMES[lang]})</span><span class="st">${Math.min(n, 3)}/3 rounds</span></div>`; })()}
     ${row('Write &amp; check', tk('writeCheck')[0], tk('writeCheck')[1], 'practice')}
     ${row('Add new phrases', tk('addPhrase')[0], tk('addPhrase')[1], 'bank')}
     ${row('Speaking cycle (' + LANG_NAMES[lang] + ')', !!(st.c && st.complete), stepText, 'speaking', lang)}
@@ -10398,6 +10399,7 @@ document.getElementById('dashRoot').addEventListener('click', (e) => {
   const a = e.target.closest('[data-dashact]');
   if(!a) return;
   if(a.dataset.dashact === 'syncall'){ const b = document.getElementById('syncAllBtn'); if(b) b.click(); return; }
+  if(a.dataset.dashact === 'gotoflu'){ if(a.dataset.lang){ state.uiLang = a.dataset.lang; lsSet('uiLang', state.uiLang); } goToTab('speaking'); setTimeout(() => { const el = document.getElementById('fluRoot'); if(el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80); return; }   // straight to the 4/3/2 panel
   if(a.dataset.lang){ state.uiLang = a.dataset.lang; lsSet('uiLang', state.uiLang); }
   const b = document.querySelector('.tab-btn[data-view="' + a.dataset.view + '"]'); if(b) b.click();
 });
