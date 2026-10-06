@@ -10918,7 +10918,7 @@ function renderHours(){
   const day = hrsDayTotals(lang, today), w28 = hrsRange(lang, addDays(today, -27), today), estAll = hrsEstimated(lang, '0000-00-00', today), estDay = hrsEstimated(lang, today, today);
   let html = `<h2>Hours — ${LANG_NAMES[lang]}</h2>${langToggleHtml()}
     <div class="spk-caution"><strong>How this counts.</strong> Progress uses only minutes you <strong>timed or entered</strong>. Minutes the app merely estimates from other activity (practice, gap reviews, Speaking-cycle talks) are shown separately and are <strong>never added</strong> to the target progress. Hour targets are rough anchors, not a certificate of level.</div>`;
-  html += hrsByLangHtml();
+  html += hrsByLangHtml() + hrsStrandsHtml();
   html += hrsResumeHtml();
   html += hrsPlanHtml();
   // timer
@@ -12187,6 +12187,8 @@ async function fluStartRecording(btn){
       talk.rounds.push(round); talk.updatedAt = new Date().toISOString();
       if(!state.spk.talks.includes(talk)) state.spk.talks.push(talk);
       await saveSpk();
+      try{ countTask('voicePractice', Math.max(1, Math.round(secs / 120))); }catch(e){}   // 1 turn per 2 min spoken: a full 4/3/2 = 5 turns
+      fluRunAddons(talk, round);
       flu.phase = 'idle'; fluMsg('');
       renderFluency();
       if(recSecs < FLU_MIN_REC_SECS) fluMsg('That round was under ' + FLU_MIN_REC_SECS + ' seconds — too short to compare reliably.', true);
@@ -12281,7 +12283,7 @@ function renderFluency(){
     </details>`;
   if(t){
     const k = t.rounds.length, dir = t.lang === 'ar' ? ' dir="rtl"' : '';
-    html += `<div class="spk-form"><div>Topic: <strong${dir}>${escapeHtml(t.topic)}</strong> <span class="gap-mini">· ${LANG_NAMES[t.lang]}</span></div>`;
+    html += `<div class="spk-form"><div>Topic: <strong${dir}>${escapeHtml(t.topic)}</strong> <span class="gap-mini">· ${LANG_NAMES[t.lang]}</span></div>` + fluTargetsHtml(t);
     if(k < 3){
       html += `<p style="margin:8px 0;">Round ${k + 1} of 3 — talk for up to <strong>${fluClock(FLU_LIMITS[k])}</strong>. ${k ? 'Same points as before, in less time.' : 'Choose 3–4 points to make; you will repeat them.'}</p>
         <div class="card-actions"><button class="primary" type="button" data-fluact="rec">● Start round ${k + 1}</button> <span class="badge pending" id="fluTimer" style="display:none;"></span></div>`;
@@ -12293,7 +12295,7 @@ function renderFluency(){
           <td>${typeof r.pauses === 'number' ? r.pauses + (pp !== null ? ' <span class="gap-mini">(' + pp + '/min)</span>' : '') : '—'}</td><td>${typeof r.longest === 'number' ? r.longest + ' s' : '—'}</td>
           <td><input type="number" min="0" data-fluerr="${i}" value="${typeof r.errors === 'number' ? r.errors : ''}" placeholder="count"></td><td>${pe === null ? '—' : pe}</td></tr>`;
       }).join('');
-      html += `<div class="cov-wrap"><table class="flu-table"><tr><th>Round</th><th>Limit</th><th>Spoke</th><th>Words</th><th>Words/min</th><th>Pauses</th><th>Longest</th><th>Errors</th><th>Err/100</th></tr>${rows}</table></div>${fluVerdict(t)}
+      html += fluAddonsHtml(t) + `<div class="cov-wrap"><table class="flu-table"><tr><th>Round</th><th>Limit</th><th>Spoke</th><th>Words</th><th>Words/min</th><th>Pauses</th><th>Longest</th><th>Errors</th><th>Err/100</th></tr>${rows}</table></div>${fluVerdict(t)}
         <div class="card-actions">${getGeminiKeys().length && t.rounds.some(r => typeof r.errors !== 'number') ? '<button class="ghost" type="button" data-fluact="ai">✨ Count errors with AI (rounds without a count)</button>' : ''}
         ${k === 3 ? '<button class="primary" type="button" data-fluact="finish">Done — start another talk later</button>' : '<button class="ghost" type="button" data-fluact="abandon">Stop here</button>'}</div>
         <div class="gap-mini">“Spoke” is first word to last word. Type your own error count, or let the AI estimate it (it can miss errors, and for Arabic it is rougher). Use the same counting method every time or the numbers cannot be compared.</div>`;
@@ -12304,6 +12306,7 @@ function renderFluency(){
     html += `<div class="spk-form"><label>Topic for a new talk</label>
       <div class="row2"><div style="flex:3;min-width:180px;"><input type="text" id="fluTopic"${lang === 'ar' ? ' dir="rtl"' : ''} placeholder="Something you can talk about for 4 minutes" value=""></div>
       <div style="flex:0 0 auto;"><button class="ghost" type="button" data-fluact="suggest">Suggest a topic</button></div></div>
+      ${fluOptsHtml()}
       <div class="card-actions"><button class="primary" type="button" data-fluact="start">Start a ${LANG_NAMES[lang]} 4/3/2 talk</button></div>
       <div class="status-msg${flu.msgErr ? ' err' : ''}" id="fluStatus">${escapeHtml(flu.msg || '')}</div></div>`;
     flu._used = used;
@@ -12331,7 +12334,8 @@ document.getElementById('fluRoot').addEventListener('click', async (e) => {
     const topic = ((document.getElementById('fluTopic') || {}).value || '').trim();
     if(!topic){ fluMsg('Give the talk a topic first (or tap Suggest a topic).', true); return; }
     flu.msg = '';
-    flu.talk = { id: uid(), lang, date: todayStr(), createdAt: new Date().toISOString(), topic, rounds: [], updatedAt: new Date().toISOString() };
+    flu.talk = { id: uid(), lang, date: todayStr(), createdAt: new Date().toISOString(), topic, rounds: [], updatedAt: new Date().toISOString(), opts: fluOptsGet() };
+    if(flu.talk.opts.phrases) flu.talk.targets = fluPickTargets(lang, 4);
     renderFluency(); return;
   }
   if(act === 'rec'){ fluStartRecording(a); return; }
@@ -12974,6 +12978,7 @@ function renderMsa(){
         const r = await msaCritique(text, msa.cur.prompt);
         msa.cur.rounds.push({ text: text.slice(0, 3000), words, errors: r.errors, corrected: r.corrected, comment: r.comment });
         await msaSave(msa.cur); msaMsg('');
+        try{ countTask('writeCheck'); }catch(e){}
       }catch(err){ msaMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
       msa.busy = false; renderMsa(); return;
     }
@@ -13163,6 +13168,7 @@ function renderEnw(){
         const r = await enwCritique(text, enw.cur.prompt, enw.cur.kind);
         enw.cur.rounds.push({ text: text.slice(0, 3000), words, errors: r.errors, corrected: r.corrected, comment: r.comment });
         await enwSave(enw.cur); enwMsg('');
+        try{ countTask('writeCheck'); }catch(e){}
       }catch(err){ enwMsg('AI check failed: ' + (err && err.message ? err.message : 'unknown error'), true); }
       enw.busy = false; renderEnw(); return;
     }
@@ -13851,6 +13857,120 @@ async function rsFloatBack(){
   wrap.style.paddingTop = ''; wrap.innerHTML = '<div id="rsFrame"></div>';
   try{ await rsLoadApi(); rsp.player = rsCreate(window, 'rsFrame', it, false); rsHostMsg('Back in the app at ' + rsFmt(it.pos || 0) + ' — press play.'); }
   catch(err){ rsHostMsg(err.message, it); }
+}
+
+
+// =====================================================================
+// 4/3/2 TALK ADD-ONS (all optional, ticked per talk) + DAILY-PLAN COUNTING + FOUR-STRANDS VIEW
+//  • Review & repeat: after each round the AI lists your errors (wrong → right) and gives 4–6 KEYWORDS from what you
+//    said; the next round shows keywords only (never the transcript), so you rebuild the talk in new sentences.
+//  • Target phrases: 4 bank phrases (due ones first) to try to use; a text match shows ✓ used / ≈ possibly used.
+//  • AI listener (experimental): one line on what it understood + one follow-up question.
+//  • Every transcribed round counts toward the daily plan's Voice practice: 1 turn per 2 minutes spoken (min 1).
+//    A finished AI check in the MSA / English writing tabs counts as one Write & check.
+//  • Hours tab: a week view of Nation's four strands (input · study · output · timed fluency) and speaking sessions.
+// =====================================================================
+function fluOptsGet(){ return Object.assign({ review: true, phrases: false, listener: false }, lsGet('fluOpts', null) || {}); }
+function fluNorm(s, lang){
+  s = String(s || '').toLowerCase();
+  if(lang === 'ar') s = s.replace(/[\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+  return s.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+function fluUse(phrase, transcript, lang){
+  const p = fluNorm(phrase, lang), t = ' ' + fluNorm(transcript, lang) + ' '; if(!p) return 'no';
+  if(t.includes(' ' + p + ' ')) return 'yes';
+  const w = p.split(' ').filter(x => x.length >= 3); if(!w.length) return t.includes(p) ? 'yes' : 'no';
+  return w.filter(x => t.includes(x)).length / w.length >= 0.6 ? 'maybe' : 'no';
+}
+function fluPickTargets(lang, n){
+  state.bank.forEach(ensureSrs);
+  const today = todayStr(), recent = new Set(fluTalks(lang).slice(-3).reduce((a, t) => a.concat(t.targets || []), []));
+  const ok = state.bank.filter(p => { const s = stripBold(p[lang] || '').trim(); return s && s.split(/\s+/).length <= 6 && !recent.has(s); });
+  const sh = a => a.slice().sort(() => Math.random() - 0.5);
+  return sh(ok.filter(p => p.srs.nextReview <= today)).concat(sh(ok.filter(p => p.srs.nextReview > today))).slice(0, n).map(p => stripBold(p[lang]).trim());
+}
+async function fluReview(text, lang){
+  const L = lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a supportive speaking coach. Reply with ONLY one JSON object, no markdown fences: {"errors":[{"wrong":"","right":"","why":""}],"keywords":[""]}.';
+  const ask = 'Below is a speech transcript by a learner of ' + L + ' (speech-to-text: ignore punctuation, capitalisation and transcription oddities). List up to 8 clear errors of grammar, word choice or unnatural phrasing. "wrong" = the short wrong phrase as said (2-6 words), "right" = the corrected phrase, "why" = reason in English, 15 words max.'
+    + (lang === 'ar' ? ' Accept colloquial or dialect wording; flag only real grammar, agreement or wrong-word errors, and ignore case endings.' : '')
+    + ' Then give 4-6 "keywords": the main points the speaker made, each 1-3 words in ' + L + ', in the order spoken — they let the learner repeat the SAME talk without a script.\n\nTRANSCRIPT:\n' + text;
+  const j = msaJson((await callGemini(ask, { system, useSearch: false })).text);
+  return { errors: (Array.isArray(j.errors) ? j.errors : []).filter(e => e && e.right).slice(0, 8).map(e => ({ wrong: String(e.wrong || ''), right: String(e.right), why: String(e.why || '').slice(0, 140) })),
+    keywords: (Array.isArray(j.keywords) ? j.keywords : []).slice(0, 6).map(k => String(k).slice(0, 40)) };
+}
+async function fluListener(text, lang, topic){
+  const L = lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a friendly listener who just heard a short talk. Reply with ONLY one JSON object, no markdown fences: {"understood":"","question":""}.';
+  const ask = 'Topic: ' + topic + '\nTranscript (speech-to-text, may be imperfect):\n' + text + '\n\n"understood" = one sentence, in ' + L + ', saying what you understood the main points to be (say so honestly if parts were unclear). "question" = one natural follow-up question in ' + L + ' that a curious listener would ask.';
+  const j = msaJson((await callGemini(ask, { system, useSearch: false })).text);
+  return { understood: String(j.understood || '').slice(0, 300), question: String(j.question || '').slice(0, 200) };
+}
+async function fluRunAddons(talk, round){
+  const o = talk.opts || {}; if(!(o.review || o.listener)) return;
+  if(!getGeminiKeys().length){ round.addonErr = 'Add a Gemini key in Sheet & AI settings to use the review / listener add-ons.'; }
+  else {
+    const jobs = [];
+    if(o.review) jobs.push(fluReview(round.transcript, talk.lang).then(r => { round.review = r; }));
+    if(o.listener) jobs.push(fluListener(round.transcript, talk.lang, talk.topic).then(r => { round.listener = r; }));
+    await Promise.all(jobs.map(j => j.catch(err => { round.addonErr = 'AI add-on failed: ' + ((err && err.message) || 'unknown error'); })));
+  }
+  talk.updatedAt = new Date().toISOString(); await saveSpk();
+  if(flu.talk === talk && flu.phase === 'idle') renderFluency();
+}
+function fluTargetsHtml(t){
+  if(!(t.targets && t.targets.length)) return '';
+  const all = t.rounds.map(r => r.transcript || '').join(' ');
+  return `<div style="margin:8px 0;"><div class="gap-mini">Try to use these phrases${t.rounds.length ? ' (✓ used · ≈ possibly used — a text match that misses changed word forms)' : ''}:</div>`
+    + t.targets.map(p => { const u = t.rounds.length ? fluUse(p, all, t.lang) : ''; return `<span class="badge pending" style="margin:2px 4px 2px 0;"${t.lang === 'ar' ? ' dir="rtl"' : ''}>${u === 'yes' ? '✓ ' : u === 'maybe' ? '≈ ' : ''}${escapeHtml(p)}</span>`; }).join('') + '</div>';
+}
+function fluAddonsHtml(t){
+  const r = t.rounds[t.rounds.length - 1]; if(!r) return '';
+  const o = t.opts || {}, k = t.rounds.length, dir = t.lang === 'ar' ? ' dir="rtl"' : '', esc = escapeHtml;
+  let h = '';
+  if(o.review){
+    if(r.review){
+      const rv = r.review;
+      h += `<div class="spk-form"><strong>Review of round ${k}</strong> <span class="gap-mini">— an AI estimate; it can miss or invent errors${t.lang === 'ar' ? ', more so in Arabic' : ''}</span>`
+        + (rv.errors.length ? rv.errors.map((e, i) => `<label style="display:flex;gap:8px;margin:5px 0;font-size:13px;"><input type="checkbox" data-fluerrgap="${i}" style="width:auto;margin-top:3px;"><span${dir}>“${esc(e.wrong)}” → <strong>${esc(e.right)}</strong> <span class="gap-mini">${esc(e.why)}</span></span></label>`).join('') + '<div class="card-actions"><button class="ghost" type="button" data-fluact="togaps">Add ticked to Gaps</button></div>' : '<div class="gap-mini">No clear errors found.</div>')
+        + (rv.keywords.length && k < 3 ? `<div style="margin-top:8px;">Your points for round ${k + 1} — <em>keywords only, do not read a script</em>:<div${dir} style="margin-top:4px;font-size:16px;">${rv.keywords.map(esc).join(' · ')}</div></div>` : '') + '</div>';
+    } else if(!r.addonErr) h += '<div class="gap-mini">Preparing the review…</div>';
+  }
+  if(o.listener && r.listener) h += `<div class="spk-form" style="margin-top:8px;"><strong>AI listener</strong> <span class="gap-mini">(experimental — not the same as a human listener)</span><div style="margin-top:4px;"${dir}>I understood: ${esc(r.listener.understood)}</div><div${dir}>Question: <strong>${esc(r.listener.question)}</strong></div>${k < 3 ? '<div class="gap-mini">Work your answer into the next round if you can.</div>' : ''}</div>`;
+  if(r.addonErr) h += `<div class="status-msg err">${esc(r.addonErr)}</div>`;
+  return h;
+}
+function fluOptsHtml(){
+  const o = fluOptsGet(), row = (k, label) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;font-size:13px;"><input type="checkbox" data-fluopt="${k}" ${o[k] ? 'checked' : ''} style="width:auto;margin-top:3px;"><span>${label}</span></label>`;
+  return `<div class="gap-mini" style="margin:10px 0 2px;"><strong>Add-ons for this talk</strong> (optional — the talk counts toward today’s Voice practice either way)</div>`
+    + row('review', '<strong>Review &amp; repeat</strong> — corrections and keyword prompts between rounds')
+    + row('phrases', '<strong>Target phrases</strong> — 4 phrases from your bank to try to use')
+    + row('listener', '<strong>AI listener</strong> (experimental) — what it understood, plus a follow-up question');
+}
+(function(){
+  const root = document.getElementById('fluRoot'); if(!root) return;
+  root.addEventListener('change', e => { const k = e.target.dataset && e.target.dataset.fluopt; if(!k) return; const o = fluOptsGet(); o[k] = e.target.checked; lsSet('fluOpts', o); });
+  root.addEventListener('click', e => {
+    const a = e.target.closest('[data-fluact="togaps"]'); if(!a || !flu.talk) return; e.preventDefault();
+    const r = flu.talk.rounds[flu.talk.rounds.length - 1], rv = r && r.review; if(!rv) return;
+    let n = 0; [...root.querySelectorAll('[data-fluerrgap]:checked')].forEach(b => { const er = rv.errors[parseInt(b.dataset.fluerrgap, 10)]; if(er && captureGap({ lang: flu.talk.lang, wanted: er.right, said: er.wrong, source: '4/3/2 review', exEn: '', exAr: '' })) n++; });
+    fluMsg(n ? n + ' added to Gaps.' : 'Tick the corrections you want first.', !n);
+  });
+})();
+
+// ---------- Hours tab: Nation's four strands + speaking sessions this week ----------
+function hrsStrandsHtml(){
+  const today = todayStr(), days = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(today, -i)), from = days[6];
+  const row = (l, nm) => {
+    let inp = 0, stu = 0, out = 0;
+    days.forEach(d => { try{ const t = hrsDayTotals(l, d); inp += t.listening + t.reading; stu += t.study; out += t.speaking + t.writing; }catch(e){} });
+    const talks = fluTalks(l).filter(t => t.date >= from), flm = Math.round(talks.reduce((s, t) => s + t.rounds.reduce((x, r) => x + (r.secs || 0), 0), 0) / 60);
+    const sessions = new Set(talks.map(t => t.date)).size, tot = inp + stu + out + flm, pc = v => tot ? Math.round(v / tot * 100) + '%' : '—';
+    return `<tr><td>${nm}</td><td>${Math.round(inp)} min <span class="gap-mini">${pc(inp)}</span></td><td>${Math.round(stu)} min <span class="gap-mini">${pc(stu)}</span></td><td>${Math.round(out)} min <span class="gap-mini">${pc(out)}</span></td><td>${flm} min <span class="gap-mini">${pc(flm)}</span></td><td>${sessions}${sessions < 3 ? ' <span class="spk-warn">below 3</span>' : ''}</td></tr>`;
+  };
+  return `<details class="hrs-card"><summary><strong>⚖ Balance of your week (four strands)</strong></summary>
+    <div class="cov-wrap"><table class="flu-table"><tr><th>Last 7 days</th><th>Input<br><span class="gap-mini">listen · read</span></th><th>Study<br><span class="gap-mini">glossary · other</span></th><th>Output<br><span class="gap-mini">speak · write</span></th><th>Timed fluency<br><span class="gap-mini">4/3/2 talks</span></th><th>Speaking days</th></tr>${row('ar', 'Arabic')}${row('en', 'English')}</table></div>
+    <div class="gap-mini">Nation’s four-strands framework suggests roughly equal weight for meaning-focused input, language study, output and fluency work. It is a teaching framework, not a tested ratio, so use it only to spot a strand you are neglecting. Timed fluency comes from your recorded talks (not the hours log, so it is not double-counted). Aim for speaking on 3–4 days a week; that figure is my inference, not a studied number.</div></details>`;
 }
 
 </script>
