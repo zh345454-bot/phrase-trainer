@@ -12285,7 +12285,7 @@ function renderFluency(){
     </details>`;
   if(t){
     const k = t.rounds.length, dir = t.lang === 'ar' ? ' dir="rtl"' : '';
-    html += `<div class="spk-form"><div>Topic: <strong${dir}>${escapeHtml(t.topic)}</strong> <span class="gap-mini">· ${LANG_NAMES[t.lang]}</span></div>` + fluTargetsHtml(t);
+    html += `<div class="spk-form"><div>Topic: <strong${dir}>${escapeHtml(t.topic)}</strong> <span class="gap-mini">· ${LANG_NAMES[t.lang]}</span></div>` + fluTargetsHtml(t) + fluStructHtml(t);
     if(k < 3){
       html += `<p style="margin:8px 0;">Round ${k + 1} of 3 — talk for up to <strong>${fluClock(FLU_LIMITS[k])}</strong>. ${k ? 'Same points as before, in less time.' : 'Choose 3–4 points to make; you will repeat them.'}</p>
         <div class="card-actions"><button class="primary" type="button" data-fluact="rec">● Start round ${k + 1}</button> <span class="badge pending" id="fluTimer" style="display:none;"></span></div>`;
@@ -12338,6 +12338,7 @@ document.getElementById('fluRoot').addEventListener('click', async (e) => {
     flu.msg = '';
     flu.talk = { id: uid(), lang, date: todayStr(), createdAt: new Date().toISOString(), topic, rounds: [], updatedAt: new Date().toISOString(), opts: fluOptsGet() };
     if(flu.talk.opts.phrases) flu.talk.targets = fluPickTargets(lang, 4);
+    if(flu.talk.opts.structures) flu.talk.structs = fluPickStructs(lang, 3);
     renderFluency(); return;
   }
   if(act === 'rec'){ fluStartRecording(a); return; }
@@ -13250,7 +13251,7 @@ function renderWhy(){
         <div class="card-actions"><button class="primary" type="button" data-whyact="save">Save</button><button class="ghost" type="button" data-whyact="cancel">Cancel</button></div>`
       : (d.text ? `<div style="font-size:16px;line-height:1.5;margin:8px 0;white-space:pre-wrap;">${escapeHtml(d.text)}</div><div class="gap-mini">${d.since ? 'Committed since ' + escapeHtml(d.since) + ' · ' : ''}last edited ${escapeHtml((d.updatedAt || '').slice(0, 10))}</div>`
         : '<div class="gap-mini" style="margin:8px 0;">Nothing written yet. Tap Edit and put your reason in your own words — you will see it here every day.</div>')}
-      <div class="gap-mini" style="margin:10px 0 2px;"><strong>Evidence so far</strong></div><div style="font-size:13px;">${whyEvidenceHtml()}</div>`;
+      <div class="gap-mini" style="margin:10px 0 2px;"><strong>Evidence so far</strong></div><div style="font-size:13px;">${whyEvidenceHtml()}</div>` + whyReminderHtml();
   }catch(err){ root.innerHTML = ''; }
 }
 (function(){
@@ -13258,6 +13259,8 @@ function renderWhy(){
   root.addEventListener('click', (e) => {
     const a = e.target.closest('[data-whyact]'); if(!a) return;
     const act = a.dataset.whyact;
+    if(act === 'another'){ why.off = (why.off || 0) + 1; renderWhy(); return; }
+    if(act === 'intalk'){ const o = fluOptsGet(); o.structures = true; lsSet('fluOpts', o); goToTab('speaking'); setTimeout(() => { const el = document.getElementById('fluRoot'); if(el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80); return; }
     if(act === 'edit'){ why.editing = true; renderWhy(); const t = document.getElementById('whyText'); if(t) t.focus(); return; }
     if(act === 'cancel'){ why.editing = false; renderWhy(); return; }
     if(act === 'save'){
@@ -13872,7 +13875,7 @@ async function rsFloatBack(){
 //    A finished AI check in the MSA / English writing tabs counts as one Write & check.
 //  • Hours tab: a week view of Nation's four strands (input · study · output · timed fluency) and speaking sessions.
 // =====================================================================
-function fluOptsGet(){ return Object.assign({ review: true, phrases: false, listener: false }, lsGet('fluOpts', null) || {}); }
+function fluOptsGet(){ return Object.assign({ review: true, phrases: false, listener: false, structures: false, expert: false }, lsGet('fluOpts', null) || {}); }
 function fluNorm(s, lang){
   s = String(s || '').toLowerCase();
   if(lang === 'ar') s = s.replace(/[\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
@@ -13909,12 +13912,13 @@ async function fluListener(text, lang, topic){
   return { understood: String(j.understood || '').slice(0, 300), question: String(j.question || '').slice(0, 200) };
 }
 async function fluRunAddons(talk, round){
-  const o = talk.opts || {}; if(!(o.review || o.listener)) return;
+  const o = talk.opts || {}; if(!(o.review || o.listener || o.expert)) return;
   if(!getGeminiKeys().length){ round.addonErr = 'Add a Gemini key in Sheet & AI settings to use the review / listener add-ons.'; }
   else {
     const jobs = [];
     if(o.review) jobs.push(fluReview(round.transcript, talk.lang).then(r => { round.review = r; }));
     if(o.listener) jobs.push(fluListener(round.transcript, talk.lang, talk.topic).then(r => { round.listener = r; }));
+    if(o.expert) jobs.push(fluExpert(round.transcript, talk.lang).then(r => { round.expert = r; }));
     await Promise.all(jobs.map(j => j.catch(err => { round.addonErr = 'AI add-on failed: ' + ((err && err.message) || 'unknown error'); })));
   }
   talk.updatedAt = new Date().toISOString(); await saveSpk();
@@ -13939,6 +13943,7 @@ function fluAddonsHtml(t){
     } else if(!r.addonErr) h += '<div class="gap-mini">Preparing the review…</div>';
   }
   if(o.listener && r.listener) h += `<div class="spk-form" style="margin-top:8px;"><strong>AI listener</strong> <span class="gap-mini">(experimental — not the same as a human listener)</span><div style="margin-top:4px;"${dir}>I understood: ${esc(r.listener.understood)}</div><div${dir}>Question: <strong>${esc(r.listener.question)}</strong></div>${k < 3 ? '<div class="gap-mini">Work your answer into the next round if you can.</div>' : ''}</div>`;
+  if(o.expert && r.expert && r.expert.length) h += `<div class="spk-form" style="margin-top:8px;"><strong>Say it like an economist</strong> <span class="gap-mini">— optional; compare, then try the expert version aloud</span>` + r.expert.map(p => `<div style="margin:6px 0;font-size:13px;"${dir}><span class="gap-mini">You:</span> ${esc(p.said)}<br><strong>Expert:</strong> ${esc(p.expert)}</div>`).join('') + '</div>';
   if(r.addonErr) h += `<div class="status-msg err">${esc(r.addonErr)}</div>`;
   return h;
 }
@@ -13947,7 +13952,9 @@ function fluOptsHtml(){
   return `<div class="gap-mini" style="margin:10px 0 2px;"><strong>Add-ons for this talk</strong> (optional — the talk counts toward today’s Voice practice either way)</div>`
     + row('review', '<strong>Review &amp; repeat</strong> — corrections and keyword prompts between rounds')
     + row('phrases', '<strong>Target phrases</strong> — 4 phrases from your bank to try to use')
-    + row('listener', '<strong>AI listener</strong> (experimental) — what it understood, plus a follow-up question');
+    + row('listener', '<strong>AI listener</strong> (experimental) — what it understood, plus a follow-up question')
+    + row('structures', '<strong>Target structures</strong> (suggestion) — 3 expert sentence structures to try')
+    + row('expert', '<strong>Say it like an economist</strong> (suggestion) — your plain sentences rewritten in an expert register');
 }
 (function(){
   const root = document.getElementById('fluRoot'); if(!root) return;
@@ -13973,6 +13980,56 @@ function hrsStrandsHtml(){
   return `<details class="hrs-card"><summary><strong>⚖ Balance of your week (four strands)</strong></summary>
     <div class="cov-wrap"><table class="flu-table"><tr><th>Last 7 days</th><th>Input<br><span class="gap-mini">listen · read</span></th><th>Study<br><span class="gap-mini">glossary · other</span></th><th>Output<br><span class="gap-mini">speak · write</span></th><th>Timed fluency<br><span class="gap-mini">4/3/2 talks</span></th><th>Speaking days</th></tr>${row('ar', 'Arabic')}${row('en', 'English')}</table></div>
     <div class="gap-mini">Nation’s four-strands framework suggests roughly equal weight for meaning-focused input, language study, output and fluency work. It is a teaching framework, not a tested ratio, so use it only to spot a strand you are neglecting. Timed fluency comes from your recorded talks (not the hours log, so it is not double-counted). Aim for speaking on 3–4 days a week; that figure is my inference, not a studied number.</div></details>`;
+}
+
+
+// =====================================================================
+// EXPERT-LEVEL REMINDER + two OPTIONAL talk add-ons (both off by default, never counted or required)
+//  • Today → "My reason" card: a daily reminder of what expert level takes, plus ONE sentence structure to try today
+//    (rotates daily; "Another" shows the next). "Use it in today's talk" ticks the Target-structures add-on for you.
+//  • Talk add-on "Target structures": 3 structures to try; a text match shows ✓ used / ≈ possibly used.
+//  • Talk add-on "Say it like an economist": the AI rewrites 2–3 of your plainest sentences in an expert register.
+// The Arabic frames are my own examples, vowelled by hand — have a teacher check them.
+// =====================================================================
+const EXPERT_STRUCTS = [
+  { id: 'concession', name: 'Concession', en: ['Although …, … / Despite …, …', 'Although inflation has eased, wage growth is still strong.'], ar: ['عَلَى الرَّغْمِ مِنْ أَنَّ … ، إِلَّا أَنَّ …', 'عَلَى الرَّغْمِ مِنْ أَنَّ التَّضَخُّمَ تَرَاجَعَ، إِلَّا أَنَّ الْأُجُورَ مَا زَالَتْ تَرْتَفِعُ.'], re: /\b(although|even though|despite|in spite of)\b/i, has: ['على الرغم', 'بالرغم', 'رغم', 'الا ان'] },
+  { id: 'cause', name: 'Cause and effect', en: ['X led to Y, which in turn …', 'Higher rates led to weaker investment, which in turn slowed hiring.'], ar: ['أَدَّى … إِلَى …', 'أَدَّى ارْتِفَاعُ أَسْعَارِ الْفَائِدَةِ إِلَى انْخِفَاضِ الِاسْتِثْمَارِ.'], re: /\b(led to|leads to|resulted in|results in|as a result|which in turn|because of|due to)\b/i, has: ['ادى', 'ادت', 'يؤدي', 'نتيجه ل*', 'بسبب', 'يعود الى'] },
+  { id: 'hedge', name: 'Hedging', en: ['It is likely that … / The evidence suggests …', 'It is likely that inflation will keep falling.'], ar: ['مِنَ الْمُرَجَّحِ أَنْ …', 'مِنَ الْمُرَجَّحِ أَنْ يَسْتَمِرَّ التَّضَخُّمُ فِي الِانْخِفَاضِ.'], re: /\b(likely|probably|suggests?|appears? to|seems? to|may|might)\b/i, has: ['من المرجح', 'يبدو ان', 'ربما'] },
+  { id: 'contrast', name: 'Contrast', en: ['On the other hand, … / Whereas …', 'Exports rose, whereas imports fell.'], ar: ['فِي الْمُقَابِلِ، … / بَيْنَمَا …', 'ارْتَفَعَتِ الصَّادِرَاتُ، بَيْنَمَا انْخَفَضَتِ الْوَارِدَاتُ.'], re: /\b(on the other hand|in contrast|whereas|however)\b/i, has: ['في المقابل', 'بينما', 'على العكس', 'غير ان'] },
+  { id: 'number', name: 'Put a number on it', en: ['X rose by … percentage points', 'Unemployment rose by half a percentage point.'], ar: ['ارْتَفَعَ … بِنِسْبَةِ …', 'ارْتَفَعَ مُعَدَّلُ الْبَطَالَةِ بِنِسْبَةِ نِصْفِ نُقْطَةٍ مِئَوِيَّةٍ.'], re: /\d|percent|per cent|percentage point|basis point/i, has: ['بنسبه', 'بالمئه', 'في المئه', '%'] },
+  { id: 'conditional', name: 'Conditional', en: ['If …, … would …', 'If rates were cut, demand would recover.'], ar: ['لَوْ … لَـ …', 'لَوْ خُفِّضَتْ أَسْعَارُ الْفَائِدَةِ لَانْتَعَشَ الطَّلَبُ.'], re: /\bif\b/i, has: ['لو', 'اذا', 'في حال'] },
+  { id: 'source', name: 'Cite your source', en: ['According to …, …', 'According to the central bank, growth will slow.'], ar: ['وِفْقًا لِ … / بِحَسَبِ …', 'وِفْقًا لِبَيَانَاتِ الْبَنْكِ الْمَرْكَزِيِّ، سَيَتَبَاطَأُ النُّمُوُّ.'], re: /\b(according to|data show|figures show|report says|the bank says)\b/i, has: ['وفقا', 'بحسب', 'حسب', 'طبقا'] },
+  { id: 'stance', name: 'Take a position', en: ['On balance, I would argue that …', 'On balance, I would argue that the policy is regressive.'], ar: ['وَعَلَيْهِ، أَرَى أَنَّ …', 'وَعَلَيْهِ، أَرَى أَنَّ هَذَا الْقَرَارَ فِي مَصْلَحَةِ الِاقْتِصَادِ.'], re: /\b(on balance|overall|in my view|i would argue|i believe|i think)\b/i, has: ['وعليه', 'في المحصله', 'ارى ان', 'برايي', 'اعتقد ان'] }
+];
+function expertDayIdx(){ return Math.floor(new Date(todayStr() + 'T00:00:00Z').getTime() / 86400000) + (why.off || 0); }
+function expertToday(){ const n = EXPERT_STRUCTS.length; return EXPERT_STRUCTS[((expertDayIdx() % n) + n) % n]; }
+function fluPickStructs(lang, n){ const i0 = EXPERT_STRUCTS.indexOf(expertToday()); return Array.from({ length: n }, (_, k) => EXPERT_STRUCTS[(i0 + k) % EXPERT_STRUCTS.length].id); }
+function fluStructUse(st, transcript, lang){
+  if(lang !== 'ar') return st.re.test(String(transcript || '')) ? 'yes' : 'no';
+  const t = ' ' + fluNorm(transcript, 'ar') + ' ';   // whole-word match; an entry ending in * matches a word that STARTS with it (attached ل / ب prefixes)
+  return st.has.some(h => { if(h === '%') return /[%\d]/.test(t); const pre = h.endsWith('*'), n = fluNorm(h.replace(/\*$/, ''), 'ar'); return pre ? t.includes(' ' + n) : t.includes(' ' + n + ' '); }) ? 'yes' : 'no';
+}
+function fluStructHtml(t){
+  if(!(t.structs && t.structs.length)) return '';
+  const all = t.rounds.map(r => r.transcript || '').join(' ');
+  return `<div style="margin:8px 0;"><div class="gap-mini">Optional — try these sentence structures${t.rounds.length ? ' (✓ heard in your talk — a text match, so it can miss or over-match)' : ''}:</div>`
+    + t.structs.map(id => { const st = EXPERT_STRUCTS.find(x => x.id === id); if(!st) return ''; const f = st[t.lang === 'ar' ? 'ar' : 'en'], u = t.rounds.length ? fluStructUse(st, all, t.lang) : '';
+      return `<div style="margin:4px 0;font-size:13px;"><strong>${u === 'yes' ? '✓ ' : ''}${st.name}</strong> — <span${t.lang === 'ar' ? ' dir="rtl"' : ''}>${escapeHtml(f[0])}</span></div>`; }).join('') + '</div>';
+}
+async function fluExpert(text, lang){
+  const L = lang === 'ar' ? 'Arabic' : 'English';
+  const system = 'You are a coach helping a learner sound like an expert in economic discussions. Reply with ONLY one JSON object, no markdown fences: {"pairs":[{"said":"","expert":""}]}.';
+  const ask = 'Below is a speech transcript by a learner of ' + L + ' (speech-to-text, may be imperfect). Pick 2-3 of the speaker\'s plainest or clumsiest sentences about economics and rewrite each the way a confident expert would say it in a discussion: precise terms, a clear structure (concession, cause and effect, hedging, a number or a source where natural), same meaning, no longer than needed. "said" = the speaker\'s sentence (shortened if long), "expert" = your version in ' + L + (lang === 'ar' ? ' in Modern Standard Arabic with full tashkil' : '') + '.\n\nTRANSCRIPT:\n' + text;
+  const j = msaJson((await callGemini(ask, { system, useSearch: false })).text);
+  return (Array.isArray(j.pairs) ? j.pairs : []).filter(p => p && p.said && p.expert).slice(0, 3).map(p => ({ said: String(p.said).slice(0, 200), expert: String(p.expert).slice(0, 260) }));
+}
+function whyReminderHtml(){
+  const lang = uiLang(), st = expertToday(), f = st[lang === 'ar' ? 'ar' : 'en'], dir = lang === 'ar' ? ' dir="rtl"' : '';
+  return `<div class="gap-mini" style="margin:12px 0 2px;"><strong>Reminder — what expert level takes</strong></div>
+    <div style="font-size:13px;">Every day: ① economics input in that language (Arabic ~30 min, English ~15) ② recorded speaking on an economics topic ③ retrieval — bank and gap review. Weekly: one live conversation. Monthly: the checkpoint.</div>
+    <div class="gap-mini" style="margin:8px 0 2px;"><strong>Try today</strong> (optional, ${LANG_NAMES[lang]}) — ${escapeHtml(st.name)}</div>
+    <div${dir} style="font-size:15px;">${escapeHtml(f[0])}</div><div${dir} class="gap-mini">${escapeHtml(f[1])}</div>
+    <div class="card-actions"><button class="ghost" type="button" data-whyact="another">Another</button><button class="ghost" type="button" data-whyact="intalk">Use it in today’s talk</button></div>`;
 }
 
 </script>
