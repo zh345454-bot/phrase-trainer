@@ -1652,6 +1652,8 @@ async function loadState(){
   if(!Array.isArray(state.spk.deletedEnw)) state.spk.deletedEnw = [];
   if(!Array.isArray(state.spk.resume)) state.spk.resume = [];
   if(!Array.isArray(state.spk.deletedResume)) state.spk.deletedResume = [];
+  if(!Array.isArray(state.spk.econ)) state.spk.econ = [];
+  if(!Array.isArray(state.spk.deletedEcon)) state.spk.deletedEcon = [];
   state.gapMeta = lsGet('gapMeta', { checklist: {}, lastLang: 'en' });
   if(!state.gapMeta.checklist) state.gapMeta.checklist = {};
   state.settings = lsGet('settings', { webAppUrl:'', sharedSecret:'', geminiApiKey:'', geminiModel:'', geminiModelOverride:'', googleSearchApiKey:'', googleSearchCx:'' });
@@ -7705,9 +7707,11 @@ function renderGrammarList(){
           <div class="example-actions">
             <button class="icon" data-speak-raw="${escapeHtml(stripBold(ex.target))}" data-speak-lang="${isAr?'ar':'en'}" title="Speak">▶</button>
             <button class="icon wide" data-copy-raw="${escapeHtml(stripBold(ex.target))}" title="Copy">⧉ Copy</button>
-            ${isAr ? `<button class="ghost" data-analyze-id="${g.id}" data-analyze-ex="${i}">Analyze</button>` : ''}
+            ${isAr ? `<button class="ghost" data-analyze-id="${g.id}" data-analyze-ex="${i}">Analyze</button>` : `<button class="ghost" type="button" data-refine-id="${g.id}" data-refine-ex="${i}" title="Smooth the text and fill gaps the dictation left — you choose whether to replace">✨ Refine</button>`}
+            ${!isAr && ex.prevTarget !== undefined ? `<button class="ghost" type="button" data-refine-undo="${g.id}:${i}" title="Restore the text from before the refinement">↶ Undo refinement</button>` : ''}
           </div>
           <div class="analysis-box" id="analysis-${g.id}-${i}" style="display:none;"></div>
+          <div class="refine-box" id="refine-${g.id}-${i}" style="display:none;"></div>
         </div>`;
     }).join('');
     card.innerHTML = `
@@ -10121,7 +10125,9 @@ function mergeSpk(local, incoming){
   enwMerged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   const goneR = new Set((local && local.deletedResume || []).concat(incoming && incoming.deletedResume || []));
   const resumeMerged = mergeById(local && local.resume, incoming && incoming.resume).filter(t => !goneR.has(t.id));
-  return { patterns, cycles, talks, deletedTalks: [...gone], checkpoints, deletedCheckpoints: [...goneC], msa: msaItemsMerged, deletedMsa: [...goneM], enw: enwMerged, deletedEnw: [...goneE], resume: resumeMerged, deletedResume: [...goneR] };
+  const goneEc = new Set((local && local.deletedEcon || []).concat(incoming && incoming.deletedEcon || []));
+  const econMerged = mergeById(local && local.econ, incoming && incoming.econ).filter(t => !goneEc.has(t.id));
+  return { patterns, cycles, talks, deletedTalks: [...gone], checkpoints, deletedCheckpoints: [...goneC], msa: msaItemsMerged, deletedMsa: [...goneM], enw: enwMerged, deletedEnw: [...goneE], resume: resumeMerged, deletedResume: [...goneR], econ: econMerged, deletedEcon: [...goneEc] };
 }
 function spkToRows(){
   return state.spk.patterns.map(p => ({ kind: 'pattern', id: p.id, key: p.name, data: JSON.stringify(p), updatedAt: p.updatedAt || '' }))
@@ -10130,10 +10136,11 @@ function spkToRows(){
     .concat((state.spk.checkpoints || []).map(t => ({ kind: 'checkpoint', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
     .concat((state.spk.msa || []).map(t => ({ kind: 'msa', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
     .concat((state.spk.enw || []).map(t => ({ kind: 'enw', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
-    .concat((state.spk.resume || []).map(t => ({ kind: 'resume', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
+    .concat((state.spk.resume || []).map(t => ({ kind: 'resume', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })))
+    .concat((state.spk.econ || []).map(t => ({ kind: 'econ', id: t.id, key: t.date, data: JSON.stringify(t), updatedAt: t.updatedAt || '' })));
 }
 function spkFromRows(rows){
-  const out = { patterns: [], cycles: [], talks: [], checkpoints: [], msa: [], enw: [], resume: [] };
+  const out = { patterns: [], cycles: [], talks: [], checkpoints: [], msa: [], enw: [], resume: [], econ: [] };
   (rows || []).forEach(r => {
     let d; try{ d = JSON.parse(r.data); }catch(e){ return; }
     if(!d || !d.id) return;
@@ -10145,6 +10152,7 @@ function spkFromRows(rows){
     else if(r.kind === 'msa' && d.date) out.msa.push(d);
     else if(r.kind === 'enw' && d.date) out.enw.push(d);
     else if(r.kind === 'resume' && d.date) out.resume.push(d);
+    else if(r.kind === 'econ' && d.date) out.econ.push(d);
   });
   return out;
 }
@@ -10339,6 +10347,7 @@ function renderDashboard(){
     ${row('Bank review dose', dose.completed >= dose.target, dose.completed + '/' + dose.target, 'review')}
     ${row('Gap reviews', remDue === 0, cs.n + '/' + cs.cap + ' · ' + remDue + ' due', 'gaps')}
     ${row('Listening + reading (' + LANG_NAMES[lang] + ')', inputMin >= state.hours.inputTarget, inputMin + '/' + state.hours.inputTarget + ' min', 'hours', lang)}
+    ${row('Economics input (' + LANG_NAMES[lang] + ')', hrsEconMin(lang, today) >= hrsDailyTargets()[lang === 'ar' ? 'ear' : 'een'], hrsEconMin(lang, today) + '/' + hrsDailyTargets()[lang === 'ar' ? 'ear' : 'een'] + ' min', 'hours', lang)}
     ${row('Voice practice', tk('voicePractice')[0], tk('voicePractice')[1], 'practice')}
     ${(function(){ const n = fluTalks(lang).filter(t => t.date === today).reduce((a, t) => a + t.rounds.length, 0); return `<div class="dash-row${n >= 3 ? ' done' : ''}" data-dashact="gotoflu" data-lang="${lang}" title="Each round counts toward Voice practice (1 turn per 2 minutes spoken)"><span>${n >= 3 ? '✓' : '○'} 4/3/2 talk (${LANG_NAMES[lang]})</span><span class="st">${Math.min(n, 3)}/3 rounds</span></div>`; })()}
     ${row('Write &amp; check', tk('writeCheck')[0], tk('writeCheck')[1], 'practice')}
@@ -10875,6 +10884,8 @@ async function hrsSaveSession(form){
   const nw = v('newwords').split(/[\n,؛;]+/).map(x => x.trim()).filter(Boolean);
   sess.newWords = nw.length;
   state.hours.sessions.push(sess);
+  const econTag = !!(form.querySelector('[data-hf="econ"]') || {}).checked && (skill === 'listening' || skill === 'reading');
+  if(econTag){ sess.econ = true; state.spk.econ.push({ id: sess.id, type: 'econ', date, lang, minutes, skill, title: sess.title, updatedAt: sess.updatedAt }); saveSpk(); }
   state.hours.selfSeen[hrsKey(date, lang)] = true;
   if(nw.length){
     nw.forEach(w => captureGap({ lang, wanted: w, source: (act.label.split(' (')[0]) + (sess.title ? ': ' + sess.title : '') }));
@@ -10908,6 +10919,7 @@ function hrsFormHtml(){
     </div>
     <label class="gap-mini">New words to remember (one per line or comma-separated) — added to Gaps</label>
     <textarea data-hf="newwords" style="min-height:60px;width:100%;box-sizing:border-box;" ${lang === 'ar' ? 'dir="rtl"' : ''} placeholder="${lang === 'ar' ? 'كلمات جديدة…' : 'new words…'}">${escapeHtml(p && p.newwords ? p.newwords : '')}</textarea>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px;font-size:13px;"><input type="checkbox" data-hf="econ" style="width:auto;margin-top:3px;"><span><strong>This was about economics / finance</strong> — counts toward your daily economics input (listening or reading only)</span></label>
     <label class="gap-mini">Note (optional)</label><input type="text" data-hf="note" value="${escapeHtml(p && p.note ? p.note : '')}">
     <div class="card-actions" style="margin-top:8px;"><button class="primary" type="button" data-hrsact="save">Save session</button>${p ? '<button class="ghost" type="button" data-hrsact="discard">Discard</button>' : ''}</div>
     <div class="status-msg" data-hstatus></div></div>`;
@@ -10997,7 +11009,7 @@ document.getElementById('hrsRoot').addEventListener('click', async (e) => {
   if(act === 'del'){
     if(!confirm('Delete this session?')) return;
     const x = state.hours.sessions.find(z => z.id === a.dataset.id);
-    if(x){ state.hours.selfSeen[hrsKey(x.date, x.lang)] = true; state.hours.sessions = state.hours.sessions.filter(z => z.id !== x.id); hrsSave(); bumpHrsSyncInBackground(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
+    if(x){ state.hours.selfSeen[hrsKey(x.date, x.lang)] = true; state.hours.sessions = state.hours.sessions.filter(z => z.id !== x.id); econDrop(x.id); hrsSave(); bumpHrsSyncInBackground(); renderHours(); if(typeof renderDashboard === 'function') renderDashboard(); }
     return;
   }
 });
@@ -13220,6 +13232,7 @@ function whyEvidenceHtml(){
   }catch(e){}
   try{
     rows.push(hrsTodayLine());
+    rows.push(hrsEconLine());
     const today = todayStr(), from = addDays(today, -6), d = whyData(), tgt = Number(d.target) > 0 ? Number(d.target) : 14;
     const mA = hrsRange('ar', from, today).total, mE = hrsRange('en', from, today).total, h = Math.round((mA + mE) / 6) / 10;
     rows.push(`Last 7 days: <strong>${h} h</strong> logged of a ${tgt} h weekly target (${Math.min(100, Math.round(h / tgt * 100))}%) — Arabic ${Math.round(mA / 6) / 10} h · English ${Math.round(mE / 6) / 10} h`);
@@ -13763,7 +13776,7 @@ async function chatCopy(text){
 // When both targets are reached it says so — a clear point to stop and rest.
 // =====================================================================
 function bylFmt(m){ m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + String(m % 60).padStart(2, '0') + ' min' : ''); }
-function hrsDailyTargets(){ const t = lsGet('hrsDaily', null), ok = v => typeof v === 'number' && isFinite(v) && v >= 0; return { ar: t && ok(+t.ar) ? +t.ar : 75, en: t && ok(+t.en) ? +t.en : 45 }; }
+function hrsDailyTargets(){ const t = lsGet('hrsDaily', null), ok = v => typeof v === 'number' && isFinite(v) && v >= 0; return { ar: t && ok(+t.ar) ? +t.ar : 75, en: t && ok(+t.en) ? +t.en : 45, ear: t && ok(+t.ear) ? +t.ear : 30, een: t && ok(+t.een) ? +t.een : 15 }; }
 function hrsLangMin(lang, date){ try{ return Math.round(hrsDayTotals(lang, date).total); }catch(e){ return 0; } }
 function hrsTodayLine(){
   const T = hrsDailyTargets(), t = todayStr(), a = hrsLangMin('ar', t), e = hrsLangMin('en', t);
@@ -13791,7 +13804,7 @@ function hrsByLangHtml(){
   }
   return `<details class="hrs-card" open><summary><strong>⏱ Time by language</strong></summary>
     ${row('ar', 'Arabic')}${row('en', 'English')}
-    <div style="margin:6px 0;">${status}</div>
+    <div style="margin:6px 0;">${status}<br>${hrsEconLine()}</div>
     <div class="cov-wrap"><table class="flu-table"><tr><th>Last 7 days</th><th>Arabic</th><th>English</th><th>Total</th></tr>${days}
       <tr><td><strong>Week</strong></td><td><strong>${bylFmt(sumA)}</strong></td><td><strong>${bylFmt(sumE)}</strong></td><td><strong>${bylFmt(tot)}</strong></td></tr></table></div>
     <div class="gap-mini" style="margin-top:4px;">${bal || 'The balance line appears once you have logged an hour this week.'} ✓ = that day’s target reached.</div>
@@ -13800,15 +13813,17 @@ function hrsByLangHtml(){
       <div><label class="gap-mini">Arabic</label><input type="number" min="0" max="600" step="5" data-byl="ar" value="${T.ar}" style="width:90px;"></div>
       <div><label class="gap-mini">English</label><input type="number" min="0" max="600" step="5" data-byl="en" value="${T.en}" style="width:90px;"></div>
       <button class="ghost" type="button" data-bylpreset="75,45">Arabic-weighted 75 / 45</button><button class="ghost" type="button" data-bylpreset="60,60">50-50 · 60 / 60</button></div>
+    <div class="gap-mini" style="margin:10px 0 4px;"><strong>Daily economics input</strong> (minutes — required; tick “economics” when you log listening or reading)</div>
+    <div class="row2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;"><div><label class="gap-mini">Arabic</label><input type="number" min="0" max="300" step="5" data-byl="ear" value="${T.ear}" style="width:90px;"></div><div><label class="gap-mini">English</label><input type="number" min="0" max="300" step="5" data-byl="een" value="${T.een}" style="width:90px;"></div></div>
     <div class="gap-mini" style="margin-top:6px;">Counts only minutes you timed or entered (the in-app player’s watch time counts once you save it). Time logged under the other language in the Hours tab’s toggle shows here under that language.</div></details>`;
 }
 (function(){
   const root = document.getElementById('hrsRoot'); if(!root) return;
-  const save = (ar, en) => { lsSet('hrsDaily', { ar, en }); renderHours(); if(typeof renderWhy === 'function') renderWhy(); };
+  const save = (ar, en, ear, een) => { const T0 = hrsDailyTargets(); lsSet('hrsDaily', { ar, en, ear: ear === undefined ? T0.ear : ear, een: een === undefined ? T0.een : een }); renderHours(); if(typeof renderWhy === 'function') renderWhy(); };
   root.addEventListener('change', e => {
     const k = e.target.dataset && e.target.dataset.byl; if(!k) return;
     const T = hrsDailyTargets(), v = parseInt(e.target.value, 10);
-    T[k] = isNaN(v) || v < 0 ? T[k] : Math.min(600, v); save(T.ar, T.en);
+    T[k] = isNaN(v) || v < 0 ? T[k] : Math.min(600, v); save(T.ar, T.en, T.ear, T.een);
   });
   root.addEventListener('click', e => {
     const b = e.target.closest('[data-bylpreset]'); if(!b) return;
@@ -14026,11 +14041,94 @@ async function fluExpert(text, lang){
 function whyReminderHtml(){
   const lang = uiLang(), st = expertToday(), f = st[lang === 'ar' ? 'ar' : 'en'], dir = lang === 'ar' ? ' dir="rtl"' : '';
   return `<div class="gap-mini" style="margin:12px 0 2px;"><strong>Reminder — what expert level takes</strong></div>
-    <div style="font-size:13px;">Every day: ① economics input in that language (Arabic ~30 min, English ~15) ② recorded speaking on an economics topic ③ retrieval — bank and gap review. Weekly: one live conversation. Monthly: the checkpoint.</div>
+    <div style="font-size:13px;">Every day: ① economics input in that language (Arabic ${hrsDailyTargets().ear} min, English ${hrsDailyTargets().een} min — tick “economics” when you log it) ② recorded speaking on an economics topic ③ retrieval — bank and gap review. Weekly: one live conversation. Monthly: the checkpoint.</div>
     <div class="gap-mini" style="margin:8px 0 2px;"><strong>Try today</strong> (optional, ${LANG_NAMES[lang]}) — ${escapeHtml(st.name)}</div>
     <div${dir} style="font-size:15px;">${escapeHtml(f[0])}</div><div${dir} class="gap-mini">${escapeHtml(f[1])}</div>
     <div class="card-actions"><button class="ghost" type="button" data-whyact="another">Another</button><button class="ghost" type="button" data-whyact="intalk">Use it in today’s talk</button></div>`;
 }
+
+
+// =====================================================================
+// REQUIRED DAILY ECONOMICS INPUT — built into the existing Hours log, Time-by-language card and Today checklist
+//  • Hours log form: a tick box "This was about economics / finance". Counts only for listening / reading.
+//  • Daily economics-input target per language (default Arabic 30 min, English 15 min; editable in Time by language).
+//  • Today checklist: an "Economics input" row (✓ when the target is met) right under Listening + reading.
+//  • Tagged minutes are stored in state.spk.econ so they follow you between devices with the Speaking sync;
+//    deleting the session in Hours removes the tag as well. The app shows what is done — it cannot force you.
+// =====================================================================
+function hrsEconMin(lang, date){ return Math.round((state.spk.econ || []).filter(x => x.lang === lang && x.date === date).reduce((n, x) => n + (Number(x.minutes) || 0), 0)); }
+function econDrop(id){
+  if(!(state.spk.econ || []).some(x => x.id === id)) return;
+  state.spk.econ = state.spk.econ.filter(x => x.id !== id); state.spk.deletedEcon = (state.spk.deletedEcon || []).concat([id]); saveSpk();
+}
+function hrsEconLine(){
+  const T = hrsDailyTargets(), t = todayStr(), a = hrsEconMin('ar', t), e = hrsEconMin('en', t);
+  return `Economics input today: Arabic <strong>${a}</strong> of ${T.ear} min${a >= T.ear && T.ear > 0 ? ' ✓' : ''} · English <strong>${e}</strong> of ${T.een} min${e >= T.een && T.een > 0 ? ' ✓' : ''}`;
+}
+
+
+// =====================================================================
+// GRAMMAR NOTEBOOK — ✨ Refine (English entries)
+// Next to ▶ and Copy: the AI smooths the corrected text and repairs gaps that dictation leaves — a missing word,
+// or a word that reverses what you evidently meant — using the sense of the WHOLE text. It never replaces anything
+// by itself: you see the refined version, each change and what to double-check, optionally tell the AI what you
+// actually meant and refine again, then choose "Replace" or "Keep original". The Arabic translation is regenerated
+// with the new text. "Undo refinement" restores the previous text and translation.
+// =====================================================================
+const refineStore = {};
+async function refineText(g, ex, hint){
+  const system = 'You edit speech-to-text dictation by a non-native English speaker. Reply with ONLY one JSON object, no markdown fences: {"refined":"","arabic":"","changes":[{"from":"","to":"","why":""}],"check":[""]}.';
+  const ask = 'The TEXT below was dictated and may have (a) missing words or phrases, or (b) words that contradict the surrounding meaning or reverse what the speaker evidently meant. Produce a REFINED version that reads smoothly and whose meaning is coherent across the WHOLE text. Where something seems missing or contradictory, repair it using the sense of the whole text'
+    + (hint ? '. The speaker says what they actually meant was: “' + hint + '”. Follow that.' : '.')
+    + ' Rules: keep the speaker\'s voice and vocabulary level; do not add new facts, numbers, names or opinions; make the smallest repair that fixes the sense; if the intended meaning is genuinely ambiguous, choose the most likely repair AND list it in "check". '
+    + '"changes" = every repair or smoothing edit ("why" up to 15 words; start with "Gap:" when you filled something missing). "check" = up to 3 short English questions about repairs you are unsure of. "arabic" = a Modern Standard Arabic translation of "refined" with full tashkil. If the text is already fine, return it unchanged with empty "changes".'
+    + '\n\nContext — what this notebook entry is about: ' + String(g.title || '').slice(0, 200) + ' | ' + String(g.rule_summary || '').slice(0, 300) + '\n\nTEXT:\n' + stripBold(ex.target);
+  const j = msaJson((await callGemini(ask, { system, useSearch: false })).text);
+  if(!j.refined) throw new Error('The AI returned no refined text — try again.');
+  return { refined: String(j.refined).trim().slice(0, 1500), arabic: String(j.arabic || '').trim().slice(0, 2500),
+    changes: (Array.isArray(j.changes) ? j.changes : []).filter(c => c && (c.from || c.to)).slice(0, 12).map(c => ({ from: String(c.from || ''), to: String(c.to || ''), why: String(c.why || '').slice(0, 140) })),
+    check: (Array.isArray(j.check) ? j.check : []).slice(0, 3).map(x => String(x).slice(0, 200)) };
+}
+function refineBoxHtml(key, ex, r, hint){
+  const esc = escapeHtml, same = r.refined.trim() === stripBold(ex.target).trim();
+  return `<div class="spk-form" style="margin-top:8px;"><strong>AI refinement</strong> <span class="gap-mini">— an estimate; nothing changes until you choose</span>
+    <div class="gap-mini" style="margin-top:6px;">Original</div><div>${esc(stripBold(ex.target))}</div>
+    <div class="gap-mini" style="margin-top:6px;">Refined${same ? ' (no change needed)' : ''}</div><div style="font-size:16px;"><strong>${esc(r.refined)}</strong></div>
+    ${r.arabic ? `<div dir="rtl" class="gap-mini" style="margin-top:4px;">${esc(r.arabic)}</div>` : ''}
+    ${r.changes.length ? '<div class="gap-mini" style="margin-top:8px;">What changed</div>' + r.changes.map(c => `<div style="font-size:13px;margin:3px 0;">“${esc(c.from)}” → <strong>“${esc(c.to)}”</strong> <span class="gap-mini">${esc(c.why)}</span></div>`).join('') : ''}
+    ${r.check.length ? '<div class="gap-mini" style="margin-top:8px;">⚠ Please check — the AI was not sure</div>' + r.check.map(c => `<div style="font-size:13px;margin:3px 0;">• ${esc(c)}</div>`).join('') : ''}
+    <label class="gap-mini" style="margin-top:8px;">What did you actually mean? (optional — then refine again)</label>
+    <input type="text" data-refine-hint="${key}" value="${esc(hint || '')}" placeholder="e.g. I am no longer doing that project">
+    <div class="card-actions"><button class="primary" type="button" data-refine-apply="${key}"${same ? ' disabled' : ''}>Replace with this version</button><button class="ghost" type="button" data-refine-again="${key}">Refine again</button><button class="ghost" type="button" data-refine-keep="${key}">Keep original</button></div>
+    <div class="status-msg" data-refine-status="${key}"></div></div>`;
+}
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-refine-id],[data-refine-again],[data-refine-apply],[data-refine-keep],[data-refine-undo]'); if(!t) return;
+  const d = t.dataset, key = d.refineId ? d.refineId + ':' + d.refineEx : (d.refineAgain || d.refineApply || d.refineKeep || d.refineUndo);
+  const [gid, idx] = key.split(':'), g = state.grammar.find(x => x.id === gid), ex = g && g.examples && g.examples[parseInt(idx, 10)];
+  const box = document.getElementById('refine-' + gid + '-' + idx); if(!g || !ex || !box) return;
+  const say = (m, err) => { const s = box.querySelector('[data-refine-status]'); if(s){ s.textContent = m; s.className = 'status-msg' + (err ? ' err' : ''); } };
+  if(d.refineKeep !== undefined){ box.style.display = 'none'; box.innerHTML = ''; delete refineStore[key]; return; }
+  if(d.refineUndo !== undefined){
+    if(ex.prevTarget === undefined) return;
+    ex.target = ex.prevTarget; if(ex.prevTranslation !== undefined) ex.translation = ex.prevTranslation;
+    delete ex.prevTarget; delete ex.prevTranslation; delete ex.refinedAt; await saveGrammar(); renderGrammarList(); renderStarred(); return;
+  }
+  if(d.refineApply !== undefined){
+    const r = refineStore[key]; if(!r) return;
+    ex.prevTarget = ex.target; ex.prevTranslation = ex.translation || '';
+    ex.target = r.refined; if(r.arabic) ex.translation = r.arabic; ex.refinedAt = new Date().toISOString();
+    delete refineStore[key]; await saveGrammar(); renderGrammarList(); renderStarred(); return;
+  }
+  // refine / refine again
+  if(!getGeminiKeys().length){ box.style.display = ''; box.innerHTML = '<div class="status-msg err">Add a Gemini key in Sheet &amp; AI settings first.</div>'; return; }
+  const hintEl = box.querySelector('[data-refine-hint]'), hint = d.refineAgain !== undefined && hintEl ? hintEl.value.trim().slice(0, 300) : '';
+  box.style.display = ''; if(d.refineId !== undefined) box.innerHTML = '<div class="gap-mini">Refining…</div>'; else say('Refining…');
+  t.disabled = true;
+  try{ const r = await refineText(g, ex, hint); refineStore[key] = r; box.innerHTML = refineBoxHtml(key, ex, r, hint); }
+  catch(err){ box.innerHTML = `<div class="status-msg err">Refinement failed: ${escapeHtml((err && err.message) || 'unknown error')}</div>`; }
+  t.disabled = false;
+});
 
 </script>
 </body>
