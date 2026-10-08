@@ -1406,8 +1406,8 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
       <button type="button" class="ghost" id="gapLangEn" data-lang="en">English</button>
       <button type="button" class="ghost" id="gapLangAr" data-lang="ar">العربية</button>
     </div>
-    <div class="field"><label>What I wanted to say</label><input type="text" id="gapWanted" placeholder="e.g. Islamic studies"></div>
-    <div class="field"><label>What I said instead (optional)</label><input type="text" id="gapSaid" placeholder="e.g. Islamic teaching"></div>
+    <div class="field"><label>What I wanted to say</label><div style="display:flex;gap:6px;"><input type="text" id="gapWanted" placeholder="e.g. Islamic studies" style="flex:1;min-width:0;"><button class="ghost" type="button" data-dict="#gapWanted" data-dict-lang="gap" data-dict-mode="replace" title="Say it instead of typing">🎤</button></div></div>
+    <div class="field"><label>What I said instead (optional)</label><div style="display:flex;gap:6px;"><input type="text" id="gapSaid" placeholder="e.g. Islamic teaching" style="flex:1;min-width:0;"><button class="ghost" type="button" data-dict="#gapSaid" data-dict-lang="gap" data-dict-mode="replace" title="Say it instead of typing">🎤</button></div></div>
     <div class="gap-ctx" id="gapCtxRow"><label><input type="checkbox" id="gapUseCtx" checked><span id="gapCtxText"></span></label></div>
     <div class="status-msg" id="gapCaptureMsg"></div>
     <div class="modal-actions">
@@ -8391,8 +8391,10 @@ async function sendChat(){
     loadingBubble.remove();
     const aiNote = fallback ? '\n\n(Answered by the fallback AI ' + model + ' — no live web search, and weaker on Arabic. Double-check it.)'
       : ungrounded ? '\n\n(Answered without live web search.)' : '';
-    let shown = reply, raw = reply, bulk = false;
-    if(bulkMode){ const ls = chatCleanBulk(reply); if(ls.length){ shown = raw = ls.join('\n'); bulk = true; } }
+    let fixed = reply; try{ fixed = await chatEnsureTashkil(reply); }catch(e){}   // second pass if the model left Arabic unvowelled
+    if(fixed !== reply){ const cn = document.getElementById('chatNote'); if(cn){ cn.textContent = 'Tashkil added in a second pass — check it.'; cn.className = 'status-msg'; } }
+    let shown = fixed, raw = fixed, bulk = false;
+    if(bulkMode){ const ls = chatCleanBulk(fixed); if(ls.length){ shown = raw = ls.join('\n'); bulk = true; } }
     appendChatBubble('assistant', shown + aiNote + (bulkMode && !bulk ? '\n\n(I could not read this as phrase lines — check it before copying.)' : ''), bulk ? null : sources, { raw, bulk });
     chatHistory.push({ role: 'assistant', content: reply });
   }catch(err){
@@ -8919,6 +8921,7 @@ async function saveGapFromModal(keepOpen){
   const r = captureGap({ lang: gapCaptureLang, wanted, said: document.getElementById('gapSaid').value,
     source: useCtx ? pf.source : '', exEn: useCtx ? pf.exEn : '', exAr: useCtx ? pf.exAr : '' });
   if(!r) return;
+  if(useCtx && pf.link && !r.g.note) r.g.note = pf.link;   // e.g. the YouTube moment you heard it
   await saveGaps();
   renderGaps();
   const times = r.g.logDates.length;
@@ -10918,6 +10921,7 @@ function hrsFormHtml(){
       <div style="flex:1;min-width:140px;"><label class="gap-mini">Skill (only if “Other”)</label><select data-hf="skill">${HRS_SKILLS.map(k => `<option value="${k}">${HRS_SKILL_LABELS[k]}</option>`).join('')}</select></div>
     </div>
     <label class="gap-mini">New words to remember (one per line or comma-separated) — added to Gaps</label>
+    <button class="ghost" type="button" data-dict='[data-hf="newwords"]' data-dict-lang="hrs" data-dict-mode="append" data-dict-label="🎤 Say new words" style="margin-bottom:4px;">🎤 Say new words</button>
     <textarea data-hf="newwords" style="min-height:60px;width:100%;box-sizing:border-box;" ${lang === 'ar' ? 'dir="rtl"' : ''} placeholder="${lang === 'ar' ? 'كلمات جديدة…' : 'new words…'}">${escapeHtml(p && p.newwords ? p.newwords : '')}</textarea>
     <label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0 4px;font-size:13px;"><input type="checkbox" data-hf="econ" style="width:auto;margin-top:3px;"><span><strong>This was about economics / finance</strong> — counts toward your daily economics input (listening or reading only)</span></label>
     <label class="gap-mini">Note (optional)</label><input type="text" data-hf="note" value="${escapeHtml(p && p.note ? p.note : '')}">
@@ -13471,7 +13475,7 @@ function rsRenderHost(){
     <h3 style="margin:0 0 4px;">▶ Playing in the app</h3><div class="gap-mini" style="margin-bottom:6px;">${escapeHtml(it.title)} · <span id="rsPosLabel"></span></div>
     <div class="gap-mini" style="margin-bottom:6px;">Watched this session: <strong id="rsWatchLabel">0 min</strong> (time actually playing) · Language <select data-rplang style="width:auto;display:inline-block;"><option value="en"${it.lang !== 'ar' ? ' selected' : ''}>English</option><option value="ar"${it.lang === 'ar' ? ' selected' : ''}>Arabic</option></select></div>
     <div id="rsFrameWrap"><div id="rsFrame"></div></div>
-    <div class="card-actions"><button class="ghost" type="button" data-rpact="back">⟲ 10 s</button><button class="ghost" type="button" data-rpact="fwd">10 s ⟳</button><button class="ghost" type="button" data-rpact="save">Save spot now</button><button class="ghost" type="button" data-rpact="log">⏱ Log watch time</button><button class="ghost" type="button" data-rpact="float" title="Always-on-top window (desktop Chrome / Edge)">⧉ Float over other apps</button><button class="primary" type="button" data-rpact="close">Close</button></div>
+    <div class="card-actions"><button class="ghost" type="button" data-rpact="back">⟲ 10 s</button><button class="ghost" type="button" data-rpact="fwd">10 s ⟳</button><button class="ghost" type="button" data-rpact="save">Save spot now</button><button class="ghost" type="button" data-rpact="log">⏱ Log watch time</button><button class="ghost" type="button" data-rpact="gap" title="Pauses the video and logs a word you want to catch, with this video and time as the source">＋ Gap</button><button class="ghost" type="button" data-rpact="float" title="Always-on-top window (desktop Chrome / Edge)">⧉ Float over other apps</button><button class="primary" type="button" data-rpact="close">Close</button></div>
     <div class="gap-mini" id="rsHostMsg">Your spot is saved automatically every 5 seconds while it plays, when you pause, and when you leave the page.</div>`;
   rsPosLabel();
 }
@@ -13680,10 +13684,10 @@ function chatSystemFor(bulk){
     const cats = [...new Set((state.bank || []).map(p => String(p.category || '').trim()).filter(Boolean))].slice(0, 40);
     return 'The user is learning Modern Standard Arabic and will give one or more English phrases, possibly with mistakes, and ask for a translation. For EACH phrase: first correct the English (grammar, spelling, natural wording, same meaning), then translate the corrected phrase into natural Modern Standard Arabic. '
       + 'Output ONLY lines in exactly this format, one phrase per line, nothing before or after:\nEnglish | Arabic | Category\n'
-      + '"English" = the corrected English phrase. "Arabic" = the MSA translation (no tashkil unless needed to avoid ambiguity). "Category" = a short category of 1-3 words' + (cats.length ? '; reuse one of these existing categories when it fits: ' + cats.join(', ') : '') + '. '
+      + '"English" = the corrected English phrase. "Arabic" = the MSA translation written with FULL tashkil — every short vowel, shadda, sukun and tanwin, never unvowelled. "Category" = a short category of 1-3 words' + (cats.length ? '; reuse one of these existing categories when it fits: ' + cats.join(', ') : '') + '. '
       + 'Use the vertical bar | only as the separator. No headings, numbering, bullets, explanations or notes. If a phrase is already correct, keep it unchanged. Ignore any part of the message that is not a phrase to translate.' + plain;
   }
-  return 'Whenever your answer contains Arabic, write it with full tashkil (all short vowels, shadda, sukun, tanwin). '
+  return 'Whenever your answer contains Arabic, write it with full tashkil (all short vowels, shadda, sukun, tanwin) — never write Arabic words without tashkil, including inside lists and examples. '
     + 'Whenever your answer contains an Arabic verb, or a noun derived from a verb, give for it these three forms, each fully vowelled, on separate lines in this order:\nالماضي (past): …\nالمضارع (present): …\nالمصدر (verbal noun): …\n'
     + 'If a verb has more than one common masdar, list the common ones. Give these forms once per verb, not repeatedly. Do not add them to answers that contain no Arabic verb.' + plain;
 }
@@ -14129,6 +14133,69 @@ document.addEventListener('click', async (e) => {
   catch(err){ box.innerHTML = `<div class="status-msg err">Refinement failed: ${escapeHtml((err && err.message) || 'unknown error')}</div>`; }
   t.disabled = false;
 });
+
+
+// =====================================================================
+// 1) ＋ GAP FROM THE PLAYER: pauses the video and opens the normal gap form with "YouTube: title @ 12:34" as the source;
+//    the exact-moment link is kept in the gap's note.
+// 2) VOICE-TO-TEXT for filling gaps: 🎤 beside both fields of the gap form and above the Hours log's "new words" box.
+//    Same record → Apps Script transcription path as Ask AI's 🎤 (uses the language chosen in the gap form).
+// 3) ASK AI TASHKIL: translate mode used to tell the AI to leave tashkil out (my earlier choice) — now it asks for full
+//    tashkil; and because models often ignore that, any Arabic left unvowelled is sent through the app's own
+//    vowelizeArabic() as a second pass, accepted only if the letters are unchanged.
+// =====================================================================
+function rsGapFromPlayer(){
+  const it = rsCurItem(); if(!it) return;
+  let t = Math.floor(it.pos || 0);
+  try{ t = Math.floor(rsp.player.getCurrentTime()); rsp.player.pauseVideo(); }catch(e){}
+  rsSavePos();
+  openGapCapture({ text: '', source: 'YouTube: ' + it.title + ' @ ' + rsFmt(t), exEn: '', exAr: '', link: 'https://youtu.be/' + it.vid + '?t=' + t });
+  setGapCaptureLang(it.lang === 'ar' ? 'ar' : 'en');
+}
+(function(){
+  const host = document.getElementById('rsHost');
+  if(host) host.addEventListener('click', e => { const a = e.target.closest('[data-rpact="gap"]'); if(a){ e.preventDefault(); rsGapFromPlayer(); } });
+})();
+
+let dict = { rec: null, btn: null };
+function dictLang(kind){ if(kind === 'gap') return gapCaptureLang; if(kind === 'hrs') return (hrsPending && hrsPending.lang) || uiLang(); return kind === 'ar' ? 'ar' : 'en'; }
+function dictClean(text, mode){ text = String(text || '').trim(); return mode === 'append' ? text : text.replace(/[\s.,!?;:،؛؟]+$/, '').trim(); }
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-dict]'); if(!b) return;
+  e.preventDefault();
+  const kind = b.dataset.dictLang, mode = b.dataset.dictMode || 'replace', label = b.dataset.dictLabel || '🎤';
+  const say = (m, err) => { const el = document.getElementById('gapCaptureMsg'); if(kind === 'gap' && el){ el.textContent = m; el.className = 'status-msg' + (err ? ' err' : ''); } else if(m && typeof gapToastMsg === 'function') gapToastMsg(m); };
+  if(dict.rec && dict.rec.state === 'recording'){ dict.rec.stop(); return; }       // a second tap stops
+  if(!navigator.mediaDevices || !window.MediaRecorder){ say('This browser does not support audio recording.', true); return; }
+  if(!state.settings.webAppUrl){ say('Add your Apps Script Web App URL in Sheet settings first — transcription runs through it.', true); return; }
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  let stream; try{ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }catch(err){ say('Could not access the microphone.', true); return; }
+  const chunks = [], rec = new MediaRecorder(stream), reset = () => { b.textContent = label; b.disabled = false; b.classList.remove('listening'); dict.rec = null; };
+  rec.ondataavailable = ev => { if(ev.data.size > 0) chunks.push(ev.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    b.textContent = '…'; b.disabled = true; say('Transcribing…');
+    try{
+      const text = dictClean(await fluTranscribe(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), dictLang(kind)), mode);
+      const target = document.querySelector(b.dataset.dict);
+      if(!text) say('Nothing was heard — try again, closer to the mic.', true);
+      else if(target){ target.value = mode === 'append' && target.value.trim() ? target.value.replace(/\s+$/, '') + '\n' + text : text; target.focus(); say(''); }
+    }catch(err){ say(err.message || 'Transcription failed.', true); }
+    reset();
+  };
+  dict.rec = rec; dict.btn = b; rec.start(); b.textContent = '⏺ Stop'; b.classList.add('listening'); say('Recording — say the word or phrase, then tap Stop.');
+});
+
+function arDensity(s){ const L = (String(s).match(/[\u0621-\u064A]/g) || []).length, M = (String(s).match(/[\u064B-\u0652]/g) || []).length; return L ? M / L : 1; }
+async function chatEnsureTashkil(text){
+  const AR = '[\\u0621-\\u063A\\u0641-\\u0652\\u0670\\u0671]', runs = (String(text).match(new RegExp(AR + '(?:[\\u0621-\\u063A\\u0640-\\u0652\\u0670\\u0671 ]*' + AR + ')?', 'g')) || []).map(r => r.trim());
+  const need = [...new Set(runs.filter(r => (r.match(/[\u0621-\u064A]/g) || []).length >= 3 && arDensity(r) < 0.3))].slice(0, 8);
+  if(!need.length) return text;
+  const out = (await vowelizeArabic(need.join('\n'))).split('\n').map(x => x.trim()).filter(Boolean);
+  if(out.length !== need.length) return text;                                       // can't line the answers up safely: leave it
+  need.forEach((orig, i) => { if(fluNorm(out[i], 'ar') === fluNorm(orig, 'ar') && arDensity(out[i]) > arDensity(orig)) text = text.split(orig).join(out[i]); });
+  return text;
+}
 
 </script>
 </body>
