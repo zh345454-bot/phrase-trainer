@@ -2531,9 +2531,11 @@ function starredCardHtml(item){
     return selectRow0 + `
       <div class="phrase-texts">
         <div class="tag">Correction · ${isAr ? 'العربية' : 'English'}${c.topic ? ' · ' + escapeHtml(c.topic) : ''}</div>
-        <div${dir} style="color:var(--muted,#777);text-decoration:line-through;text-decoration-color:rgba(160,60,60,.5);">${escapeHtml(c.original || '')}</div>
+        <div style="font-weight:700;margin-top:6px;">Original</div>
+        <div${dir}>${escapeHtml(c.original || '')}</div>
+        <div style="font-weight:700;margin-top:6px;">Correction</div>
         <div class="${isAr ? 'phrase-ar' : 'phrase-en'}"${dir} style="font-weight:600;">${escapeHtml(c.correction || '')}</div>
-        ${c.note ? `<div class="due-meta">${escapeHtml(c.note)}</div>` : ''}
+        ${c.note ? `<div class="due-meta"><strong>Explanation:</strong> ${escapeHtml(c.note)}</div>` : ''}
         <div class="due-meta">${escapeHtml(daysStarredLabel(c.starredAt))}${c.learned ? ' · ✓ learned' : ''}</div>
       </div>
       <div class="card-actions">
@@ -14421,11 +14423,15 @@ function corrCardHtml(e){
     <label class="gap-mini">Original</label><textarea data-ce="original"${dir} style="min-height:50px;">${esc(e.original)}</textarea><label class="gap-mini">Correction</label><textarea data-ce="correction"${dir} style="min-height:50px;">${esc(e.correction)}</textarea>
     <label class="gap-mini">Note</label><textarea data-ce="note" style="min-height:50px;">${esc(e.note)}</textarea>
     <div class="card-actions"><button class="primary" type="button" data-cact="saveedit" data-id="${e.id}">Save</button><button class="ghost" type="button" data-cact="canceledit">Cancel</button></div></div>`;
-  return `<div style="padding:10px 0;border-top:1px solid var(--line);">
-    <div class="gap-mini">${e.topic ? esc(e.topic) + ' · ' : ''}${e.lang === 'ar' ? 'العربية' : 'English'}${e.possible ? ' · <span class="spk-warn">possible correction — meaning was unclear</span>' : ''}${e.learned ? ' · ✓ learned' : e.due <= todayStr() ? ' · due' : ' · next ' + esc(e.due)}</div>
-    <div${dir} style="color:var(--muted,#777);margin-top:4px;text-decoration:line-through;text-decoration-color:rgba(160,60,60,.5);">${esc(e.original)}</div>
-    <div${dir} style="font-size:17px;margin-top:3px;"><strong>${esc(e.correction)}</strong></div>
-    ${e.note ? `<div class="gap-mini" style="margin-top:4px;line-height:1.5;">${esc(e.note)}</div>` : ''}
+  const lab = 'font-weight:700;margin-top:8px;';
+  return `<div style="padding:12px 0;border-top:1px solid var(--line);">
+    <div style="font-weight:700;font-size:16px;">${esc(e.topic || 'Correction')}</div>
+    <div class="gap-mini">${e.lang === 'ar' ? 'العربية' : 'English'}${e.possible ? ' · <span class="spk-warn">possible correction — meaning was unclear</span>' : ''}${e.learned ? ' · ✓ learned' : e.due <= todayStr() ? ' · due' : ' · next ' + esc(e.due)}</div>
+    <div style="${lab}">Original</div>
+    <div${dir} style="margin-top:2px;">${esc(e.original)}</div>
+    <div style="${lab}">Correction</div>
+    <div${dir} style="font-size:17px;margin-top:2px;"><strong>${esc(e.correction)}</strong></div>
+    ${e.note ? `<div style="margin-top:8px;line-height:1.5;"><strong>Explanation:</strong> ${esc(e.note)}</div>` : ''}
     <div class="card-actions" style="margin-top:6px;"><button class="ghost" type="button" data-cact="speak" data-id="${e.id}" title="Hear the correction">▶</button><button class="ghost" type="button" data-cact="copy" data-id="${e.id}">Copy</button>
       <button class="ghost" type="button" data-cact="star" data-id="${e.id}">${corrIsStarred(e) ? '★' : '☆'}</button><button class="ghost" type="button" data-cact="learned" data-id="${e.id}">${e.learned ? '↺ Not learned' : '✓ Learned'}</button>
       <button class="ghost" type="button" data-cact="edit" data-id="${e.id}">✎</button><button class="ghost" type="button" data-cact="ask" data-id="${e.id}">Ask AI</button><button class="ghost" type="button" data-cact="del" data-id="${e.id}">🗑</button></div></div>`;
@@ -14497,7 +14503,7 @@ function renderCorr(){
       const r = corrAdd([{ lang: v('corrNewLang') === 'en' ? 'en' : 'ar', topic: v('corrNewTopic').trim(), original: o, correction: c, note: v('corrNewNote').trim(), possible: false }]); await corrSave(); corrMsg(r.added ? 'Added.' : 'That one is already saved.', !r.added); renderCorr(); return;
     }
     if(act === 'more'){ corrUi.limit += 60; renderCorr(); return; }
-    if(act === 'copyall'){ const txt = corrFiltered().map(x => x.original + ' → ' + x.correction + (x.note ? ' (' + x.note + ')' : '')).join('\n'); corrMsg((await chatCopy(txt)) ? 'List copied.' : 'Could not copy.', false); renderCorr(); return; }
+    if(act === 'copyall'){ const txt = corrFiltered().map(x => '## ' + (x.topic || 'Correction') + ' (' + (x.lang === 'ar' ? 'Arabic' : 'English') + ' · ID ' + x.id + ')\nOriginal: ' + x.original + '\nCorrection: ' + x.correction + (x.note ? '\nExplanation: ' + x.note : '')).join('\n\n'); corrMsg((await chatCopy(txt)) ? 'List copied.' : 'Could not copy.', false); renderCorr(); return; }
     if(act === 'review'){ const ids = corrDueList().sort(() => Math.random() - 0.5).slice(0, 20).map(x => x.id); corrUi.review = { ids, i: 0, shown: false, ok: 0 }; renderCorr(); return; }
     if(act === 'reveal'){ corrUi.review.shown = true; renderCorr(); return; }
     if(act === 'gok' || act === 'gno'){ const r = corrUi.review, x = byId(r.ids[r.i]); if(x){ corrGrade(x, act === 'gok'); if(act === 'gok') r.ok++; await corrSave(); } r.i++; r.shown = false; renderCorr(); return; }
