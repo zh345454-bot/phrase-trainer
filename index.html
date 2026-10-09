@@ -774,7 +774,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
   <section class="view" id="view-starred">
     <div class="panel">
       <h2>★ Starred</h2>
-      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, and Qur'an entries. Tap ☆ anywhere to pin it here; tap ★ here to unpin. Pick a date from the last 30 days to see what you starred that day, then select several and unstar them together.</div>
+      <div class="count-note">Everything you've starred, in one place — phrases (Phrase Bank, Practice, Review), grammar entries, Qur'an entries, and speaking corrections. Tap ☆ anywhere to pin it here; tap ★ here to unpin. Pick a date from the last 30 days to see what you starred that day, then select several and unstar them together.</div>
       <div class="field-row" style="margin-top:10px;">
         <div class="field">
           <label>Search</label>
@@ -787,6 +787,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
             <option value="phrase">Phrases</option>
             <option value="grammar">Grammar</option>
             <option value="quran">Qur'an</option>
+            <option value="corr">Corrections</option>
           </select>
         </div>
         <div class="field" style="max-width:190px;">
@@ -2494,6 +2495,15 @@ function collectStarredItems(){
       date: q.starredAt ? localDateStr(q.starredAt) : null
     });
   });
+  (state.spk && Array.isArray(state.spk.corr) ? state.spk.corr : []).filter(c=>corrIsStarred(c)).forEach(c=>{
+    items.push({
+      type: 'corr', label: 'Correction', ref: c, key: 'corr:' + c.id,
+      langs: [c.lang === 'ar' ? 'ar' : 'en'],
+      haystack: [c.original, c.correction, c.note, c.topic].join(' '),
+      days: daysStarred(c.starredAt),
+      date: c.starredAt ? localDateStr(c.starredAt) : null
+    });
+  });
   items.forEach(item => { item.bold = itemBoldFlags(item); });
   return items;
 }
@@ -2502,6 +2512,7 @@ function collectStarredItems(){
 // bold-word filter. Grammar entries are tagged with a single language; Qur'an checks Arabic text
 // vs its translation.
 function itemBoldFlags(item){
+  if(item.type === 'corr') return { en: false, ar: false };
   if(item.type === 'phrase') return { en: extractBoldSegments(item.ref.en).length > 0, ar: extractBoldSegments(item.ref.ar).length > 0 };
   if(item.type === 'grammar'){
     const g = item.ref;
@@ -2514,6 +2525,23 @@ function itemBoldFlags(item){
 }
 function starredCardHtml(item){
   const g = item.ref, q = item.ref;
+  if(item.type === 'corr'){
+    const c = item.ref, isAr = c.lang === 'ar', dir = isAr ? ' dir="rtl"' : '';
+    const selectRow0 = `<div class="star-select-row"><label class="star-select-wrap"><input type="checkbox" class="starred-select" data-star-key="${escapeHtml(item.key)}"${starredSelected.has(item.key) ? ' checked' : ''}> Select</label></div>`;
+    return selectRow0 + `
+      <div class="phrase-texts">
+        <div class="tag">Correction · ${isAr ? 'العربية' : 'English'}${c.topic ? ' · ' + escapeHtml(c.topic) : ''}</div>
+        <div${dir} style="color:var(--muted,#777);text-decoration:line-through;text-decoration-color:rgba(160,60,60,.5);">${escapeHtml(c.original || '')}</div>
+        <div class="${isAr ? 'phrase-ar' : 'phrase-en'}"${dir} style="font-weight:600;">${escapeHtml(c.correction || '')}</div>
+        ${c.note ? `<div class="due-meta">${escapeHtml(c.note)}</div>` : ''}
+        <div class="due-meta">${escapeHtml(daysStarredLabel(c.starredAt))}${c.learned ? ' · ✓ learned' : ''}</div>
+      </div>
+      <div class="card-actions">
+        <button class="icon" data-corr-speak="${escapeHtml(c.id)}" title="Hear the correction">▶</button>
+        <button class="icon wide" data-copy-raw="${escapeHtml(c.correction || '')}" title="Copy correction">⧉ Copy</button>
+        <button class="icon starred" data-star-corr="${escapeHtml(c.id)}" title="Remove star">★</button>
+      </div>`;
+  }
   const selectRow = `<div class="star-select-row"><label class="star-select-wrap"><input type="checkbox" class="starred-select" data-star-key="${escapeHtml(item.key)}"${starredSelected.has(item.key) ? ' checked' : ''}> Select</label></div>`;
   if(item.type === 'grammar'){
     const isAr = g.language === 'Arabic';
@@ -2598,12 +2626,12 @@ function renderStarred(){
   if(all.length === 0){
     countNote.textContent = '';
     if(bulkBar) bulkBar.style.display = 'none';
-    list.innerHTML = '<div class="empty">Nothing starred yet — tap ☆ on a phrase, grammar entry, or Qur\'an entry to pin it here.</div>';
+    list.innerHTML = '<div class="empty">Nothing starred yet — tap ☆ on a phrase, grammar entry, Qur\'an entry, or correction to pin it here.</div>';
     return;
   }
   const byType = t => all.filter(i=>i.type===t).length;
   countNote.textContent = matches.length + ' of ' + all.length + ' starred '
-    + '(' + byType('phrase') + ' phrases, ' + byType('grammar') + ' grammar, ' + byType('quran') + ' Qur\'an)';
+    + '(' + byType('phrase') + ' phrases, ' + byType('grammar') + ' grammar, ' + byType('quran') + ' Qur\'an, ' + byType('corr') + ' corrections)';
   const capNoteEl = document.getElementById('starredCapNote');
   if(capNoteEl){
     const enCount = starredTodayCount('en'), arCount = starredTodayCount('ar');
@@ -2645,6 +2673,22 @@ document.addEventListener('change', (e)=>{
   }
 });
 
+document.addEventListener('click', async (e)=>{
+  const t = e.target.closest ? e.target.closest('[data-star-corr],[data-corr-speak]') : null;
+  if(!t) return;
+  const id = t.dataset.starCorr || t.dataset.corrSpeak;
+  const c = (state.spk.corr || []).find(x=>x.id === id);
+  if(!c) return;
+  if(t.dataset.starCorr){
+    corrSetStar(c, false);
+    await saveSpk();
+    if(typeof renderCorr === 'function') renderCorr();
+    renderStarred();
+    return;
+  }
+  if(c.lang === 'en') speak(c.correction, 'en');
+  else { const ad = { ar: c.correction, arVoweled: c.voweled }; await speakArabicSmart(ad, t, async () => { c.voweled = ad.arVoweled; await saveSpk(); }); }
+});
 document.getElementById('starredSearch').addEventListener('input', e=>{ starredFilter.query = e.target.value.trim(); renderStarred(); });
 document.getElementById('starredTypeFilter').addEventListener('change', e=>{ starredFilter.type = e.target.value; renderStarred(); });
 document.getElementById('starredLangFilter').addEventListener('change', e=>{ starredFilter.lang = e.target.value; renderStarred(); });
@@ -2688,7 +2732,7 @@ document.getElementById('starredSelectAll').addEventListener('change', e=>{
 document.getElementById('starredUnstarSelectedBtn').addEventListener('click', async ()=>{
   if(!starredSelected.size) return;
   if(!confirm('Unstar ' + starredSelected.size + ' selected item' + (starredSelected.size===1?'':'s') + '? This just removes the star — it does not delete anything.')) return;
-  let touchedBank = false, touchedGrammar = false, touchedQuran = false;
+  let touchedBank = false, touchedGrammar = false, touchedQuran = false, touchedCorr = false;
   starredSelected.forEach(key=>{
     const [type, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':')+1)];
     if(type === 'phrase'){
@@ -2700,12 +2744,16 @@ document.getElementById('starredUnstarSelectedBtn').addEventListener('click', as
     } else if(type === 'quran'){
       const qq = state.quran.find(x=>x.id === id);
       if(qq){ qq.starred = false; qq.starredAt = null; qq.synced = false; touchedQuran = true; }
+    } else if(type === 'corr'){
+      const cc = (state.spk.corr || []).find(x=>x.id === id);
+      if(cc){ corrSetStar(cc, false); touchedCorr = true; }
     }
   });
   starredSelected.clear();
   if(touchedBank) await saveBank();
   if(touchedGrammar) await saveGrammar();
   if(touchedQuran) await saveQuran();
+  if(touchedCorr){ await saveSpk(); if(typeof renderCorr === 'function') renderCorr(); }
   renderStarred();
   if(touchedBank){ renderBank(); renderGcStarResults(); if(practiceSet && practiceSet.length) renderPracticeCurrentView(); }
   if(touchedGrammar) renderGrammarList();
@@ -4880,6 +4928,15 @@ async function coreSyncCorrections(){
         if(item.id) remoteLive.push(item);
       }
     });
+    // Everything in the Sheet comes back as text ("TRUE"/"FALSE", "3"), and the text "FALSE" is truthy in JS,
+    // so restore real booleans/numbers before merging or the starred / learned flags would flip on.
+    const corrNorm = item => {
+      ['starred','learned','possible'].forEach(k => { if(item[k] !== undefined) item[k] = item[k] === true || String(item[k]).trim().toLowerCase() === 'true'; });
+      ['box','reps','seq'].forEach(k => { if(item[k] !== undefined) item[k] = Number(item[k]) || 0; });
+      if(item.starredAt === undefined || item.starredAt === null) item.starredAt = '';
+      return item;
+    };
+    localItems.forEach(corrNorm); remoteLive.forEach(corrNorm);
     const deleted = new Set(localDeleted.concat(remoteDeleted).filter(Boolean));
     const merged = new Map();
     localItems.concat(remoteLive).forEach(item => {
@@ -4887,7 +4944,20 @@ async function coreSyncCorrections(){
       const old = merged.get(item.id);
       if(!old || String(item.updatedAt || item.createdAt || '') >= String(old.updatedAt || old.createdAt || '')) merged.set(item.id, item);
     });
-    state.spk.corr = [...merged.values()];
+    // Same correction added on two devices gets two different ids: keep ONE row per language + original text
+    // (the most recently updated copy) and retire the other id so it cannot come back from the other device.
+    const byKey = new Map();
+    [...merged.values()].forEach(item => {
+      if(!item.original){ byKey.set('id|' + item.id, item); return; }
+      const k = corrKey(item), cur = byKey.get(k);
+      if(!cur){ byKey.set(k, item); return; }
+      const newer = String(item.updatedAt || item.createdAt || '') > String(cur.updatedAt || cur.createdAt || '');
+      const keep = newer ? item : cur, drop = newer ? cur : item;
+      if(!keep.starred && drop.starred){ keep.starred = true; keep.starredAt = drop.starredAt || keep.starredAt || ''; }
+      deleted.add(drop.id);
+      byKey.set(k, keep);
+    });
+    state.spk.corr = [...byKey.values()];
     state.spk.deletedCorr = [...deleted];
     await saveSpk();
     const entries = state.spk.corr.map(item => ({
@@ -14320,6 +14390,10 @@ function corrParse(text){
   return out;
 }
 function corrKey(e){ return e.lang + '|' + fluNorm(e.original, e.lang); }
+// Sheet values come back as text ("TRUE"/"FALSE"), so a plain truthiness test would treat "FALSE" as starred.
+function corrIsStarred(c){ const v = c && c.starred; return v === true || (typeof v === 'string' && v.trim().toLowerCase() === 'true'); }
+// One place to star/unstar: stamps starredAt (for the Starred tab's date filter) and updatedAt (so the newest copy wins when devices merge).
+function corrSetStar(c, on){ c.starred = !!on; c.starredAt = on ? new Date().toISOString() : ''; c.updatedAt = new Date().toISOString(); }
 function corrAdd(list){
   const have = new Set((state.spk.corr || []).map(corrKey)), batch = new Date().toISOString(); let added = 0, dup = 0;
   list.forEach((x, i) => {
@@ -14332,7 +14406,7 @@ function corrAdd(list){
 function corrFiltered(){
   const q = fluNorm(corrUi.q, 'ar'), today = todayStr();
   return (state.spk.corr || []).filter(e => (corrUi.lang === 'all' || e.lang === corrUi.lang) && (!corrUi.topic || e.topic === corrUi.topic)
-    && (corrUi.status === 'all' || (corrUi.status === 'learned' && e.learned) || (corrUi.status === 'todo' && !e.learned) || (corrUi.status === 'starred' && e.starred) || (corrUi.status === 'due' && !e.learned && e.due <= today))
+    && (corrUi.status === 'all' || (corrUi.status === 'learned' && e.learned) || (corrUi.status === 'todo' && !e.learned) || (corrUi.status === 'starred' && corrIsStarred(e)) || (corrUi.status === 'due' && !e.learned && e.due <= today))
     && (!q || fluNorm([e.original, e.correction, e.note, e.topic].join(' '), 'ar').includes(q)))
     .sort((a, b) => (b.batch || '').localeCompare(a.batch || '') || (a.seq || 0) - (b.seq || 0));
 }
@@ -14353,7 +14427,7 @@ function corrCardHtml(e){
     <div${dir} style="font-size:17px;margin-top:3px;"><strong>${esc(e.correction)}</strong></div>
     ${e.note ? `<div class="gap-mini" style="margin-top:4px;line-height:1.5;">${esc(e.note)}</div>` : ''}
     <div class="card-actions" style="margin-top:6px;"><button class="ghost" type="button" data-cact="speak" data-id="${e.id}" title="Hear the correction">▶</button><button class="ghost" type="button" data-cact="copy" data-id="${e.id}">Copy</button>
-      <button class="ghost" type="button" data-cact="star" data-id="${e.id}">${e.starred ? '★' : '☆'}</button><button class="ghost" type="button" data-cact="learned" data-id="${e.id}">${e.learned ? '↺ Not learned' : '✓ Learned'}</button>
+      <button class="ghost" type="button" data-cact="star" data-id="${e.id}">${corrIsStarred(e) ? '★' : '☆'}</button><button class="ghost" type="button" data-cact="learned" data-id="${e.id}">${e.learned ? '↺ Not learned' : '✓ Learned'}</button>
       <button class="ghost" type="button" data-cact="edit" data-id="${e.id}">✎</button><button class="ghost" type="button" data-cact="ask" data-id="${e.id}">Ask AI</button><button class="ghost" type="button" data-cact="del" data-id="${e.id}">🗑</button></div></div>`;
 }
 function corrReviewHtml(){
@@ -14431,7 +14505,7 @@ function renderCorr(){
     if(!en) return;
     if(act === 'speak'){ if(en.lang === 'en') speak(en.correction, 'en'); else { const ad = { ar: en.correction, arVoweled: en.voweled }; await speakArabicSmart(ad, a, async () => { en.voweled = ad.arVoweled; await corrSave(); }); } return; }
     if(act === 'copy'){ copyText(en.correction, a); return; }
-    if(act === 'star'){ en.starred = !en.starred; en.updatedAt = new Date().toISOString(); await corrSave(); renderCorr(); return; }
+    if(act === 'star'){ corrSetStar(en, !corrIsStarred(en)); await corrSave(); renderCorr(); if(typeof renderStarred === 'function') renderStarred(); return; }
     if(act === 'learned'){ en.learned = !en.learned; en.updatedAt = new Date().toISOString(); await corrSave(); renderCorr(); return; }
     if(act === 'edit'){ corrUi.editing = en.id; renderCorr(); return; }
     if(act === 'canceledit'){ corrUi.editing = ''; renderCorr(); return; }
