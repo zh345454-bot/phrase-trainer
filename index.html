@@ -4856,6 +4856,63 @@ function throwIfRejected(data){
 // instead of duplicating the request logic four times.
 function noUrlResult(){ return { ok: false, message: 'Add your Apps Script Web App URL in Sheet settings first.' }; }
 
+
+// ---------- Corrections sync (merge by stable correction ID, then overwrite Sheet) ----------
+// Pull first, merge by ID/newest updatedAt, retain deletion tombstones, then write one row per ID.
+async function coreSyncCorrections(){
+  const url = state.settings.webAppUrl;
+  if(!url) return noUrlResult();
+  try{
+    const response = await fetch(sheetGetUrl(url, { type: 'corrections' }));
+    const remote = await response.json();
+    throwIfRejected(remote);
+    if(!remote || !Array.isArray(remote.entries)) throw new Error('The Apps Script did not return Corrections data. Confirm the updated Apps Script is deployed.');
+    const localItems = Array.isArray(state.spk.corr) ? state.spk.corr : [];
+    const localDeleted = Array.isArray(state.spk.deletedCorr) ? state.spk.deletedCorr : [];
+    const remoteLive = [], remoteDeleted = [];
+    remote.entries.forEach(row => {
+      if(String(row.status || '').toLowerCase() === 'deleted') remoteDeleted.push(String(row.id || ''));
+      else {
+        const item = {};
+        ['id','lang','topic','original','correction','note','possible','starred','starredAt','learned','box','due','reps','date','createdAt','batch','seq','updatedAt'].forEach(k => {
+          if(row[k] !== undefined) item[k] = row[k];
+        });
+        if(item.id) remoteLive.push(item);
+      }
+    });
+    const deleted = new Set(localDeleted.concat(remoteDeleted).filter(Boolean));
+    const merged = new Map();
+    localItems.concat(remoteLive).forEach(item => {
+      if(!item || !item.id || deleted.has(item.id)) return;
+      const old = merged.get(item.id);
+      if(!old || String(item.updatedAt || item.createdAt || '') >= String(old.updatedAt || old.createdAt || '')) merged.set(item.id, item);
+    });
+    state.spk.corr = [...merged.values()];
+    state.spk.deletedCorr = [...deleted];
+    await saveSpk();
+    const entries = state.spk.corr.map(item => ({
+      id: item.id, lang: item.lang || 'en', topic: item.topic || '', original: item.original || '',
+      correction: item.correction || '', note: item.note || '', possible: !!item.possible,
+      starred: !!item.starred, starredAt: item.starredAt || '', learned: !!item.learned,
+      box: Number(item.box) || 0, due: item.due || '', reps: Number(item.reps) || 0,
+      date: item.date || '', createdAt: item.createdAt || '', batch: item.batch || '',
+      seq: Number(item.seq) || 0, status: 'active', updatedAt: item.updatedAt || item.createdAt || ''
+    })).concat([...deleted].map(id => ({ id, status: 'deleted', updatedAt: new Date().toISOString() })));
+    const post = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: sheetPostBody({ type: 'corrections_sync', entries })
+    });
+    const saved = await post.json();
+    throwIfRejected(saved);
+    if(!saved || saved.status !== 'ok') throw new Error('The Sheet did not confirm saving Corrections.');
+    renderCorr();
+    if(typeof renderStarred === 'function') renderStarred();
+    return { ok: true, message: `Corrections: ${state.spk.corr.length} unique entries synced (${deleted.size} deletion markers retained).` };
+  }catch(err){
+    return { ok: false, message: 'Corrections sync failed: ' + (err && err.message ? err.message : 'unknown error') + '.' };
+  }
+}
+
 async function coreSyncLog(){
   const url = state.settings.webAppUrl;
   if(!url) return noUrlResult();
@@ -5352,6 +5409,8 @@ document.getElementById('syncAllBtn').addEventListener('click', async ()=>{
   const results = [];
   statusEl.textContent = 'Syncing practice log...';
   results.push(await coreSyncLog());
+  statusEl.textContent = 'Syncing corrections...';
+  results.push(await coreSyncCorrections());
   statusEl.textContent = 'Backing up phrase bank...';
   results.push(await coreBackupBank());
   statusEl.textContent = 'Backing up grammar notebook...';
