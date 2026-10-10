@@ -1019,6 +1019,19 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel" id="gapTopPanel" style="display:none;"><div id="gapTop"></div></div>
     <div class="panel" id="gapRecapPanel" style="display:none;"><div id="gapRecapBox"></div></div>
     <div class="panel" id="gapReviewPanel" style="display:none;"><div id="gapReviewBox"></div></div>
+    <details class="panel" id="gapImportPanel">
+      <summary style="cursor:pointer;font-weight:700;">Import analysed entries (JSON)</summary>
+      <p class="gap-mini">Paste or upload entries you already analysed elsewhere (for example with ChatGPT). Nothing is saved until you review the preview and press <strong>Save approved</strong>. The app does not re-analyse anything. Original sentences are kept exactly as given, and existing gaps are never overwritten.</p>
+      <div class="field"><label>Entries (JSON)</label><textarea id="gapImpText" rows="7" spellcheck="false" placeholder='{"entries":[{"lang":"en","wanted":"…"}]}' style="width:100%;font-family:monospace;font-size:12px;"></textarea></div>
+      <div class="card-actions">
+        <button class="primary" id="gapImpPreviewBtn" type="button">Preview</button>
+        <label class="ghost" style="cursor:pointer;display:inline-flex;align-items:center;padding:0 12px;">Upload .json<input type="file" id="gapImpFile" accept=".json,application/json,text/plain" style="display:none;"></label>
+        <button class="ghost" id="gapImpFormatBtn" type="button">Copy format for ChatGPT</button>
+        <button class="ghost" id="gapImpClearBtn" type="button">Clear</button>
+      </div>
+      <div class="status-msg" id="gapImpMsg"></div>
+      <div id="gapImpPreview"></div>
+    </details>
     <div class="panel">
       <h2>Your gaps</h2>
       <div class="toolbar">
@@ -8845,7 +8858,7 @@ function gapMatches(g){
     if(!ds.some(d => (!f.from || d >= f.from) && (!f.to || d <= f.to))) return false;
   }
   if(f.query){
-    const hay = [g.wanted, g.said, g.correct, g.exEn, g.exAr, g.note, g.topic].join(' ');
+    const hay = [g.wanted, g.said, g.correct, g.origSentence, g.corrSentence, g.exEn, g.exAr, g.note, g.topic].join(' ');
     if(!searchIncludes(hay, f.query)) return false;
   }
   return true;
@@ -8858,6 +8871,8 @@ function gapEditorHtml(g){
     <label>What I wanted to say</label><input data-gf="wanted" value="${escapeHtml(g.wanted)}" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>
     <label>What I said instead</label><input data-gf="said" value="${escapeHtml(g.said || '')}">
     <label>Correct word / chunk</label><input data-gf="correct" value="${escapeHtml(g.correct || '')}" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>
+    ${g.origSentence ? `<label>Original sentence (as spoken — locked)</label><div class="gap-meta" style="white-space:pre-wrap;user-select:text;" ${/[\u0600-\u06FF]/.test(g.origSentence) ? 'dir="rtl"' : ''}>${escapeHtml(g.origSentence)}</div>` : ''}
+    <label>Corrected sentence</label><input data-gf="corrSentence" value="${escapeHtml(g.corrSentence || '')}" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>
     <label>Example sentence (English)</label><input data-gf="exEn" value="${escapeHtml(g.exEn || '')}">
     <label>Example sentence (Arabic)</label><input data-gf="exAr" dir="rtl" value="${escapeHtml(g.exAr || '')}">
     <label>Why the substitute was wrong (optional)</label><input data-gf="note" value="${escapeHtml(g.note || '')}">
@@ -8909,6 +8924,8 @@ function renderGapList(){
       </div>
       <div class="gap-meta">logged ×${times} · first ${g.date} · last ${gapLastLog(g)}${g.said ? ' · said: “' + escapeHtml(g.said) + '”' : ''}${g.topic ? ' · ' + escapeHtml(g.topic) : ''}${g.source ? ' · from ' + escapeHtml(g.source) : ''}</div>
       ${g.correct ? `<div class="gap-correct" ${g.lang === 'ar' ? 'dir="rtl"' : ''}>→ ${escapeHtml(g.correct)}</div>` : ''}
+      ${g.origSentence ? `<div class="gap-meta" ${/[\u0600-\u06FF]/.test(g.origSentence) ? 'dir="rtl"' : ''}><strong>Original:</strong> ${escapeHtml(g.origSentence)}</div>` : ''}
+      ${g.corrSentence ? `<div class="gap-meta" ${/[\u0600-\u06FF]/.test(g.corrSentence) ? 'dir="rtl"' : ''}><strong>Corrected:</strong> ${escapeHtml(g.corrSentence)}</div>` : ''}
       <div class="card-actions"><button class="ghost" data-gact="toggle" data-gid="${g.id}" type="button">${open ? 'Hide details ▴' : 'Details ▾'}</button></div>
       ${open ? gapEditorHtml(g) : ''}
     </div>`;
@@ -8953,6 +8970,216 @@ document.getElementById('gapRecapBox').addEventListener('click', async (e) => {
   renderGaps();
 });
 
+// ---------- Gaps · batch import of entries analysed outside the app ----------
+// The app only VALIDATES, previews and stores these. It never interprets the wording itself
+// (that already happened in the analysis), never overwrites a gap you already have, and the
+// original sentence is stored byte-for-byte as supplied and is read-only afterwards.
+const GAP_IMP_MAX = 500;
+const GAP_IMP_KNOWN = ['lang','wanted','said','correct','originalSentence','correctedSentence','exampleEn','exampleAr','explanation','source','topic','errorType'];
+const GAP_IMP_ALIASES = { language:'lang', intended:'wanted', intendedPhrase:'wanted', original:'originalSentence', corrected:'correctedSentence',
+  correctWord:'correct', correctPhrase:'correct', exEn:'exampleEn', exAr:'exampleAr', note:'explanation', type:'errorType', error_type:'errorType' };
+const GAP_IMP_TYPES = { new:'new', retrieval:'retrieval', chunk:'chunk', 'never learned':'new', "couldn't recall":'retrieval', 'couldn\u2019t recall':'retrieval',
+  'wrong choice / chunk':'chunk', 'wrong choice':'chunk' };
+const GAP_IMP_FORMAT = 'Analyse my speaking transcript and return ONLY valid JSON (no commentary): {"entries":[{"lang":"en|ar","wanted":"intended word or phrase (required)","said":"what I said instead","correct":"correct word or phrase","originalSentence":"my sentence copied EXACTLY, unchanged","correctedSentence":"the corrected sentence","exampleEn":"optional example","exampleAr":"optional example","explanation":"short reason","source":"e.g. Practice 2026-10-10","topic":"e.g. Economics","errorType":"new | retrieval | chunk"}]}  ("new" = never learned, "retrieval" = could not recall, "chunk" = wrong choice / wrong chunk.) One entry per error; keep every originalSentence verbatim.';
+let gapImp = null;   // { items: [{ v, errors, warnings, include, mode }] }
+
+function gapImpParseEntries(text){
+  let t = String(text || '').replace(/^\uFEFF/, '').trim();
+  if(!t) return { fatal: 'Paste some JSON first.' };
+  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if(fence) t = fence[1];
+  let data;
+  try{ data = JSON.parse(t); }
+  catch(e){ return { fatal: 'That is not valid JSON (' + e.message + '). Check for missing commas, quotes or brackets.' }; }
+  const arr = Array.isArray(data) ? data : (data && Array.isArray(data.entries) ? data.entries : null);
+  if(!arr) return { fatal: 'Expected a list of entries: either [ … ] or {"entries":[ … ]}.' };
+  if(!arr.length) return { fatal: 'The list is empty — there is nothing to import.' };
+  if(arr.length > GAP_IMP_MAX) return { fatal: 'Too many entries (' + arr.length + '). Import at most ' + GAP_IMP_MAX + ' at a time.' };
+  return { arr };
+}
+function gapImpValidate(raw, idx){
+  const errors = [], warnings = [], v = { lang:'', wanted:'', said:'', correct:'', origSentence:'', corrSentence:'', exEn:'', exAr:'', note:'', topic:'', source:'', type:'' };
+  if(!raw || typeof raw !== 'object' || Array.isArray(raw)){ return { v, errors: ['Entry must be an object { … }.'], warnings, include:false, mode:'skip' }; }
+  const o = {};
+  Object.keys(raw).forEach(k => {
+    const key = GAP_IMP_KNOWN.includes(k) ? k : (GAP_IMP_ALIASES[k] || null);
+    if(!key){ warnings.push('Unknown field “' + k + '” was ignored.'); return; }
+    if(o[key] === undefined) o[key] = raw[k];
+  });
+  const str = (k, label) => {
+    const x = o[k];
+    if(x === undefined || x === null) return '';
+    if(typeof x !== 'string'){ errors.push(label + ' must be text.'); return ''; }
+    return x;
+  };
+  const lang = String(str('lang', 'lang')).trim().toLowerCase();
+  if(!lang) errors.push('Missing “lang” (use "en" or "ar").');
+  else if(['en','english'].includes(lang)) v.lang = 'en';
+  else if(['ar','arabic'].includes(lang)) v.lang = 'ar';
+  else errors.push('“lang” must be "en" or "ar" (got “' + lang + '”).');
+  v.wanted = str('wanted', '“wanted”').trim();
+  if(o.wanted === undefined || o.wanted === null || (typeof o.wanted === 'string' && !v.wanted)) errors.push('Missing “wanted” (the intended word or phrase).');
+  v.said = str('said', '“said”').trim();
+  v.correct = str('correct', '“correct”').trim();
+  v.origSentence = str('originalSentence', '“originalSentence”');   // NOT trimmed: kept exactly as supplied
+  v.corrSentence = str('correctedSentence', '“correctedSentence”').trim();
+  v.exEn = str('exampleEn', '“exampleEn”').trim();
+  v.exAr = str('exampleAr', '“exampleAr”').trim();
+  v.note = str('explanation', '“explanation”').trim();
+  v.topic = str('topic', '“topic”').trim();
+  v.source = str('source', '“source”').trim();
+  const et = str('errorType', '“errorType”').trim();
+  if(et){
+    const m = GAP_IMP_TYPES[et.toLowerCase()];
+    if(m) v.type = m; else errors.push('“errorType” must be new, retrieval or chunk (got “' + et + '”).');
+  }
+  const hasAr = x => /[\u0600-\u06FF]/.test(x || '');
+  if(v.lang === 'en' && hasAr(v.wanted)) warnings.push('lang is "en" but “wanted” contains Arabic letters.');
+  if(v.lang === 'ar' && v.wanted && !hasAr(v.wanted)) warnings.push('lang is "ar" but “wanted” has no Arabic letters.');
+  if(!v.correct && !v.corrSentence) warnings.push('No correct word/phrase or corrected sentence — you may want to add one before saving.');
+  return { v, errors, warnings, include: !errors.length, mode: 'skip' };
+}
+// Where does this entry stand against what you already have / earlier rows in the same batch?
+function gapImpStatus(items, i){
+  const it = items[i];
+  if(it.errors.length) return { kind: 'error' };
+  const key = gapKey(it.v.lang, it.v.wanted);
+  const ex = state.gaps.find(x => gapKey(x.lang, x.wanted) === key);
+  if(ex) return { kind: 'existing', ex };
+  for(let j = 0; j < i; j++){
+    const o = items[j];
+    if(!o.errors.length && o.include && gapKey(o.v.lang, o.v.wanted) === key) return { kind: 'batch', n: j + 1 };
+  }
+  return { kind: 'new' };
+}
+const GAP_IMP_FILLABLE = [['correct','Correct word'],['said','Said instead'],['origSentence','Original sentence'],['corrSentence','Corrected sentence'],['exEn','Example (EN)'],['exAr','Example (AR)'],['note','Explanation'],['topic','Topic'],['source','Source']];
+function gapImpFillable(ex, v){ return GAP_IMP_FILLABLE.filter(([k]) => v[k] && !(ex[k] || '').toString().trim()); }
+
+function renderGapImpPreview(){
+  const box = document.getElementById('gapImpPreview'), msg = document.getElementById('gapImpMsg');
+  if(!box) return;
+  if(!gapImp){ box.innerHTML = ''; return; }
+  const items = gapImp.items;
+  const st = items.map((_, i) => gapImpStatus(items, i));
+  const bad = items.filter(it => it.errors.length).length;
+  const willAdd = items.filter((it, i) => it.include && st[i].kind === 'new').length;
+  const willFill = items.filter((it, i) => it.include && (st[i].kind === 'existing' || st[i].kind === 'batch') && it.mode === 'fill' && st[i].kind === 'existing').length;
+  msg.className = 'status-msg' + (bad ? ' err' : '');
+  msg.textContent = items.length + ' entr' + (items.length === 1 ? 'y' : 'ies') + ' read' + (bad ? ' — ' + bad + ' with errors (cannot be saved until fixed in the JSON)' : ' — all valid') + '.';
+  const f = (i, k, label, extra) => `<div class="field"><label>${label}</label><input data-gimp="${i}" data-k="${k}" value="${escapeHtml(items[i].v[k] || '')}" ${extra || ''}></div>`;
+  box.innerHTML = items.map((it, i) => {
+    const s = st[i], v = it.v, dir = v.lang === 'ar' ? 'dir="rtl"' : '';
+    const errs = it.errors.map(e => `<div class="status-msg err">✗ ${escapeHtml(e)}</div>`).join('');
+    const warns = it.warnings.map(w => `<div class="gap-mini">⚠ ${escapeHtml(w)}</div>`).join('');
+    let badge = '', dupUi = '';
+    if(s.kind === 'error') badge = '<span class="badge gap-closed">Error</span>';
+    else if(s.kind === 'new') badge = '<span class="badge type-new">New</span>';
+    else if(s.kind === 'existing'){
+      badge = '<span class="badge gap-closed">Already in Gaps</span>';
+      const fill = gapImpFillable(s.ex, v);
+      dupUi = `<div class="gap-mini">You already have this gap. Nothing will be overwritten.</div>
+        <div class="field" style="max-width:340px;"><label>If approved</label><select data-gimp-mode="${i}">
+          <option value="skip"${it.mode === 'skip' ? ' selected' : ''}>Skip (keep what I have)</option>
+          <option value="fill"${it.mode === 'fill' ? ' selected' : ''}${fill.length ? '' : ' disabled'}>Fill empty fields only${fill.length ? ' (' + fill.map(x => x[1]).join(', ') + ')' : ' (nothing to add)'}</option></select></div>`;
+    } else badge = `<span class="badge gap-closed">Repeats #${s.n} in this batch</span>`;
+    const body = s.kind === 'error' ? `<div class="gap-meta" style="white-space:pre-wrap;">${escapeHtml(JSON.stringify(it.raw || {}, null, 1).slice(0, 400))}</div>` : `
+      <div class="field"><label>Language</label><div class="gap-meta">${v.lang === 'ar' ? 'Arabic' : 'English'}</div></div>
+      ${f(i, 'wanted', 'Intended word / phrase', dir)}
+      ${f(i, 'said', 'Said instead', '')}
+      ${f(i, 'correct', 'Correct word / phrase', dir)}
+      ${v.origSentence ? `<div class="field"><label>Original sentence (kept exactly — locked)</label><div class="gap-meta" style="white-space:pre-wrap;user-select:text;" ${/[\u0600-\u06FF]/.test(v.origSentence) ? 'dir="rtl"' : ''}>${escapeHtml(v.origSentence)}</div></div>` : ''}
+      ${f(i, 'corrSentence', 'Corrected sentence', dir)}
+      ${f(i, 'exEn', 'Example (English)', '')}
+      ${f(i, 'exAr', 'Example (Arabic)', 'dir="rtl"')}
+      ${f(i, 'note', 'Explanation', '')}
+      ${f(i, 'source', 'Source', '')}
+      ${f(i, 'topic', 'Topic', '')}
+      <div class="field" style="max-width:260px;"><label>Error type</label><select data-gimp-type="${i}">
+        <option value=""${!v.type ? ' selected' : ''}>Auto (decided by the app)</option>
+        ${['new','retrieval','chunk'].map(t => `<option value="${t}"${v.type === t ? ' selected' : ''}>${GAP_TYPE_LABELS[t]}</option>`).join('')}</select></div>`;
+    return `<div class="gap-card" style="margin-top:10px;">
+      <div class="gap-head"><div class="gap-wanted" ${dir}>#${i + 1} · ${escapeHtml(v.wanted || '(no intended phrase)')}</div><div class="gap-badges">${badge}</div></div>
+      ${errs}${warns}${body}${dupUi}
+      <div class="card-actions">
+        ${s.kind === 'error' ? '' : `<label class="gap-mini" style="display:flex;gap:6px;align-items:center;"><input type="checkbox" data-gimp-inc="${i}"${it.include ? ' checked' : ''}> Approve</label>`}
+        <button class="ghost" data-gimp-rm="${i}" type="button">Reject / remove</button>
+      </div>
+    </div>`;
+  }).join('') + `<div class="card-actions" style="margin-top:12px;">
+      <button class="primary" id="gapImpSaveBtn" type="button"${willAdd || willFill ? '' : ' disabled'}>Save approved (${willAdd} new${willFill ? ', ' + willFill + ' filled' : ''})</button>
+      <button class="ghost" id="gapImpCancelBtn" type="button">Cancel</button></div>`;
+}
+function gapImpPreview(text){
+  const msg = document.getElementById('gapImpMsg');
+  const r = gapImpParseEntries(text);
+  if(r.fatal){ gapImp = null; renderGapImpPreview(); msg.className = 'status-msg err'; msg.textContent = r.fatal; return; }
+  gapImp = { items: r.arr.map((raw, i) => { const it = gapImpValidate(raw, i); it.raw = raw; return it; }) };
+  renderGapImpPreview();
+}
+function gapImpSave(){
+  if(!gapImp) return;
+  const items = gapImp.items, now = [];
+  let added = 0, filled = 0, skipped = 0;
+  // process in order so a later row repeating an earlier one is treated as "already in Gaps"
+  items.forEach((it, i) => {
+    if(it.errors.length || !it.include || !it.v.wanted) { skipped++; return; }
+    const key = gapKey(it.v.lang, it.v.wanted);
+    const ex = state.gaps.find(x => gapKey(x.lang, x.wanted) === key);
+    if(!ex){
+      const v = it.v, today = todayStr();
+      const g = { id: uid(), lang: v.lang, wanted: v.wanted, said: v.said, correct: v.correct, origSentence: v.origSentence, corrSentence: v.corrSentence,
+        exEn: v.exEn, exAr: v.exAr, note: v.note, topic: v.topic, source: v.source || 'Imported analysis',
+        type: v.type || gapAutoType(v.wanted, v.lang), typeManual: !!v.type,
+        createdAt: new Date().toISOString(), date: today, dateAdded: today, logDates: [today], attempts: [],
+        status: 'open', closedAt: '', closedBy: '', inBank: false, bankedAt: '' };
+      ensureSrs(g);
+      if(gapTrack(g) === 'light') g.lt = { step: 0, next: addDays(today, 1) };
+      gapEnsureTrack(g); gapTouch(g);
+      state.gaps.unshift(g); added++;
+    } else if(it.mode === 'fill'){
+      const fill = gapImpFillable(ex, it.v);
+      if(fill.length){ fill.forEach(([k]) => { ex[k] = it.v[k]; }); gapTouch(ex); filled++; } else skipped++;
+    } else skipped++;
+  });
+  saveGaps(); bumpGapSyncInBackground();
+  gapImp = null;
+  document.getElementById('gapImpPreview').innerHTML = '';
+  const msg = document.getElementById('gapImpMsg');
+  msg.className = 'status-msg';
+  msg.textContent = 'Saved ' + added + ' new gap' + (added === 1 ? '' : 's') + (filled ? ', filled empty fields on ' + filled : '') + (skipped ? ', skipped ' + skipped : '') + '.';
+  if(added || filled) document.getElementById('gapImpText').value = '';
+  renderGaps();
+}
+(function(){
+  const pv = document.getElementById('gapImpPreview');
+  if(!pv) return;
+  document.getElementById('gapImpPreviewBtn').addEventListener('click', () => gapImpPreview(document.getElementById('gapImpText').value));
+  document.getElementById('gapImpClearBtn').addEventListener('click', () => { document.getElementById('gapImpText').value = ''; gapImp = null; renderGapImpPreview(); const m = document.getElementById('gapImpMsg'); m.className = 'status-msg'; m.textContent = ''; });
+  document.getElementById('gapImpFormatBtn').addEventListener('click', (e) => copyText(GAP_IMP_FORMAT, e.currentTarget));
+  document.getElementById('gapImpFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0]; if(!file) return;
+    try{ const t = await file.text(); document.getElementById('gapImpText').value = t; gapImpPreview(t); }
+    catch(err){ const m = document.getElementById('gapImpMsg'); m.className = 'status-msg err'; m.textContent = 'Could not read that file.'; }
+    e.target.value = '';
+  });
+  pv.addEventListener('change', (e) => {
+    if(!gapImp) return;
+    const t = e.target, d = t.dataset;
+    if(d.gimp !== undefined && d.k){
+      const it = gapImp.items[+d.gimp], val = d.k === 'wanted' || d.k === 'correct' || d.k === 'said' || d.k === 'corrSentence' || d.k === 'exEn' || d.k === 'exAr' || d.k === 'note' || d.k === 'source' || d.k === 'topic' ? t.value.trim() : t.value;
+      it.v[d.k] = val;   // model only — no re-render here, so a click on Save right after typing is never lost
+    } else if(d.gimpType !== undefined){ gapImp.items[+d.gimpType].v.type = t.value; renderGapImpPreview(); }
+    else if(d.gimpMode !== undefined){ gapImp.items[+d.gimpMode].mode = t.value; renderGapImpPreview(); }
+    else if(d.gimpInc !== undefined){ gapImp.items[+d.gimpInc].include = t.checked; renderGapImpPreview(); }
+  });
+  pv.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if(!b || !gapImp) return;
+    if(b.dataset.gimpRm !== undefined){ gapImp.items.splice(+b.dataset.gimpRm, 1); if(!gapImp.items.length) gapImp = null; renderGapImpPreview(); }
+    else if(b.id === 'gapImpSaveBtn') gapImpSave();
+    else if(b.id === 'gapImpCancelBtn'){ gapImp = null; renderGapImpPreview(); const m = document.getElementById('gapImpMsg'); m.className = 'status-msg'; m.textContent = 'Import cancelled — nothing was saved.'; }
+  });
+})();
+
 function renderGaps(){
   renderGapList();
   ['renderGapChecklist', 'renderGapTop', 'renderGapRecap', 'renderGapReview', 'renderGapStats', 'renderGapSync'].forEach(fn => {
@@ -8989,7 +9216,7 @@ document.getElementById('gapList').addEventListener('click', async (e) => {
     if(!newWanted){ st.textContent = 'The wanted word can\u2019t be empty.'; st.className = 'status-msg err'; return; }
     const clash = state.gaps.find(x => x.id !== g.id && gapKey(x.lang, x.wanted) === gapKey(g.lang, newWanted));
     if(clash){ st.textContent = 'Another gap already has this wording — open that one instead.'; st.className = 'status-msg err'; return; }
-    g.wanted = newWanted; g.said = val('said'); g.correct = val('correct');
+    g.wanted = newWanted; g.said = val('said'); g.correct = val('correct'); g.corrSentence = val('corrSentence');
     g.exEn = val('exEn'); g.exAr = val('exAr'); g.note = val('note'); g.topic = val('topic'); g.source = val('source');
     const newType = val('type');
     if(newType !== g.type){ g.type = newType; g.typeManual = true; }
@@ -9585,6 +9812,7 @@ function gapToRow(g){
   ensureSrs(g);
   return {
     id: g.id, lang: g.lang, wanted: g.wanted, said: g.said || '', correct: g.correct || '',
+    origSentence: g.origSentence || '', corrSentence: g.corrSentence || '',
     exEn: g.exEn || '', exAr: g.exAr || '', note: g.note || '', topic: g.topic || '', type: g.type,
     typeManual: g.typeManual ? 'Yes' : '', status: g.status, closedAt: g.closedAt || '', closedBy: g.closedBy || '',
     inBank: g.inBank ? 'Yes' : '', bankedAt: g.bankedAt || '', createdAt: g.createdAt || '', date: g.date || '',
@@ -9603,7 +9831,7 @@ function gapFromRow(r){
   const logDates = String(r.logDates || '').split(';').map(d10).filter(Boolean);
   return {
     id: String(r.id || uid()), lang: r.lang === 'ar' ? 'ar' : 'en', wanted,
-    said: String(r.said || ''), correct: String(r.correct || ''), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
+    said: String(r.said || ''), correct: String(r.correct || ''), origSentence: String(r.origSentence == null ? '' : r.origSentence), corrSentence: String(r.corrSentence == null ? '' : r.corrSentence), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
     note: String(r.note || ''), topic: String(r.topic || ''), source: String(r.source || ''),
     type: ['new', 'retrieval', 'chunk'].includes(r.type) ? r.type : 'new', typeManual: r.typeManual === 'Yes',
     status: r.status === 'closed' ? 'closed' : 'open', closedAt: d10(r.closedAt), closedBy: String(r.closedBy || ''),
