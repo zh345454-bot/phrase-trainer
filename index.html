@@ -1021,7 +1021,7 @@ details.legend summary{ cursor:pointer; font-size:12.5px; color:var(--teal); fon
     <div class="panel" id="gapReviewPanel" style="display:none;"><div id="gapReviewBox"></div></div>
     <details class="panel" id="gapImportPanel">
       <summary style="cursor:pointer;font-weight:700;">Import analysed entries (JSON)</summary>
-      <p class="gap-mini">Only <strong>forgotten words</strong> are accepted: the transcript must show an explicit “I forget / I forgot / I can’t remember / نسيت” (supplied as <code>retrievalSignal</code> or <code>retrievalVerified</code>; it does <em>not</em> have to be inside the saved sentence), <code>errorType</code> must be <code>retrieval</code>, the target can be at most <strong>two words</strong>, and it must not already be in your Gap Bank. Grammar fixes and rewordings are rejected. Nothing is saved until you approve entries in the preview and press <strong>Save approved</strong>. Original sentences are kept exactly as given.</p>
+      <p class="gap-mini">Two kinds of entry are accepted. <strong>Forgotten words</strong> (<code>errorType</code> <code>retrieval</code>) need evidence from the transcript that you really said “I forget / I forgot / I can’t remember / نسيت” (<code>retrievalSignal</code> or <code>retrievalVerified</code>; it need not be inside the saved sentence). <strong>Phrasing upgrades</strong> (<code>phrasing</code>, <code>collocation</code> or <code>grammar</code>) need no forgetting signal. For both, the target is at most <strong>two words</strong>, <code>originalSentence</code> is required, and it must not already be in your Gap Bank. Nothing is saved until you approve entries in the preview and press <strong>Save approved</strong>. Original sentences are kept exactly as given.</p>
       <div class="field"><label>Entries (JSON)</label><textarea id="gapImpText" rows="7" spellcheck="false" placeholder='{"entries":[{"lang":"en","wanted":"…"}]}' style="width:100%;font-family:monospace;font-size:12px;"></textarea></div>
       <div class="card-actions">
         <button class="primary" id="gapImpPreviewBtn" type="button">Preview</button>
@@ -8921,6 +8921,7 @@ function renderGapList(){
           <span class="badge type-${g.type}">${GAP_TYPE_LABELS[g.type] || g.type}</span>
           ${g.status === 'closed' ? `<span class="badge gap-closed">Archived${g.closedBy === 'bank' ? ' · in bank' : g.closedBy === 'mastered' ? ' · mastered' : ''}</span>` : (gapTrack(g) === 'light' ? `<span class="station-pill">Touch ${g.lt.step + 1}/${LIGHT_STEPS.length}</span>` : `<span class="station-pill">Station ${g.srs.station}</span>`)}
           ${g.inBank && g.closedBy !== 'bank' ? '<span class="badge gap-closed">In bank</span>' : ''}
+          ${g.errLabel ? `<span class="badge type-chunk">${escapeHtml(g.errLabel)}</span>` : ''}
           ${gapCountWords(g.wanted) > 2 ? '<span class="badge gap-closed" title="Older entry: new entries are limited to two words">Over 2 words</span>' : ''}
         </div>
       </div>
@@ -8982,7 +8983,39 @@ const GAP_IMP_ALIASES = { language:'lang', intended:'wanted', intendedPhrase:'wa
   correctWord:'correct', correctPhrase:'correct', exEn:'exampleEn', exAr:'exampleAr', note:'explanation', type:'errorType', error_type:'errorType' };
 const GAP_IMP_TYPES = { new:'new', retrieval:'retrieval', chunk:'chunk', 'never learned':'new', "couldn't recall":'retrieval', 'couldn\u2019t recall':'retrieval',
   'wrong choice / chunk':'chunk', 'wrong choice':'chunk' };
-const GAP_IMP_FORMAT = 'Read my WHOLE speaking transcript and return ONLY valid JSON (no commentary) listing ONLY words or short expressions I genuinely FORGOT, i.e. where I explicitly said something like "I forget", "I forgot", "I can\'t remember the word", "I can\'t recall" or "نسيت" (that signal may be in the sentence before the one that contains the word). Skip grammar fixes, awkward wording, collocations and rewrites. The intended word/phrase must be at most TWO words and you must be confident what it is (if unsure, leave it out). Copy originalSentence EXACTLY as I spoke it; do NOT add or move any "I forget" into it. Put the forgetting words you found in retrievalSignal, copied from the transcript. Format: {"entries":[{"lang":"en|ar","wanted":"intended word (max 2 words)","said":"substitute I actually said, or empty","correct":"the same intended word","originalSentence":"my sentence, exactly as spoken","correctedSentence":"minimally corrected sentence","exampleEn":"optional","exampleAr":"optional","explanation":"optional short note","source":"Speaking practice","topic":"e.g. Career planning","errorType":"retrieval","retrievalSignal":"I forget"}]}';
+const GAP_IMP_ENH = ['phrasing','collocation','grammar'];
+const GAP_IMP_FORMAT = `Analyse my speaking transcript and return ONLY valid JSON (no commentary).
+
+Extract two types of entries into the JSON:
+1. RETRIEVAL ERRORS: Words/expressions I genuinely FORGOT (indicated by explicit signals like "I forget", "I forgot", "I can't remember", "I can't recall", or "نسيت" directly before or in the phrase).
+2. PHRASING ENHANCEMENTS: Key vocabulary, collocations, or native phrasing recommendations where a better 1–2 word alternative exists for what I said, even if I didn't say "I forget".
+
+STRICT CONSTRAINTS FOR ALL ENTRIES:
+- 'wanted': MUST be at most TWO words (e.g., "lag behind", "mere users", "achieve mastery").
+- 'originalSentence': MUST be copied EXACTLY as spoken from the transcript, unchanged. Do NOT insert or move "I forget" markers into it.
+- 'retrievalSignal': Copy the exact explicit signal phrase spoken (e.g., "I forgot", "نسيت"). If there was no explicit signal, set this field to "none".
+- 'errorType': Set to "retrieval" (for forgotten words) OR "phrasing" / "collocation" / "grammar" (for vocabulary enhancements).
+
+JSON SCHEMA:
+{
+  "entries": [
+    {
+      "lang": "en|ar",
+      "wanted": "intended or upgraded word/phrase (MAX 2 WORDS)",
+      "said": "what I actually said in the transcript",
+      "correct": "the correct intended or upgraded word/phrase (matches wanted)",
+      "originalSentence": "exact sentence from transcript unchanged",
+      "correctedSentence": "minimally corrected sentence incorporating 'wanted'",
+      "exampleEn": "clear English example sentence using 'wanted'",
+      "exampleAr": "Arabic translation or concise example",
+      "explanation": "short reason (e.g. 'more natural phrasing', 'explicitly forgotten')",
+      "source": "Speaking practice",
+      "topic": "topic of conversation",
+      "errorType": "retrieval|phrasing|collocation|grammar",
+      "retrievalSignal": "explicit spoken signal OR 'none'"
+    }
+  ]
+}`;
 let gapImp = null;   // { items: [{ v, errors, warnings, include, mode }] }
 
 function gapImpParseEntries(text){
@@ -9000,7 +9033,7 @@ function gapImpParseEntries(text){
   return { arr };
 }
 function gapImpValidate(raw, idx){
-  const errors = [], warnings = [], v = { lang:'', wanted:'', said:'', correct:'', origSentence:'', corrSentence:'', exEn:'', exAr:'', note:'', topic:'', source:'', type:'', signal:'', verified:false };
+  const errors = [], warnings = [], v = { lang:'', wanted:'', said:'', correct:'', origSentence:'', corrSentence:'', exEn:'', exAr:'', note:'', topic:'', source:'', type:'', errLabel:'', signal:'', verified:false };
   if(!raw || typeof raw !== 'object' || Array.isArray(raw)){ return { v, errors: ['Entry must be an object { … }.'], warnings, include:false }; }
   const o = {};
   Object.keys(raw).forEach(k => {
@@ -9033,14 +9066,16 @@ function gapImpValidate(raw, idx){
   // Transcript-level evidence that the learner really forgot the word. It lives OUTSIDE originalSentence, so the
   // sentence stays exactly as spoken even when "I forget" was said just before it.
   v.signal = str('retrievalSignal', '“retrievalSignal”').trim();
+  if(/^(none|n\/a|null|-|—)$/i.test(v.signal)) v.signal = '';   // "none" = no explicit signal was spoken
   if(o.retrievalVerified !== undefined && o.retrievalVerified !== null){
     if(typeof o.retrievalVerified !== 'boolean') errors.push('“retrievalVerified” must be true or false.');
     else v.verified = o.retrievalVerified;
   }
   const et = str('errorType', '“errorType”').trim();
   if(et){
-    const m = GAP_IMP_TYPES[et.toLowerCase()];
-    if(m) v.type = m; else errors.push('“errorType” must be new, retrieval or chunk (got “' + et + '”).');
+    const lk = et.toLowerCase();
+    if(GAP_IMP_ENH.includes(lk)){ v.type = 'chunk'; v.errLabel = lk; }          // vocabulary enhancement: stored as a "wrong choice / chunk" gap, label kept
+    else { const m = GAP_IMP_TYPES[lk]; if(m) v.type = m; else errors.push('“errorType” must be retrieval, phrasing, collocation or grammar (got “' + et + '”).'); }
   }
   const hasAr = x => /[\u0600-\u06FF]/.test(x || '');
   if(v.lang === 'en' && hasAr(v.wanted)) warnings.push('lang is "en" but “wanted” contains Arabic letters.');
@@ -9083,19 +9118,24 @@ function gapFindExisting(lang, text){
 function gapImpBase(it){
   if(it.errors.length) return { kind: 'error', msg: it.errors[0] };
   const v = it.v;
-  if(v.type !== 'retrieval') return { kind: 'ineligible', msg: v.type
-    ? 'errorType is “' + v.type + '”. Only retrieval gaps (a word you could not recall) can be saved; this is an ordinary correction.'
-    : 'No errorType "retrieval". Without it this is treated as an ordinary correction, not a forgotten word.' };
-  if(!v.origSentence.trim()) return { kind: 'error', msg: 'originalSentence is required so the context of the forgotten word is kept.' };
-  // errorType alone is only the analyzer's label. Eligibility also needs retrieval EVIDENCE from the transcript:
-  //  - retrievalSignal: the learner's own "I forget / I forgot / I can't remember / نسيت" words, taken from anywhere in the
-  //    transcript (it does NOT have to be inside originalSentence), or
-  //  - retrievalVerified: true — the analyzer states it checked the full transcript, or
-  //  - (older imports) the signal inside originalSentence / said.
-  const evidence = gapHasForgetSignal(v.signal) ? 'signal' : v.verified ? 'verified' : (gapHasForgetSignal(v.origSentence) || gapHasForgetSignal(v.said)) ? 'sentence' : '';
-  if(!evidence) return { kind: 'ineligible', msg: v.signal
-    ? 'retrievalSignal (“' + v.signal + '”) is not a recognised forgetting phrase (I forget / I forgot / I can’t remember / I can’t recall / نسيت), so this is treated as an ordinary correction.'
-    : 'No retrieval evidence. errorType "retrieval" alone is not enough: add "retrievalSignal" (the “I forget / نسيت” words from the transcript — they need not be in originalSentence) or "retrievalVerified": true. Without evidence it is treated as an ordinary correction, not a forgotten word.' };
+  // Two eligible families: (1) forgotten words (errorType "retrieval", needs evidence the learner forgot it) and
+  // (2) phrasing / collocation / grammar enhancements (no forgetting needed; still max two words, unique, with context).
+  const isEnh = !!v.errLabel;
+  if(!isEnh && v.type !== 'retrieval') return { kind: 'ineligible', msg: v.type
+    ? 'errorType “' + v.type + '” is not accepted. Use "retrieval" for a forgotten word, or "phrasing" / "collocation" / "grammar" for a better 1–2 word alternative.'
+    : 'Missing errorType. Use "retrieval" for a forgotten word, or "phrasing" / "collocation" / "grammar" for a better 1–2 word alternative.' };
+  if(!v.origSentence.trim()) return { kind: 'error', msg: 'originalSentence is required so the context of the word is kept.' };
+  if(!isEnh){
+    // errorType alone is only the analyzer's label. A forgotten word also needs EVIDENCE from the transcript:
+    //  - retrievalSignal: the learner's own "I forget / I forgot / I can't remember / نسيت" words, taken from anywhere in the
+    //    transcript (it does NOT have to be inside originalSentence), or
+    //  - retrievalVerified: true — the analyzer states it checked the full transcript, or
+    //  - (older imports) the signal inside originalSentence / said.
+    const evidence = gapHasForgetSignal(v.signal) ? 'signal' : v.verified ? 'verified' : (gapHasForgetSignal(v.origSentence) || gapHasForgetSignal(v.said)) ? 'sentence' : '';
+    if(!evidence) return { kind: 'ineligible', msg: v.signal
+      ? 'retrievalSignal (“' + v.signal + '”) is not a recognised forgetting phrase (I forget / I forgot / I can’t remember / I can’t recall / نسيت). If this is only a better wording, use errorType "phrasing", "collocation" or "grammar".'
+      : 'No retrieval evidence (retrievalSignal is "none" or missing). If the transcript shows you saying “I forget / نسيت”, put those words in retrievalSignal (or set retrievalVerified: true). If not, this is not a forgotten word: use errorType "phrasing", "collocation" or "grammar" instead.' };
+  }
   const eff = gapImpEff(it);
   const unsure = !(it.confirm && it.confirm.on) && (!v.correct || gapNormTarget(v.correct) !== gapNormTarget(v.wanted) || /[?\uFF1F\u061F]/.test(v.wanted));
   if(unsure) return { kind: 'uncertain', msg: !v.correct ? 'No “correct” value, so the intended word is not certain.' : /[?\uFF1F\u061F]/.test(v.wanted) ? 'The intended word is marked with a question mark.' : '“wanted” (' + v.wanted + ') and “correct” (' + v.correct + ') differ, so the intended word is not certain.' };
@@ -9134,7 +9174,7 @@ function renderGapImpPreview(){
   const f = (i, k, label, extra) => `<div class="field"><label>${label}</label><input data-gimp="${i}" data-k="${k}" value="${escapeHtml(items[i].v[k] || '')}" ${extra || ''}></div>`;
   box.innerHTML = `<div class="card-actions" style="margin-top:10px;"><button class="ghost" id="gapImpApproveAll" type="button">Approve all eligible</button></div>` + items.map((it, i) => {
     const r = res[i], v = it.v, dir = v.lang === 'ar' ? 'dir="rtl"' : '';
-    const bd = GAP_IMP_BADGE[r.kind];
+    const bd = (r.kind === 'ok' && v.errLabel) ? ['Eligible · ' + v.errLabel, 'type-chunk'] : GAP_IMP_BADGE[r.kind];
     const warns = it.warnings.map(w => `<div class="gap-mini">⚠ ${escapeHtml(w)}</div>`).join('');
     const showConfirm = (it.confirm && it.confirm.on) || r.kind === 'uncertain' || r.kind === 'toolong';
     const confirmUi = showConfirm ? `<div class="field"><label>Confirm the word or phrase you forgot (max 2 words)</label>
@@ -9185,7 +9225,7 @@ function gapImpSave(){
     const v = it.v, eff = gapImpEff(it), today = todayStr();
     const g = { id: uid(), lang: v.lang, wanted: eff.wanted, said: v.said, correct: eff.correct, origSentence: v.origSentence, corrSentence: v.corrSentence,
       exEn: v.exEn, exAr: v.exAr, note: v.note, topic: v.topic, source: v.source || 'Imported analysis',
-      type: 'retrieval', typeManual: true,
+      type: v.errLabel ? 'chunk' : 'retrieval', errLabel: v.errLabel || '', typeManual: true,
       createdAt: new Date().toISOString(), date: today, dateAdded: today, logDates: [today], attempts: [],
       status: 'open', closedAt: '', closedBy: '', inBank: false, bankedAt: '' };
     ensureSrs(g);
@@ -9198,7 +9238,7 @@ function gapImpSave(){
   const msg = document.getElementById('gapImpMsg');
   renderGapImpPreview();
   msg.className = 'status-msg' + (blocked.length ? ' err' : '');
-  msg.textContent = 'Saved ' + added + ' forgotten word' + (added === 1 ? '' : 's') + '.' + (blocked.length ? ' Not saved: ' + blocked.join(' ') : '') + (keep.length ? ' ' + keep.length + ' entr' + (keep.length === 1 ? 'y' : 'ies') + ' left in the preview (not saved).' : '');
+  msg.textContent = 'Saved ' + added + ' gap' + (added === 1 ? '' : 's') + '.' + (blocked.length ? ' Not saved: ' + blocked.join(' ') : '') + (keep.length ? ' ' + keep.length + ' entr' + (keep.length === 1 ? 'y' : 'ies') + ' left in the preview (not saved).' : '');
   if(added && !keep.length) document.getElementById('gapImpText').value = '';
   renderGaps();
 }
@@ -9876,7 +9916,7 @@ function gapToRow(g){
   ensureSrs(g);
   return {
     id: g.id, lang: g.lang, wanted: g.wanted, said: g.said || '', correct: g.correct || '',
-    origSentence: g.origSentence || '', corrSentence: g.corrSentence || '',
+    origSentence: g.origSentence || '', corrSentence: g.corrSentence || '', errLabel: g.errLabel || '',
     exEn: g.exEn || '', exAr: g.exAr || '', note: g.note || '', topic: g.topic || '', type: g.type,
     typeManual: g.typeManual ? 'Yes' : '', status: g.status, closedAt: g.closedAt || '', closedBy: g.closedBy || '',
     inBank: g.inBank ? 'Yes' : '', bankedAt: g.bankedAt || '', createdAt: g.createdAt || '', date: g.date || '',
@@ -9895,7 +9935,7 @@ function gapFromRow(r){
   const logDates = String(r.logDates || '').split(';').map(d10).filter(Boolean);
   return {
     id: String(r.id || uid()), lang: r.lang === 'ar' ? 'ar' : 'en', wanted,
-    said: String(r.said || ''), correct: String(r.correct || ''), origSentence: String(r.origSentence == null ? '' : r.origSentence), corrSentence: String(r.corrSentence == null ? '' : r.corrSentence), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
+    said: String(r.said || ''), correct: String(r.correct || ''), origSentence: String(r.origSentence == null ? '' : r.origSentence), corrSentence: String(r.corrSentence == null ? '' : r.corrSentence), errLabel: String(r.errLabel == null ? '' : r.errLabel), exEn: String(r.exEn || ''), exAr: String(r.exAr || ''),
     note: String(r.note || ''), topic: String(r.topic || ''), source: String(r.source || ''),
     type: ['new', 'retrieval', 'chunk'].includes(r.type) ? r.type : 'new', typeManual: r.typeManual === 'Yes',
     status: r.status === 'closed' ? 'closed' : 'open', closedAt: d10(r.closedAt), closedBy: String(r.closedBy || ''),
